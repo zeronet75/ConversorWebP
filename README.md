@@ -10,7 +10,7 @@
 </p>
 
 <p align="center">
-  <img alt="Versión" src="https://img.shields.io/badge/version-2.3-1a73e8">
+  <img alt="Versión" src="https://img.shields.io/badge/version-2.3.1-1a73e8">
   <img alt="Windows" src="https://img.shields.io/badge/Windows-10%20%7C%2011-0078D6">
   <img alt="Python" src="https://img.shields.io/badge/Python-3.12-3776AB">
   <img alt="Pillow" src="https://img.shields.io/badge/Pillow-13-11557C">
@@ -426,6 +426,15 @@ pyinstaller --noconfirm --clean --onefile --windowed --name ConversorWebP ^
   conversor_webp.py
 ```
 
+## Pruebas
+
+```bat
+python -m unittest discover -s tests -v
+```
+
+Las pruebas generan sus propias imágenes en una carpeta temporal y cubren conversión, transparencia,
+redimensionado, peso objetivo, AVIF, ZIP seguro, omisión de existentes y comprimidos múltiples.
+
 ---
 
 ## Estructura del repositorio
@@ -448,6 +457,8 @@ ConversorWebP/
 │   └── img/ventana.png     Captura de la interfaz
 ├── tools/
 │   └── html_a_md.py        Regenera docs/MANUAL.md desde el HTML (opcional)
+├── tests/
+│   └── test_conversor.py   Pruebas automáticas del motor (unittest)
 └── .gitignore
 ```
 
@@ -457,6 +468,7 @@ ConversorWebP/
 
 Consulta [CHANGELOG.md](CHANGELOG.md). Resumen:
 
+- **2.3.1** — corrección de color CMYK, historial completo, nombres de ZIP seguros y otros ajustes.
 - **2.3** — presets, redimensionado, peso objetivo, historial, atajos, paralelo, CSV, AVIF y “Enviar a”.
 - **2.2** — menú Historial y mejoras internas de la interfaz.
 - **2.1** — aviso sonoro al terminar.

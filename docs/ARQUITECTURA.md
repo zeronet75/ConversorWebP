@@ -1,6 +1,6 @@
 # Arquitectura
 
-Documento técnico de **Conversor WebP 2.3**. Explica cómo está organizado el código, cómo fluye un
+Documento técnico de **Conversor WebP 2.3.1**. Explica cómo está organizado el código, cómo fluye un
 trabajo de conversión y dónde tocar para ampliar el programa.
 
 ---
@@ -287,7 +287,17 @@ El ZIP se construye en la fase 4 de `run_job`; basta con sustituir `zipfile` por
 
 ## 10. Pruebas
 
-El motor está diseñado para probarse sin GUI:
+El repositorio incluye `tests/test_conversor.py` (unittest), que genera sus propias imágenes y no necesita
+interfaz gráfica:
+
+```bat
+python -m unittest discover -s tests -v
+```
+
+Cubre: colores y nombres seguros, conversión WebP con alfa, redimensionado sin ampliar, peso objetivo,
+AVIF, ZIP con nombre malicioso, omisión de existentes, CMYK sin perfil y varios comprimidos.
+
+También se puede probar el motor desde código:
 
 ```python
 job = Job(sources=[Path("fotos")], output_dir=Path("salida"), quality=80, max_dimension=1200)

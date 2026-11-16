@@ -6,6 +6,36 @@ Todos los cambios relevantes del proyecto. Formato basado en
 
 ---
 
+## [2.3.1] — 2026-11-16
+
+### Corregido
+
+- **Perfil de color en imágenes CMYK**: ahora se convierten a sRGB con su perfil ICC mediante
+  `ImageCms`. Antes se incrustaba un perfil CMYK dentro de un archivo RGB, lo que producía colores
+  incorrectos en navegadores y visores.
+- **Historial incompleto**: al repetir un trabajo se recuperan también el formato, el ZIP, el informe
+  CSV, las subcarpetas y la sobrescritura, no solo la calidad.
+- **Nombres de ZIP**: se sanean rutas y caracteres no válidos (`..\`, `:`, nombres reservados de
+  Windows), de modo que el ZIP no puede escribirse fuera de la carpeta de salida.
+- **Colores de fondo**: se aceptan `#RGB` y `#RRGGBB`; un color inválido se rechaza al empezar en lugar
+  de hacer fallar cada imagen.
+- **WinRAR**: extracción síncrona (se eliminó `-ibck`, que podía devolver el control antes de terminar).
+- **Configuración**: escritura atómica (archivo temporal + reemplazo) y lectura tolerante a tipos o
+  valores corruptos, con límites en calidad y esfuerzo.
+- **Cierre de la ventana**: se cancela el temporizador de la interfaz, evitando errores
+  `invalid command name` al salir.
+- **Mensajes**: se distingue «todo omitido» de «no hay imágenes» y el aviso sonoro acierta en ese caso.
+- **Duplicados**: se comparan rutas resueltas y se ignoran los archivos que ya no existen.
+- **Selector de archivos**: incluye AVIF y el resto de formatos soportados.
+- **Ventana**: tamaño adaptativo en pantallas pequeñas.
+
+### Añadido
+
+- `--version` en la línea de comandos.
+- `--format` acepta `AVIF` en mayúsculas o minúsculas.
+
+---
+
 ## [2.3] — 2026-11-16
 
 ### Añadido
@@ -93,6 +123,7 @@ Todos los cambios relevantes del proyecto. Formato basado en
 - Conservación de transparencia, perfil ICC y orientación EXIF.
 - Modo consola básico.
 
+[2.3.1]: #231--2026-11-16
 [2.3]: #23--2026-11-16
 [2.2]: #22--2026-11-16
 [2.1]: #21--2026-11-16

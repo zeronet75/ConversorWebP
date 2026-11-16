@@ -33,10 +33,11 @@ No adjuntes imágenes personales ni rutas privadas; basta con describir el caso 
    - Python con tipos en las firmas públicas.
    - Nombres de funciones y variables en español, comentarios breves.
    - Sin dependencias nuevas salvo que sean imprescindibles; justifícalo en el PR.
-4. Comprueba que la sintaxis es correcta:
+4. Comprueba que la sintaxis es correcta y que las pruebas pasan:
 
    ```bat
    python -m py_compile conversor_webp.py
+   python -m unittest discover -s tests -v
    ```
 
 5. Ejecuta la lista de comprobación de [`docs/ARQUITECTURA.md`](docs/ARQUITECTURA.md#10-pruebas).

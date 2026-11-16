@@ -1,4 +1,4 @@
-﻿CONVERSOR WEBP 2.3
+CONVERSOR WEBP 2.3.1
 ==================
 
 Aplicacion para convertir imagenes (JPG, PNG, BMP, TIFF, GIF, ICO...) a

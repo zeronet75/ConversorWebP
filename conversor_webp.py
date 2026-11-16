@@ -24,6 +24,7 @@ import io
 import json
 import os
 import queue
+import re
 import shutil
 import subprocess
 import sys
@@ -37,7 +38,7 @@ from pathlib import Path
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 try:
-    from PIL import Image, ImageOps
+    from PIL import Image, ImageCms, ImageOps
 
     Image.init()
 except ImportError:  # pragma: no cover
@@ -70,7 +71,7 @@ except Exception:  # pragma: no cover - la app sigue funcionando sin arrastrar
 
 
 APP_NAME = "Conversor WebP"
-APP_VERSION = "2.3"
+APP_VERSION = "2.3.1"
 
 IMAGE_EXTS = {
     ".jpg", ".jpeg", ".jfif", ".jpe", ".png", ".bmp", ".dib", ".gif",
@@ -155,7 +156,7 @@ def extract_with_tool(tool: Path, archive: Path, dest: Path) -> None:
     if nombre.startswith("unrar"):
         cmd = [str(tool), "x", "-o+", "-inul", str(archive), str(dest) + os.sep]
     elif nombre.startswith("winrar"):
-        cmd = [str(tool), "x", "-ibck", "-y", str(archive), str(dest) + os.sep]
+        cmd = [str(tool), "x", "-y", "-inul", str(archive), str(dest) + os.sep]
     else:
         cmd = [str(tool), "x", "-y", "-bso0", "-bsp0", f"-o{dest}", str(archive)]
     proc = subprocess.run(
@@ -188,14 +189,20 @@ def extract_zip_builtin(archive: Path, dest: Path) -> None:
 
 def extract_archive(archive: Path, dest: Path) -> None:
     dest.mkdir(parents=True, exist_ok=True)
+    error_zip: Exception | None = None
     if archive.suffix.lower() == ".zip":
         try:
             extract_zip_builtin(archive, dest)
             return
-        except Exception:
-            pass  # ZIP con cifrado o compresion rara: se intenta con 7-Zip
+        except Exception as e:  # noqa: BLE001
+            error_zip = e  # ZIP cifrado o compresion rara: se intenta con 7-Zip
     tool = find_extractor()
     if tool is None:
+        if error_zip is not None:
+            raise RuntimeError(
+                f"No se pudo extraer {archive.name}: {error_zip}\n"
+                "Instala 7-Zip o WinRAR para los formatos comprimidos avanzados."
+            )
         raise RuntimeError(
             "Para abrir archivos .rar o .7z hace falta 7-Zip o WinRAR instalado.\n"
             "Los .zip funcionan sin instalar nada."
@@ -212,8 +219,40 @@ def collect_images_from_dir(root: Path) -> list[Path]:
 
 
 def hex_to_rgb(value: str) -> tuple[int, int, int]:
-    value = value.lstrip("#")
-    return tuple(int(value[i: i + 2], 16) for i in (0, 2, 4))  # type: ignore[return-value]
+    """Convierte #RGB o #RRGGBB en una tupla RGB. Lanza ValueError si no es valido."""
+    texto = (value or "").strip().lstrip("#")
+    if len(texto) == 3:
+        texto = "".join(c * 2 for c in texto)
+    if len(texto) != 6:
+        raise ValueError(f"color no valido: {value!r} (usa #RRGGBB)")
+    try:
+        return tuple(int(texto[i: i + 2], 16) for i in (0, 2, 4))  # type: ignore[return-value]
+    except ValueError as e:
+        raise ValueError(f"color no valido: {value!r} (usa #RRGGBB)") from e
+
+
+_RESERVADOS = {
+    "CON", "PRN", "AUX", "NUL",
+    *[f"COM{i}" for i in range(1, 10)],
+    *[f"LPT{i}" for i in range(1, 10)],
+}
+
+
+def nombre_seguro(nombre: str, defecto: str) -> tuple[str, bool]:
+    """Devuelve un nombre de archivo válido para Windows y si hubo cambios."""
+    original = (nombre or "").strip()
+    limpio = Path(original).name
+    limpio = re.sub(r'[<>:"/\\|?*\x00-\x1f]', "_", limpio).strip(" .")
+    if not limpio:
+        limpio = defecto
+    if limpio.split(".")[0].upper() in _RESERVADOS:
+        limpio = "_" + limpio
+    return limpio, limpio != original
+
+
+def _ps_quote(texto: str) -> str:
+    """Escapa una cadena para incluirla entre comillas simples de PowerShell."""
+    return str(texto).replace("'", "''")
 
 
 def ruta_manual() -> Path | None:
@@ -305,10 +344,18 @@ def _encode_ajustando_peso(
     return mejor, ""
 
 
+def _perfil_srgb() -> bytes | None:
+    """Bytes de un perfil sRGB estándar (o None si ImageCms no está disponible)."""
+    try:
+        return ImageCms.ImageCmsProfile(ImageCms.createProfile("sRGB")).tobytes()
+    except Exception:
+        return None
+
+
 def convert_one(src: Path, dst: Path, job: Job) -> tuple[int, int, str]:
     """Convierte una imagen. Devuelve (bytes_in, bytes_out, aviso)."""
     aviso = ""
-    formato = "AVIF" if job.formato == "AVIF" else "WEBP"
+    formato = "AVIF" if str(job.formato).upper() == "AVIF" else "WEBP"
     with Image.open(src) as im:
         fotogramas = getattr(im, "n_frames", 1)
         if fotogramas > 1:
@@ -316,18 +363,54 @@ def convert_one(src: Path, dst: Path, job: Job) -> tuple[int, int, str]:
         im.seek(0)
         im.load()
 
+        es_cmyk = im.mode == "CMYK"
+        icc_salida: bytes | None = im.info.get("icc_profile")
+
         try:  # corrige fotos giradas por la camara (EXIF Orientation)
             im = ImageOps.exif_transpose(im) or im
         except Exception:
             pass
 
+        # CMYK (imprenta): convertir con su perfil a sRGB; el perfil CMYK no vale para RGB
+        if es_cmyk:
+            convertida = None
+            if icc_salida:
+                try:
+                    perfil = ImageCms.ImageCmsProfile(io.BytesIO(icc_salida))
+                    convertida = ImageCms.profileToProfile(
+                        im, perfil, ImageCms.createProfile("sRGB"), outputMode="RGB"
+                    )
+                    icc_salida = _perfil_srgb()
+                except Exception:
+                    convertida = None
+            if convertida is None:
+                im = im.convert("RGB")
+                icc_salida = None
+            else:
+                im = convertida
+
+        # Transparencia: se detecta antes de redimensionar y se pasa a RGBA
+        tiene_alfa = im.mode in ("RGBA", "LA", "PA", "RGBa") or (
+            im.mode == "P" and "transparency" in im.info
+        )
+        if tiene_alfa and not job.flatten and im.mode != "RGBA":
+            im = im.convert("RGBA")
+
         # Redimensionado: solo reduce, nunca amplia imagenes pequenas
         if job.max_dimension and max(im.size) > job.max_dimension:
             im.thumbnail((job.max_dimension, job.max_dimension), Image.LANCZOS)
 
-        tiene_alfa = im.mode in ("RGBA", "LA", "PA", "RGBa") or (
-            im.mode == "P" and "transparency" in im.info
-        )
+        # Modo final
+        if job.flatten and tiene_alfa:
+            rgba = im.convert("RGBA")
+            fondo = Image.new("RGB", rgba.size, hex_to_rgb(job.background))
+            fondo.paste(rgba, mask=rgba.split()[-1])
+            im = fondo
+        elif not job.flatten and tiene_alfa:
+            if im.mode != "RGBA":
+                im = im.convert("RGBA")
+        elif im.mode not in ("RGB", "L"):
+            im = im.convert("RGB")
 
         if formato == "AVIF":
             opciones: dict = {"speed": 6 if job.method >= 4 else 8}
@@ -341,24 +424,11 @@ def convert_one(src: Path, dst: Path, job: Job) -> tuple[int, int, str]:
                 opciones["lossless"] = True
             else:
                 opciones["quality"] = job.quality
-
-        if tiene_alfa and not job.flatten:
-            if im.mode != "RGBA":
-                im = im.convert("RGBA")
-            if formato == "WEBP":
+            if tiene_alfa and not job.flatten:
                 opciones["exact"] = True
-        else:
-            if tiene_alfa and job.flatten:
-                rgba = im.convert("RGBA")
-                fondo = Image.new("RGB", rgba.size, hex_to_rgb(job.background))
-                fondo.paste(rgba, mask=rgba.split()[-1])
-                im = fondo
-            elif im.mode not in ("RGB", "L"):
-                im = im.convert("RGB")
 
-        icc = im.info.get("icc_profile")
-        if icc:
-            opciones["icc_profile"] = icc
+        if icc_salida:
+            opciones["icc_profile"] = icc_salida
 
         dst.parent.mkdir(parents=True, exist_ok=True)
 
@@ -384,13 +454,15 @@ def run_job(job: Job, emit, cancel_event: threading.Event) -> None:
     res = Result()
     producidos: list[Path] = []
     filas: list[tuple] = []  # informe CSV
-    ext = ".avif" if job.formato == "AVIF" else ".webp"
+    formato = "AVIF" if str(job.formato).upper() == "AVIF" else "WEBP"
+    ext = ".avif" if formato == "AVIF" else ".webp"
     try:
         temp_root = Path(tempfile.mkdtemp(prefix="conversor_webp_"))
         entradas: list[tuple[Path, Path]] = []  # (archivo, ruta relativa)
         # Si hay varios comprimidos se antepone su nombre para no mezclar contenido
         comprimidos = [s for s in job.sources if s.suffix.lower() in ARCHIVE_EXTS]
         prefijar_comprimidos = len(comprimidos) > 1
+        n_archivo = 0
 
         for src in job.sources:
             if cancel_event.is_set():
@@ -401,7 +473,8 @@ def run_job(job: Job, emit, cancel_event: threading.Event) -> None:
             elif src.suffix.lower() in ARCHIVE_EXTS:
                 emit("status", f"Extrayendo {src.name}...")
                 emit("log", ("info", f"Extrayendo {src.name} ..."))
-                destino = temp_root / f"arc{len(entradas)}_{src.stem}"
+                n_archivo += 1
+                destino = temp_root / f"arc{n_archivo}_{src.stem}"
                 try:
                     extract_archive(src, destino)
                     res.archives += 1
@@ -523,7 +596,12 @@ def run_job(job: Job, emit, cancel_event: threading.Event) -> None:
         # ---- fase 3: ZIP e informe ----
         if job.make_zip and producidos and not cancel_event.is_set():
             emit("status", "Creando archivo ZIP...")
-            nombre = job.zip_name.strip() or f"webp_{datetime.now():%Y%m%d_%H%M}.zip"
+            defecto = f"webp_{datetime.now():%Y%m%d_%H%M}.zip"
+            nombre, cambiado = nombre_seguro(
+                job.zip_name.strip() or defecto, defecto
+            )
+            if cambiado:
+                emit("log", ("warn", f"Nombre de ZIP ajustado a: {nombre}"))
             if not nombre.lower().endswith(".zip"):
                 nombre += ".zip"
             ruta_zip = job.output_dir / nombre
@@ -779,8 +857,10 @@ class App(BaseTk):  # type: ignore[misc,valid-type]
     def __init__(self, sources_iniciales: list[Path] | None = None) -> None:
         super().__init__()
         self.title(f"{APP_NAME} {APP_VERSION}")
-        self.geometry("1000x840")
-        self.minsize(920, 760)
+        ancho = max(860, min(1000, self.winfo_screenwidth() - 80))
+        alto = max(640, min(840, self.winfo_screenheight() - 120))
+        self.geometry(f"{ancho}x{alto}")
+        self.minsize(860, 620)
         self.configure(bg=BG)
 
         self.sources: list[Path] = []
@@ -812,6 +892,8 @@ class App(BaseTk):  # type: ignore[misc,valid-type]
         self.running = False
         self.total = 0
         self._acerca_ventana: VentanaAcerca | None = None
+        self._closing = False
+        self._after_id: str | None = None
 
         self._dpi_setup()
         self._build_style()
@@ -828,7 +910,8 @@ class App(BaseTk):  # type: ignore[misc,valid-type]
         self._center()
 
         self.protocol("WM_DELETE_WINDOW", self._on_close)
-        self.after(100, self._drain_queue)
+        self.bind("<Destroy>", self._al_destruir, add="+")
+        self._after_id = self.after(100, self._drain_queue)
 
         if DND_AVAILABLE:
             self._registrar_dnd_global()
@@ -1248,11 +1331,13 @@ class App(BaseTk):  # type: ignore[misc,valid-type]
                 argumentos = f'"{Path(__file__).resolve()}"'
                 icono = str(Path(__file__).resolve().parent / "icon.ico")
             script = (
-                "$s=(New-Object -ComObject WScript.Shell).CreateShortcut('" + str(lnk) + "');"
-                f"$s.TargetPath='{objetivo}';"
-                f"$s.Arguments='{argumentos}';"
-                f"$s.WorkingDirectory='{objetivo.parent}';"
-                f"$s.IconLocation='{icono}';"
+                "$s=(New-Object -ComObject WScript.Shell).CreateShortcut('"
+                + _ps_quote(lnk)
+                + "');"
+                f"$s.TargetPath='{_ps_quote(objetivo)}';"
+                f"$s.Arguments='{_ps_quote(argumentos)}';"
+                f"$s.WorkingDirectory='{_ps_quote(objetivo.parent)}';"
+                f"$s.IconLocation='{_ps_quote(icono)}';"
                 "$s.Save()"
             )
             proc = subprocess.run(
@@ -1358,6 +1443,44 @@ class App(BaseTk):  # type: ignore[misc,valid-type]
             "target_kb": self._target_kb(),
         }
 
+    def _ajustes_completos(self) -> dict:
+        """Ajustes de imagen + opciones de flujo, para el historial."""
+        datos = self._ajustes_actuales()
+        datos.update(
+            {
+                "keep_structure": bool(self.keep_structure.get()),
+                "overwrite": bool(self.overwrite.get()),
+                "make_zip": bool(self.make_zip.get()),
+                "zip_name": self.zip_name.get(),
+                "formato": self.formato.get(),
+                "csv_report": bool(self.csv_report.get()),
+            }
+        )
+        return datos
+
+    def _aplicar_completos(self, datos: dict) -> None:
+        self._aplicando_preset = True
+        try:
+            if "keep_structure" in datos:
+                self.keep_structure.set(bool(datos["keep_structure"]))
+            if "overwrite" in datos:
+                self.overwrite.set(bool(datos["overwrite"]))
+            if "make_zip" in datos:
+                self.make_zip.set(bool(datos["make_zip"]))
+            if str(datos.get("zip_name", "")).strip():
+                self.zip_name.set(str(datos["zip_name"]))
+            if "formato" in datos:
+                self.formato.set(
+                    "AVIF" if str(datos["formato"]).upper() == "AVIF" else "WebP"
+                )
+            if "csv_report" in datos:
+                self.csv_report.set(bool(datos["csv_report"]))
+        finally:
+            self._aplicando_preset = False
+        self._aplicar_ajustes(datos)
+        self._on_zip_toggle()
+        self._on_formato()
+
     def _aplicar_ajustes(self, datos: dict) -> None:
         self._aplicando_preset = True
         try:
@@ -1438,7 +1561,7 @@ class App(BaseTk):  # type: ignore[misc,valid-type]
             "fecha": datetime.now().strftime("%d/%m/%Y %H:%M"),
             "sources": [str(p) for p in self.sources],
             "output_dir": self.output_dir.get(),
-            "ajustes": self._ajustes_actuales(),
+            "ajustes": self._ajustes_completos(),
             "converted": res.converted,
         }
         if (
@@ -1479,7 +1602,7 @@ class App(BaseTk):  # type: ignore[misc,valid-type]
             messagebox.showinfo(APP_NAME, "Los archivos de ese trabajo ya no existen.")
             return
         self.output_dir.set(h.get("output_dir", ""))
-        self._aplicar_ajustes(h.get("ajustes", {}))
+        self._aplicar_completos(h.get("ajustes", {}))
         self.preset_sel.set("Personalizado")
         self._refrescar_origen()
         self._log("info", f"Historial: cargado el trabajo del {h.get('fecha', '')}.")
@@ -1529,11 +1652,26 @@ class App(BaseTk):  # type: ignore[misc,valid-type]
 
     def _anadir(self, rutas: list[Path]) -> None:
         ignorados = 0
+        existentes: set[Path] = set()
+        for p in self.sources:
+            try:
+                existentes.add(p.resolve())
+            except OSError:
+                existentes.add(p)
+
         for r in rutas:
-            if r in self.sources:
+            try:
+                clave = r.resolve()
+            except OSError:
+                clave = r
+            if clave in existentes or r in self.sources:
+                continue
+            if not r.exists():
+                ignorados += 1
                 continue
             if r.is_dir() or is_image(r) or r.suffix.lower() in ARCHIVE_EXTS:
                 self.sources.append(r)
+                existentes.add(clave)
             else:
                 ignorados += 1
         self._refrescar_origen()
@@ -1557,7 +1695,11 @@ class App(BaseTk):  # type: ignore[misc,valid-type]
         rutas = filedialog.askopenfilenames(
             title="Selecciona imagenes",
             filetypes=[
-                ("Imagenes", "*.jpg *.jpeg *.jfif *.png *.bmp *.gif *.tif *.tiff *.ico *.webp"),
+                (
+                    "Imagenes",
+                    "*.jpg *.jpeg *.jfif *.png *.bmp *.gif *.tif *.tiff *.ico "
+                    "*.webp *.avif *.tga *.pcx *.dds *.ppm *.pgm *.pbm",
+                ),
                 ("Todos los archivos", "*.*"),
             ],
         )
@@ -1693,6 +1835,13 @@ class App(BaseTk):  # type: ignore[misc,valid-type]
                     "ajustar sin perder fidelidad. Se aplicara sin limite de peso.",
                 )
 
+        if self.flatten.get():
+            try:
+                hex_to_rgb(self.background.get())
+            except ValueError as e:
+                messagebox.showerror(APP_NAME, f"Color de fondo no valido:\n{e}")
+                return
+
         job = Job(
             sources=list(self.sources),
             output_dir=salida,
@@ -1765,6 +1914,8 @@ class App(BaseTk):  # type: ignore[misc,valid-type]
         self.log.configure(state="disabled")
 
     def _drain_queue(self) -> None:
+        if self._closing:
+            return
         try:
             while True:
                 tipo, dato = self.queue.get_nowait()
@@ -1786,7 +1937,8 @@ class App(BaseTk):  # type: ignore[misc,valid-type]
                     self._finish(dato)
         except queue.Empty:
             pass
-        self.after(100, self._drain_queue)
+        if not self._closing:
+            self._after_id = self.after(100, self._drain_queue)
 
     def _reproducir_aviso(self, correcto: bool) -> None:
         """Pitido final: agudo si todo fue bien, grave si hubo errores o se cancelo."""
@@ -1813,7 +1965,7 @@ class App(BaseTk):  # type: ignore[misc,valid-type]
 
     def _finish(self, res: Result) -> None:
         self._set_running(False)
-        self._reproducir_aviso(bool(res.converted and not res.failed and not res.cancelled))
+        self._reproducir_aviso(not res.failed and not res.cancelled)
         self._registrar_historial(res)
         mb_in = res.bytes_in / 1048576
         mb_out = res.bytes_out / 1048576
@@ -1848,14 +2000,35 @@ class App(BaseTk):  # type: ignore[misc,valid-type]
             if res.csv_path:
                 extra += f"\nInforme CSV:\n{res.csv_path.name}"
             messagebox.showinfo(APP_NAME, resumen + extra)
+        elif res.skipped:
+            messagebox.showinfo(
+                APP_NAME,
+                f"No se convirtio ninguna imagen: {res.skipped} ya existian y se omitieron.\n"
+                "Activa 'Sobrescribir archivos existentes' si quieres regenerarlas.",
+            )
         else:
             messagebox.showinfo(APP_NAME, "No se encontro ninguna imagen que convertir.")
+
+    def _al_destruir(self, event=None) -> None:
+        """Detiene el bucle de eventos pendiente al cerrar la ventana."""
+        if event is not None and event.widget is not self:
+            return
+        self._closing = True
+        if self._after_id is not None:
+            try:
+                self.after_cancel(self._after_id)
+            except Exception:
+                pass
+            self._after_id = None
 
     def _on_close(self) -> None:
         if self.running:
             if not messagebox.askyesno(APP_NAME, "Hay una conversion en curso. ¿Salir de todas formas?"):
                 return
             self.cancel_event.set()
+            if self.worker is not None:
+                self.worker.join(timeout=1.5)
+        self._al_destruir()
         self._save_config()
         self.destroy()
 
@@ -1863,32 +2036,69 @@ class App(BaseTk):  # type: ignore[misc,valid-type]
     def _load_config(self) -> None:
         try:
             data = json.loads(CONFIG_FILE.read_text(encoding="utf-8"))
-            self.quality.set(int(data.get("quality", 85)))
-            self.method.set(int(data.get("method", 6)))
-            self.lossless.set(bool(data.get("lossless", False)))
-            self.keep_structure.set(bool(data.get("keep_structure", True)))
-            self.overwrite.set(bool(data.get("overwrite", True)))
-            self.reencode_webp.set(bool(data.get("reencode_webp", False)))
-            self.flatten.set(bool(data.get("flatten", False)))
-            self.make_zip.set(bool(data.get("make_zip", True)))
-            self.beep.set(bool(data.get("beep", True)))
-            self.formato.set("AVIF" if str(data.get("formato", "WebP")).upper() == "AVIF" else "WebP")
-            self.csv_report.set(bool(data.get("csv_report", False)))
-            self.background.set(data.get("background", "#ffffff"))
-            self.output_dir.set(data.get("output_dir", ""))
-            self.zip_name.set(data.get("zip_name", self.zip_name.get()))
-            dim = int(data.get("max_dimension", 0) or 0)
-            self.max_dim.set(str(dim) if dim > 0 else "Sin cambio")
-            kb = int(data.get("target_kb", 0) or 0)
-            self.peso_kb.set(str(kb) if kb > 0 else "150")
-            self.peso_activo.set(kb > 0)
-            self.presets_usuario = {
-                str(k): dict(v) for k, v in (data.get("presets") or {}).items()
-            }
-            self.historial = [h for h in (data.get("historial") or []) if isinstance(h, dict)][:10]
-            self.btn_color.configure(bg=self.background.get(), activebackground=self.background.get())
+            if not isinstance(data, dict):
+                raise ValueError("configuracion no valida")
         except Exception:
-            pass
+            data = {}
+
+        def entero(clave: str, defecto: int, minimo: int | None = None, maximo: int | None = None) -> int:
+            try:
+                valor = int(data.get(clave, defecto))
+            except (TypeError, ValueError):
+                valor = defecto
+            if minimo is not None:
+                valor = max(minimo, valor)
+            if maximo is not None:
+                valor = min(maximo, valor)
+            return valor
+
+        def booleano(clave: str, defecto: bool) -> bool:
+            valor = data.get(clave, defecto)
+            return valor if isinstance(valor, bool) else defecto
+
+        self.quality.set(entero("quality", 85, 1, 100))
+        self.method.set(entero("method", 6, 0, 6))
+        self.lossless.set(booleano("lossless", False))
+        self.keep_structure.set(booleano("keep_structure", True))
+        self.overwrite.set(booleano("overwrite", True))
+        self.reencode_webp.set(booleano("reencode_webp", False))
+        self.flatten.set(booleano("flatten", False))
+        self.make_zip.set(booleano("make_zip", True))
+        self.beep.set(booleano("beep", True))
+        self.csv_report.set(booleano("csv_report", False))
+        self.formato.set("AVIF" if str(data.get("formato", "WebP")).upper() == "AVIF" else "WebP")
+
+        fondo = data.get("background", "#ffffff")
+        try:
+            hex_to_rgb(str(fondo))
+            self.background.set(str(fondo))
+        except ValueError:
+            self.background.set("#ffffff")
+        self.btn_color.configure(bg=self.background.get(), activebackground=self.background.get())
+
+        self.output_dir.set(str(data.get("output_dir", "") or ""))
+        self.zip_name.set(str(data.get("zip_name", self.zip_name.get()) or self.zip_name.get()))
+
+        dim = entero("max_dimension", 0, 0)
+        self.max_dim.set(str(dim) if dim > 0 else "Sin cambio")
+        kb = entero("target_kb", 0, 0)
+        self.peso_kb.set(str(kb) if kb > 0 else "150")
+        self.peso_activo.set(kb > 0)
+
+        presets = data.get("presets")
+        if isinstance(presets, dict):
+            self.presets_usuario = {
+                str(k): dict(v) for k, v in presets.items() if isinstance(v, dict)
+            }
+        else:
+            self.presets_usuario = {}
+
+        historial = data.get("historial")
+        if isinstance(historial, list):
+            self.historial = [h for h in historial if isinstance(h, dict)][:10]
+        else:
+            self.historial = []
+
         self.scale_q.set(self.quality.get())
         self._on_quality()
         self._on_lossless()
@@ -1902,32 +2112,33 @@ class App(BaseTk):  # type: ignore[misc,valid-type]
     def _save_config(self) -> None:
         try:
             CONFIG_FILE.parent.mkdir(parents=True, exist_ok=True)
-            CONFIG_FILE.write_text(
-                json.dumps(
-                    {
-                        "quality": int(round(float(self.scale_q.get()))),
-                        "method": int(self.method.get()),
-                        "lossless": self.lossless.get(),
-                        "keep_structure": self.keep_structure.get(),
-                        "overwrite": self.overwrite.get(),
-                        "reencode_webp": self.reencode_webp.get(),
-                        "flatten": self.flatten.get(),
-                        "make_zip": self.make_zip.get(),
-                        "beep": self.beep.get(),
-                        "background": self.background.get(),
-                        "output_dir": self.output_dir.get(),
-                        "zip_name": self.zip_name.get(),
-                        "max_dimension": self._max_dimension(),
-                        "target_kb": self._target_kb(),
-                        "formato": self.formato.get(),
-                        "csv_report": self.csv_report.get(),
-                        "presets": self.presets_usuario,
-                        "historial": self.historial,
-                    },
-                    indent=2,
-                ),
-                encoding="utf-8",
+            texto = json.dumps(
+                {
+                    "quality": int(round(float(self.scale_q.get()))),
+                    "method": int(self.method.get()),
+                    "lossless": self.lossless.get(),
+                    "keep_structure": self.keep_structure.get(),
+                    "overwrite": self.overwrite.get(),
+                    "reencode_webp": self.reencode_webp.get(),
+                    "flatten": self.flatten.get(),
+                    "make_zip": self.make_zip.get(),
+                    "beep": self.beep.get(),
+                    "background": self.background.get(),
+                    "output_dir": self.output_dir.get(),
+                    "zip_name": self.zip_name.get(),
+                    "max_dimension": self._max_dimension(),
+                    "target_kb": self._target_kb(),
+                    "formato": self.formato.get(),
+                    "csv_report": self.csv_report.get(),
+                    "presets": self.presets_usuario,
+                    "historial": self.historial,
+                },
+                indent=2,
+                ensure_ascii=False,
             )
+            temporal = CONFIG_FILE.with_name(CONFIG_FILE.name + ".tmp")
+            temporal.write_text(texto, encoding="utf-8")
+            os.replace(temporal, CONFIG_FILE)
         except Exception:
             pass
 
@@ -1947,17 +2158,25 @@ def _say(msg: str) -> None:
 def run_cli(argv: list[str]) -> int:
     import argparse
 
+    def color_arg(valor: str) -> str:
+        try:
+            hex_to_rgb(valor)
+        except ValueError as e:
+            raise argparse.ArgumentTypeError(str(e)) from e
+        return valor
+
     parser = argparse.ArgumentParser(
         prog="ConversorWebP",
         description="Convierte imagenes a WebP. Sin argumentos abre la interfaz grafica.",
     )
+    parser.add_argument("--version", action="version", version=f"%(prog)s {APP_VERSION}")
     parser.add_argument("origen", nargs="+", help="Archivos, carpetas o .zip/.rar de origen")
     parser.add_argument("-o", "--output", required=True, help="Carpeta de salida")
     parser.add_argument("-q", "--quality", type=int, default=85, help="Calidad 1-100 (85)")
     parser.add_argument("-m", "--method", type=int, default=6, help="Esfuerzo 0-6 (6)")
     parser.add_argument("--lossless", action="store_true", help="Modo sin perdida")
     parser.add_argument("--flat", action="store_true", help="Aplanar transparencia")
-    parser.add_argument("--bg", default="#ffffff", help="Color de fondo al aplanar")
+    parser.add_argument("--bg", type=color_arg, default="#ffffff", help="Color de fondo al aplanar")
     parser.add_argument("--no-recursive", action="store_true", help="No mantener subcarpetas")
     parser.add_argument("--no-overwrite", action="store_true", help="Omitir WebP existentes")
     parser.add_argument("--webp", action="store_true", help="Recodificar tambien los .webp")
@@ -1966,8 +2185,8 @@ def run_cli(argv: list[str]) -> int:
                         help="Redimensionar al lado maximo indicado en px (0 = sin cambio)")
     parser.add_argument("--max-kb", type=int, default=0,
                         help="Peso maximo por imagen en KB (0 = sin limite)")
-    parser.add_argument("--format", dest="formato", default="webp", choices=["webp", "avif"],
-                        help="Formato de salida (webp o avif)")
+    parser.add_argument("--format", dest="formato", default="webp", type=str.lower,
+                        choices=["webp", "avif"], help="Formato de salida (webp o avif)")
     parser.add_argument("--csv", action="store_true", help="Guardar informe CSV en la salida")
     args = parser.parse_args(argv)
 
@@ -1989,7 +2208,11 @@ def run_cli(argv: list[str]) -> int:
         formato="AVIF" if args.formato == "avif" else "WEBP",
         csv_report=bool(args.csv),
     )
-    job.output_dir.mkdir(parents=True, exist_ok=True)
+    try:
+        job.output_dir.mkdir(parents=True, exist_ok=True)
+    except Exception as e:  # noqa: BLE001
+        _say(f"ERROR: no se puede crear la carpeta de salida: {e}")
+        return 2
 
     def emit(tipo, dato):
         if tipo == "log":
