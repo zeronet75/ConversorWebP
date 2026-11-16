@@ -40,6 +40,7 @@
 - [Configuración guardada](#configuración-guardada)
 - [Qué se conserva al convertir](#qué-se-conserva-al-convertir)
 - [Limitaciones conocidas](#limitaciones-conocidas)
+- [Manual completo](docs/MANUAL.md)
 - [Arquitectura del código](docs/ARQUITECTURA.md)
 - [Compilar el ejecutable](docs/COMPILAR.md)
 - [Estructura del repositorio](#estructura-del-repositorio)
@@ -405,6 +406,13 @@ Resumen: un único módulo con tres capas — utilidades de archivos/comprimidos
 de trabajo que se comunica con la UI mediante una cola de eventos; los lotes se reparten con
 `ThreadPoolExecutor`.
 
+## Manual completo
+
+- **[docs/MANUAL.md](docs/MANUAL.md)** — manual navegable aquí en GitHub, con todas las opciones explicadas.
+- **[MANUAL_DE_USO.html](MANUAL_DE_USO.html)** — versión ilustrada e imprimible (se abre en el navegador;
+  el programa la usa en `Ayuda → Manual de uso`).
+- **[LEEME.txt](LEEME.txt)** — guía rápida de una página.
+
 ---
 
 ## Compilar el ejecutable
@@ -434,9 +442,12 @@ ConversorWebP/
 ├── CONTRIBUTING.md         Guía para contribuir
 ├── LICENSE                 Licencia MIT
 ├── docs/
+│   ├── MANUAL.md           Manual completo en Markdown (navegable en GitHub)
 │   ├── ARQUITECTURA.md     Diseño técnico del programa
 │   ├── COMPILAR.md         Cómo generar el .exe
 │   └── img/ventana.png     Captura de la interfaz
+├── tools/
+│   └── html_a_md.py        Regenera docs/MANUAL.md desde el HTML (opcional)
 └── .gitignore
 ```
 
