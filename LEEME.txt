@@ -1,0 +1,113 @@
+﻿CONVERSOR WEBP 2.3
+==================
+
+Aplicacion para convertir imagenes (JPG, PNG, BMP, TIFF, GIF, ICO...) a
+formato WebP, con interfaz grafica y opcion de empaquetar el resultado en ZIP.
+
+--------------------------------------------------------------------------
+COMO USARLA
+--------------------------------------------------------------------------
+1. Ejecuta "ConversorWebP.exe" (no hace falta instalar Python).
+
+2. Anade imagenes de cualquiera de estas formas:
+   - Arrastra archivos, carpetas o comprimidos (.zip / .rar / .7z) desde el
+     Explorador de Windows y sueltalos sobre la ventana.
+   - Boton "Archivos..."    -> seleccionar una o varias imagenes.
+   - Boton "Carpeta..."     -> seleccionar una carpeta entera (incluye
+                               subcarpetas automaticamente).
+   - Boton ".zip / .rar..." -> seleccionar uno o varios comprimidos.
+
+3. Elige la "Carpeta de salida" con el boton "Examinar...". Ahi se guardaran
+   las imagenes ya convertidas a .webp.
+
+4. Ajusta las opciones si quieres:
+   - Calidad (1-100). 85 es un buen equilibrio. Mas calidad = mas peso.
+   - Esfuerzo (0-6). 6 comprime mejor pero tarda algo mas.
+   - Mantener subcarpetas del origen.
+   - Sobrescribir WebP existentes (si se desactiva, se omiten).
+   - Empaquetar el resultado en .zip: crea un ZIP con todos los WebP dentro
+     de la misma carpeta de salida. Puedes cambiar el nombre del ZIP.
+   - Sin perdida (lossless): maxima fidelidad, archivos mas grandes.
+   - Recodificar tambien los .webp: por defecto los .webp se saltan.
+   - Aplanar transparencia sobre un color: para PNG con fondo transparente.
+   - Aviso sonoro al terminar: pitido agudo si todo va bien y grave si hubo
+     errores o cancelaste. Se desactiva con la casilla de la barra inferior.
+
+   En la columna derecha:
+   - Preset: Web, Catalogo, Iconos sin perdida o Maxima calidad. "Guardar"
+     crea un preset propio; "Borrar" elimina el seleccionado.
+   - Lado maximo: reduce a 2560/1920/1600/1200/800/512 px sin ampliar.
+   - Peso maximo: ajusta la calidad sola para no pasar de los KB indicados.
+
+   En la columna izquierda:
+   - Formato de salida: WebP (por defecto) o AVIF.
+   - Guardar informe CSV: deja un CSV con peso original, final y ahorro.
+
+5. Pulsa "Convertir" y espera. La barra muestra el progreso y el registro
+   inferior el detalle de cada archivo. Los lotes de 4 o mas imagenes se
+   convierten en paralelo.
+
+   Atajos: Ctrl+O archivos, Ctrl+Mayus+O carpeta, Ctrl+Enter o F5 convertir,
+   Supr quitar seleccionados, F1 manual.
+
+   El menu "Historial" guarda los ultimos 10 trabajos y permite repetirlos.
+
+6. Opcional: menu Herramientas -> "Anadir a 'Enviar a' del Explorador" crea un
+   acceso para clic derecho -> Enviar a -> Conversor WebP.
+
+--------------------------------------------------------------------------
+AYUDA Y MANUAL
+--------------------------------------------------------------------------
+En la barra superior tienes el menu "Ayuda", con:
+  - Manual de uso (F1): abre MANUAL_DE_USO.html en el navegador, con la
+    explicacion detallada de cada opcion.
+  - Acerca de: resumen de caracteristicas, entorno y consejos.
+
+El menu "Acerca de" de la barra tambien abre esa misma ventana directamente.
+
+--------------------------------------------------------------------------
+COMPRIMIDOS .RAR Y .7Z
+--------------------------------------------------------------------------
+Los .zip se abren sin instalar nada (con el lector integrado).
+
+Para .rar y .7z la aplicacion usa 7-Zip o WinRAR si estan instalados en el
+sistema (se detecta automaticamente). Si no aparece ninguno, la esquina
+inferior derecha de la ventana mostrara "Sin 7-Zip/WinRAR: solo .zip".
+Instala 7-Zip (gratuito, https://www.7-zip.org) para habilitarlos.
+
+--------------------------------------------------------------------------
+NOTAS
+--------------------------------------------------------------------------
+- Las fotos se corrigen automaticamente si vienen giradas (etiqueta EXIF).
+- Se conserva la transparencia de los PNG y el perfil de color si lo tienen.
+- Los GIF animados se convierten usando el primer fotograma (se avisa en el
+  registro).
+- Los archivos originales NUNCA se modifican ni se borran.
+- Ajustes y ultima carpeta de salida se recuerdan entre sesiones
+  (%APPDATA%\ConversorWebP\config.json).
+
+--------------------------------------------------------------------------
+MODO CONSOLA (opcional)
+--------------------------------------------------------------------------
+ConversorWebP.exe <origen...> -o <carpeta_salida> [opciones]
+
+  -q 85                 calidad 1-100
+  -m 6                  esfuerzo 0-6
+  --zip resultado.zip   crear un ZIP con el resultado
+  --lossless            modo sin perdida
+  --flat --bg "#ffffff" aplanar transparencia sobre un color
+  --no-recursive        no mantener subcarpetas
+  --no-overwrite        omitir WebP ya existentes
+  --webp                recodificar tambien los .webp
+
+Ejemplo:
+  ConversorWebP.exe "C:\fotos\vacaciones.rar" -o "C:\fotos\webp" --zip fotos.zip
+
+--------------------------------------------------------------------------
+ARCHIVOS DEL PAQUETE
+--------------------------------------------------------------------------
+ConversorWebP.exe        aplicacion lista para usar (autocontenida)
+MANUAL_DE_USO.html       manual completo (se abre con cualquier navegador)
+conversor_webp.py        codigo fuente (Python + Pillow + tkinterdnd2)
+icon.ico / icon.png      icono de la aplicacion
+LEEME.txt                este archivo
