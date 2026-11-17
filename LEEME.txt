@@ -1,4 +1,4 @@
-CONVERSOR WEBP 2.3.1
+CONVERSOR WEBP 2.4.1
 ==================
 
 Aplicacion para convertir imagenes (JPG, PNG, BMP, TIFF, GIF, ICO...) a
@@ -65,8 +65,6 @@ En la barra superior tienes el menu "Ayuda", con:
   - Manual de uso (F1): abre MANUAL_DE_USO.html en el navegador, con la
     explicacion detallada de cada opcion.
   - Acerca de: resumen de caracteristicas, entorno y consejos.
-
-El menu "Acerca de" de la barra tambien abre esa misma ventana directamente.
 
 --------------------------------------------------------------------------
 COMPRIMIDOS .RAR Y .7Z

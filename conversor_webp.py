@@ -73,7 +73,7 @@ except Exception:  # pragma: no cover - la app sigue funcionando sin arrastrar
 
 
 APP_NAME = "Conversor WebP"
-APP_VERSION = "2.4.0"
+APP_VERSION = "2.4.1"
 
 IMAGE_EXTS = {
     ".jpg", ".jpeg", ".jfif", ".jpe", ".png", ".bmp", ".dib", ".gif",
@@ -1682,7 +1682,6 @@ class App(BaseTk):  # type: ignore[misc,valid-type]
             command=self._toggle_forzar_gpu,
         )
         barra.add_cascade(label="Herramientas", menu=herr)
-        barra.add_command(label="Acerca de", command=self._acerca_de)
         self.configure(menu=barra)
         self._refrescar_historial()
         self.bind_all("<F1>", lambda _e: self._abrir_manual())

@@ -10,7 +10,7 @@
 </p>
 
 <p align="center">
-  <img alt="Versión" src="https://img.shields.io/badge/version-2.4.0-1a73e8">
+  <img alt="Versión" src="https://img.shields.io/badge/version-2.4.1-1a73e8">
   <img alt="Windows" src="https://img.shields.io/badge/Windows-10%20%7C%2011-0078D6">
   <img alt="Python" src="https://img.shields.io/badge/Python-3.12-3776AB">
   <img alt="Pillow" src="https://img.shields.io/badge/Pillow-13-11557C">
@@ -524,6 +524,7 @@ ConversorWebP/
 
 Consulta [CHANGELOG.md](CHANGELOG.md). Resumen:
 
+- **2.4.1** — elimina el menú «Acerca de» duplicado de la barra superior; queda en Ayuda.
 - **2.4.0** — detección de GPU y modo CUDA experimental (desactivado por defecto).
 - **2.3.1** — corrección de color CMYK, historial completo, nombres de ZIP seguros y otros ajustes.
 - **2.3** — presets, redimensionado, peso objetivo, historial, atajos, paralelo, CSV, AVIF y “Enviar a”.

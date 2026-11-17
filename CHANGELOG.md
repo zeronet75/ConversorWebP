@@ -6,6 +6,15 @@ Todos los cambios relevantes del proyecto. Formato basado en
 
 ---
 
+## [2.4.1] — 2026-11-17
+
+### Cambiado
+
+- Eliminado el menú **Acerca de** de la barra superior: duplicaba `Ayuda → Acerca de Conversor WebP`.
+  El acceso queda solo dentro de **Ayuda** (y `F1` sigue abriendo el manual).
+
+---
+
 ## [2.4.0] — 2026-11-17
 
 ### Añadido
@@ -147,7 +156,10 @@ Todos los cambios relevantes del proyecto. Formato basado en
 - Conservación de transparencia, perfil ICC y orientación EXIF.
 - Modo consola básico.
 
+[2.4.1]: #241--2026-11-17
+[2.4.0]: #240--2026-11-17
 [2.3.1]: #231--2026-11-16
+[2.3]: #23--2026-11-16
 [2.2]: #22--2026-11-16
 [2.1]: #21--2026-11-16
 [2.0]: #20--2026-11-16

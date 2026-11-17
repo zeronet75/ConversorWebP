@@ -23,9 +23,9 @@ Manual completo del programa: qué hace cada opción y cómo sacarle partido.
 
 ---
 
-# Conversor WebP 2.3.1
+# Conversor WebP 2.4.1
 
-**Novedades de la versión 2.3.1:** presets de calidad, redimensionado, peso máximo por imagen, historial de trabajos, selección múltiple, atajos de teclado, conversión en paralelo, informe CSV, formato AVIF y acceso directo en **Enviar a** del Explorador.
+**Novedades de la versión 2.4.1:** detección de GPU, modo CUDA experimental, presets de calidad, redimensionado, peso máximo por imagen, historial de trabajos, selección múltiple, atajos de teclado, conversión en paralelo, informe CSV, formato AVIF y acceso directo en **Enviar a** del Explorador.
 
 ## 1. Qué es y qué hace
 
@@ -320,5 +320,5 @@ Sí, siempre que Windows pueda leer y escribir en ellas. Si la unidad se descone
 | Un archivo aparece como «FALLO» | Está dañado o es un formato no soportado. El registro indica el motivo concreto. |
 | El antivirus bloquea el .exe | Los ejecutables generados con PyInstaller a veces dan falsos positivos. Añade una exclusión o usa el código fuente con Python. |
 
-Conversor WebP 2.3.1 · Programa local para Windows · Interfaz Tkinter, conversión con Pillow, arrastre con TkDND, extracción con 7-Zip/WinRAR.\
+Conversor WebP 2.4.1 · Programa local para Windows · Interfaz Tkinter, conversión con Pillow, arrastre con TkDND, extracción con 7-Zip/WinRAR.\
 Este manual se abre desde el programa en **Ayuda → Manual de uso** y también puede abrirse con doble clic en cualquier navegador.
