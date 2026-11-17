@@ -32,6 +32,9 @@ COMO USARLA
    - Aplanar transparencia sobre un color: para PNG con fondo transparente.
    - Aviso sonoro al terminar: pitido agudo si todo va bien y grave si hubo
      errores o cancelaste. Se desactiva con la casilla de la barra inferior.
+   - Acelerar con GPU (experimental): usa CUDA para JPEG grandes que se
+     reduzcan. Desactivado por defecto (la CPU en paralelo es mas rapida en
+     lotes). Estado en Herramientas -> Aceleracion GPU.
 
    En la columna derecha:
    - Preset: Web, Catalogo, Iconos sin perdida o Maxima calidad. "Guardar"

@@ -309,6 +309,24 @@ no se puede ajustar la calidad sin perder fidelidad.</p>
   siempre queda en o por debajo del límite (salvo el caso imposible citado).
 </div>
 
+<h3>Aceleración GPU (experimental)</h3>
+<p>El programa detecta la tarjeta gráfica al arrancar y muestra su nombre junto a la casilla
+<strong>Acelerar con GPU (CUDA)</strong>. El modo CUDA está <strong>desactivado por defecto</strong>: en las
+pruebas reales la CPU en paralelo es más rápida para lotes, porque el codificador WebP/AVIF es de CPU y la
+GPU solo puede decodificar JPEG y reescalar.</p>
+<table>
+  <tr><th>Escenario medido (RTX 3060)</th><th>CPU</th><th>GPU</th></tr>
+  <tr><td>1 foto de 24 MP reducida a 1920 px</td><td>669 ms</td><td>435 ms (1,5×)</td></tr>
+  <tr><td>60 fotos de 24 MP reducidas a 1600 px (app completa)</td><td><strong>12,5 s</strong></td><td>18,0 s</td></tr>
+</table>
+<p>Si la activas, solo se aplica a <strong>JPEG RGB de 8 MP o más que se vayan a reducir</strong>. En lotes
+pequeños ni siquiera se carga CUDA salvo que marques <em>Herramientas → Forzar GPU en lotes pequeños</em>.
+Cualquier fallo de CUDA revierte a CPU para esa imagen.</p>
+<div class="nota">
+  El ejecutable no incluye PyTorch (ocuparía ~2,4 GB): usa el que ya esté instalado en el equipo. En
+  <em>Herramientas → Aceleración GPU</em> puedes ver el estado y elegir la carpeta que lo contiene.
+</div>
+
 <h2 id="acciones">6. Botones de acción, progreso y registro</h2>
 <table>
   <tr><th>Elemento</th><th>Qué hace</th></tr>
@@ -414,6 +432,8 @@ instalados; el programa los busca solo en las rutas habituales de Windows.</p>
   <tr><td><code>--max-dim N</code></td><td>Redimensiona al lado máximo de N píxeles (no amplía).</td></tr>
   <tr><td><code>--max-kb N</code></td><td>Busca la calidad necesaria para no superar N KB por imagen.</td></tr>
   <tr><td><code>--csv</code></td><td>Genera el informe CSV en la carpeta de salida.</td></tr>
+  <tr><td><code>--gpu</code></td><td>Fuerza la GPU CUDA aunque el lote sea pequeño.</td></tr>
+  <tr><td><code>--no-gpu</code></td><td>Desactiva la aceleración GPU.</td></tr>
   <tr><td><code>--lossless</code></td><td>Modo sin pérdida.</td></tr>
   <tr><td><code>--flat --bg "#ffffff"</code></td><td>Aplana la transparencia sobre ese color.</td></tr>
   <tr><td><code>--no-recursive</code></td><td>No mantiene subcarpetas (todo plano).</td></tr>

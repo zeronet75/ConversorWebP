@@ -20,6 +20,8 @@ from __future__ import annotations
 
 import ctypes
 import csv
+import importlib
+import importlib.util
 import io
 import json
 import os
@@ -71,7 +73,7 @@ except Exception:  # pragma: no cover - la app sigue funcionando sin arrastrar
 
 
 APP_NAME = "Conversor WebP"
-APP_VERSION = "2.3.1"
+APP_VERSION = "2.4.0"
 
 IMAGE_EXTS = {
     ".jpg", ".jpeg", ".jfif", ".jpe", ".png", ".bmp", ".dib", ".gif",
@@ -292,6 +294,8 @@ class Job:
     target_kb: int = 0          # 0 = sin limite; si > 0, peso maximo por imagen
     formato: str = "WEBP"       # "WEBP" o "AVIF"
     csv_report: bool = False    # guardar un informe CSV en la carpeta de salida
+    usar_gpu: bool = False      # modo experimental CUDA (desactivado por defecto)
+    gpu_forzar: bool = False    # usar GPU aunque el lote sea pequeño
 
 
 @dataclass
@@ -305,6 +309,312 @@ class Result:
     zip_path: Path | None = None
     csv_path: Path | None = None
     cancelled: bool = False
+
+
+# --------------------------------------------------------------------------- #
+#  Aceleración por GPU (CUDA opcional)
+# --------------------------------------------------------------------------- #
+JPEG_EXTS = {".jpg", ".jpeg", ".jfif", ".jpe"}
+GPU_MIN_PIXELES = 8_000_000  # por debajo de ~8 MP la GPU no compensa
+GPU_MIN_LOTE = 30            # CUDA tarda varios segundos en cargar; solo compensa en lotes grandes
+
+
+@dataclass
+class EstadoGPU:
+    hardware: list[str] = field(default_factory=list)
+    nvidia: str = ""
+    driver: str = ""
+    memoria: str = ""
+    activa: bool = False
+    intentado: bool = False
+    motivo: str = ""
+    torch: str = ""
+    torchvision: str = ""
+    ruta: str = ""
+
+
+_GPU = EstadoGPU()
+_GPU_LOCK = threading.Semaphore(2)
+_TORCH = None
+_TORCHVISION = None
+_DECODE_JPEG = None
+_IMAGE_READ_MODE = None
+_FUNCIONAL = None
+
+
+def _leer_gpus_registro() -> list[str]:
+    """Enumera las tarjetas gráficas desde el registro de Windows (rápido)."""
+    nombres: list[str] = []
+    try:
+        import winreg
+    except Exception:  # pragma: no cover
+        return nombres
+    clave = r"SYSTEM\CurrentControlSet\Control\Class\{4d36e968-e325-11ce-bfc1-08002be10318}"
+    try:
+        with winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, clave) as raiz:
+            i = 0
+            while True:
+                try:
+                    sub = winreg.EnumKey(raiz, i)
+                except OSError:
+                    break
+                i += 1
+                try:
+                    with winreg.OpenKey(raiz, sub) as k:
+                        nombre, _ = winreg.QueryValueEx(k, "DriverDesc")
+                except OSError:
+                    continue
+                nombre = str(nombre).strip()
+                if nombre and nombre not in nombres:
+                    nombres.append(nombre)
+    except Exception:
+        pass
+    return nombres
+
+
+def _leer_nvidia_smi() -> None:
+    exe = Path(os.environ.get("SystemRoot", r"C:\Windows")) / "System32" / "nvidia-smi.exe"
+    if not exe.exists():
+        encontrado = shutil.which("nvidia-smi")
+        if not encontrado:
+            return
+        exe = Path(encontrado)
+    try:
+        proc = subprocess.run(
+            [str(exe), "--query-gpu=name,driver_version,memory.total", "--format=csv,noheader"],
+            capture_output=True,
+            text=True,
+            timeout=6,
+            creationflags=_no_window_flags(),
+        )
+    except Exception:
+        return
+    if proc.returncode != 0 or not (proc.stdout or "").strip():
+        return
+    partes = [p.strip() for p in proc.stdout.strip().splitlines()[0].split(",")]
+    if len(partes) >= 3:
+        _GPU.nvidia, _GPU.driver, _GPU.memoria = partes[0], partes[1], partes[2]
+
+
+def detectar_hardware_gpu(refrescar: bool = False) -> EstadoGPU:
+    if _GPU.hardware and not refrescar:
+        return _GPU
+    _GPU.hardware = _leer_gpus_registro()
+    _leer_nvidia_smi()
+    return _GPU
+
+
+def nombre_gpu() -> str:
+    detectar_hardware_gpu()
+    return _GPU.nvidia or (_GPU.hardware[0] if _GPU.hardware else "")
+
+
+def _leer_gpu_path_config() -> str:
+    try:
+        data = json.loads(CONFIG_FILE.read_text(encoding="utf-8"))
+        return str(data.get("gpu_path", "") or "")
+    except Exception:
+        return ""
+
+
+def candidatos_torch() -> list[Path]:
+    """Carpetas site-packages donde puede vivir un PyTorch con CUDA."""
+    rutas: list[Path] = []
+
+    def add(ruta) -> None:
+        try:
+            p = Path(ruta)
+        except Exception:
+            return
+        if p not in rutas:
+            rutas.append(p)
+
+    base = (
+        Path(sys.executable).parent
+        if getattr(sys, "frozen", False)
+        else Path(__file__).resolve().parent
+    )
+    for sub in ("gpu", "torch_gpu", "site-packages", "gpu/Lib/site-packages", ".venv/Lib/site-packages"):
+        add(base / sub)
+
+    configurada = _leer_gpu_path_config()
+    if configurada:
+        add(configurada)
+        add(Path(configurada) / "Lib" / "site-packages")
+
+    add(Path(os.environ.get("USERPROFILE", "")) / ".venv" / "Lib" / "site-packages")
+    local = Path(os.environ.get("LOCALAPPDATA", ""))
+    for p in local.glob("Programs/Python/Python3*/Lib/site-packages"):
+        add(p)
+    for p in Path("C:/").glob("Python3*/Lib/site-packages"):
+        add(p)
+
+    for unidad in ("C:/", "D:/", "E:/", "F:/"):
+        try:
+            raiz = Path(unidad)
+            if not raiz.exists():
+                continue
+            for patron in ("*/.venv/Lib/site-packages", "*/Lib/site-packages", "*/*/Lib/site-packages"):
+                for p in raiz.glob(patron):
+                    add(p)
+        except OSError:
+            continue
+
+    return [p for p in rutas if (p / "torch" / "__init__.py").is_file()]
+
+
+def _cargar_torch():
+    global _TORCH
+    try:
+        _TORCH = importlib.import_module("torch")
+        return _TORCH
+    except Exception as primer_error:
+        errores: list[str] = []
+        for ruta in candidatos_torch():
+            sys.path.insert(0, str(ruta))
+            try:
+                _TORCH = importlib.import_module("torch")
+                _GPU.ruta = str(ruta)
+                return _TORCH
+            except Exception as e:  # noqa: BLE001
+                errores.append(f"{ruta}: {type(e).__name__}: {e}")
+                try:
+                    sys.path.remove(str(ruta))
+                except ValueError:
+                    pass
+                for mod in [m for m in sys.modules if m == "torch" or m.startswith("torch.")]:
+                    del sys.modules[mod]
+        if errores:
+            raise RuntimeError("; ".join(errores[-2:]))
+        raise primer_error
+
+
+def iniciar_gpu(refrescar: bool = False) -> EstadoGPU:
+    """Detecta la GPU e intenta cargar PyTorch CUDA. Se cachea el resultado."""
+    global _TORCH, _TORCHVISION, _DECODE_JPEG, _IMAGE_READ_MODE, _FUNCIONAL
+    if _GPU.intentado and not refrescar:
+        return _GPU
+
+    detectar_hardware_gpu(refrescar=True)
+    _GPU.intentado = True
+    _GPU.activa = False
+    _GPU.motivo = ""
+    _GPU.torch = ""
+    _GPU.torchvision = ""
+    _GPU.ruta = ""
+
+    if not _GPU.hardware:
+        _GPU.motivo = "no se detecto ninguna tarjeta grafica"
+        return _GPU
+
+    try:
+        torch = _cargar_torch()
+    except Exception as e:  # noqa: BLE001
+        _GPU.motivo = f"PyTorch no disponible: {e}"
+        return _GPU
+
+    try:
+        if not bool(torch.cuda.is_available()):
+            _GPU.motivo = "PyTorch instalado sin CUDA o sin driver compatible"
+            return _GPU
+        _TORCHVISION = importlib.import_module("torchvision")
+        _io = importlib.import_module("torchvision.io")
+        _DECODE_JPEG = getattr(_io, "decode_jpeg")
+        _IMAGE_READ_MODE = importlib.import_module("torchvision.io.image").ImageReadMode
+        _FUNCIONAL = importlib.import_module("torch.nn.functional")
+    except Exception as e:  # noqa: BLE001
+        _GPU.motivo = f"torchvision no disponible: {e}"
+        return _GPU
+
+    _GPU.activa = True
+    _GPU.torch = getattr(torch, "__version__", "?")
+    _GPU.torchvision = getattr(_TORCHVISION, "__version__", "?")
+    return _GPU
+
+
+def _orientar_tensor(tensor, orientacion: int):
+    """Aplica la orientación EXIF a un tensor CHW en GPU."""
+    if orientacion == 2:
+        return _TORCH.flip(tensor, [2])
+    if orientacion == 3:
+        return _TORCH.rot90(tensor, 2, [1, 2])
+    if orientacion == 4:
+        return _TORCH.flip(tensor, [1])
+    if orientacion == 5:
+        return _TORCH.transpose(tensor, 1, 2)
+    if orientacion == 6:
+        return _TORCH.rot90(tensor, -1, [1, 2])
+    if orientacion == 7:
+        return _TORCH.flip(_TORCH.transpose(tensor, 1, 2), [1, 2])
+    if orientacion == 8:
+        return _TORCH.rot90(tensor, 1, [1, 2])
+    return tensor
+
+
+def convertir_jpeg_gpu(src: Path, dst: Path, job: Job) -> tuple[int, int, str] | None:
+    """Ruta GPU para JPEG grandes que se van a reducir. None si no aplica."""
+    if not (_GPU.activa and job.usar_gpu and job.max_dimension and _DECODE_JPEG is not None):
+        return None
+    if src.suffix.lower() not in JPEG_EXTS:
+        return None
+
+    try:
+        with Image.open(src) as probe:
+            if probe.format != "JPEG" or probe.mode != "RGB":
+                return None
+            ancho, alto = probe.size
+            if max(ancho, alto) <= job.max_dimension:
+                return None
+            if ancho * alto < GPU_MIN_PIXELES:
+                return None
+            orientacion = probe.getexif().get(274, 1)
+            icc = probe.info.get("icc_profile")
+
+        datos = src.read_bytes()
+        with _GPU_LOCK:
+            tensor = _DECODE_JPEG(
+                _TORCH.frombuffer(bytearray(datos), dtype=_TORCH.uint8),
+                device="cuda",
+                mode=_IMAGE_READ_MODE.RGB,
+            )
+            tensor = _orientar_tensor(tensor, int(orientacion))
+            alto, ancho = int(tensor.shape[1]), int(tensor.shape[2])
+            if max(alto, ancho) > job.max_dimension:
+                escala = job.max_dimension / max(alto, ancho)
+                nuevo = (max(1, round(alto * escala)), max(1, round(ancho * escala)))
+                tensor = _FUNCIONAL.interpolate(
+                    tensor.unsqueeze(0).float(), size=nuevo, mode="bicubic", antialias=True
+                )
+                tensor = tensor.clamp_(0, 255).to(_TORCH.uint8).squeeze(0)
+            arreglo = tensor.permute(1, 2, 0).contiguous().cpu().numpy()
+
+        imagen = Image.fromarray(arreglo)
+        aviso = _codificar(imagen, dst, job, icc)
+        return src.stat().st_size, dst.stat().st_size, aviso
+    except Exception:  # noqa: BLE001 - cualquier fallo cae al camino CPU
+        return None
+
+
+def contar_jpeg_grandes(tareas, job: Job, limite: int = GPU_MIN_LOTE) -> int:
+    """Cuenta JPEG que se beneficiarían de la GPU (hasta `limite`)."""
+    if not job.max_dimension:
+        return 0
+    cuenta = 0
+    for src, _rel, _dst in tareas:
+        if src.suffix.lower() not in JPEG_EXTS:
+            continue
+        try:
+            with Image.open(src) as im:
+                if im.format != "JPEG" or im.mode != "RGB":
+                    continue
+                ancho, alto = im.size
+        except Exception:
+            continue
+        if max(ancho, alto) > job.max_dimension and ancho * alto >= GPU_MIN_PIXELES:
+            cuenta += 1
+            if cuenta >= limite:
+                return cuenta
+    return cuenta
 
 
 def _encode_imagen(im: Image.Image, formato: str, opciones: dict) -> bytes:
@@ -352,10 +662,56 @@ def _perfil_srgb() -> bytes | None:
         return None
 
 
+def _codificar(
+    im: Image.Image, dst: Path, job: Job, icc_salida: bytes | None, aviso: str = ""
+) -> str:
+    """Codifica la imagen final (WebP/AVIF), aplicando peso objetivo si toca."""
+    formato = "AVIF" if str(job.formato).upper() == "AVIF" else "WEBP"
+    tiene_alfa = im.mode == "RGBA"
+
+    if formato == "AVIF":
+        opciones: dict = {"speed": 6 if job.method >= 4 else 8}
+        if job.lossless:
+            opciones["lossless"] = True
+        else:
+            opciones["quality"] = job.quality
+    else:
+        opciones = {"method": job.method}
+        if job.lossless:
+            opciones["lossless"] = True
+        else:
+            opciones["quality"] = job.quality
+        if tiene_alfa:
+            opciones["exact"] = True
+
+    if icc_salida:
+        opciones["icc_profile"] = icc_salida
+
+    dst.parent.mkdir(parents=True, exist_ok=True)
+
+    if job.target_kb > 0 and not job.lossless:
+        datos, nota = _encode_ajustando_peso(im, formato, opciones, job.target_kb, job.quality)
+        dst.write_bytes(datos)
+        if nota:
+            aviso = f"{aviso}; {nota}" if aviso else nota
+    else:
+        if job.target_kb > 0 and job.lossless:
+            aviso = (
+                f"{aviso}; el peso maximo no aplica en modo sin perdida"
+                if aviso
+                else "el peso maximo no aplica en modo sin perdida"
+            )
+        im.save(dst, formato, **opciones)
+    return aviso
+
+
 def convert_one(src: Path, dst: Path, job: Job) -> tuple[int, int, str]:
     """Convierte una imagen. Devuelve (bytes_in, bytes_out, aviso)."""
+    resultado_gpu = convertir_jpeg_gpu(src, dst, job)
+    if resultado_gpu is not None:
+        return resultado_gpu
+
     aviso = ""
-    formato = "AVIF" if str(job.formato).upper() == "AVIF" else "WEBP"
     with Image.open(src) as im:
         fotogramas = getattr(im, "n_frames", 1)
         if fotogramas > 1:
@@ -412,38 +768,7 @@ def convert_one(src: Path, dst: Path, job: Job) -> tuple[int, int, str]:
         elif im.mode not in ("RGB", "L"):
             im = im.convert("RGB")
 
-        if formato == "AVIF":
-            opciones: dict = {"speed": 6 if job.method >= 4 else 8}
-            if job.lossless:
-                opciones["lossless"] = True
-            else:
-                opciones["quality"] = job.quality
-        else:
-            opciones = {"method": job.method}
-            if job.lossless:
-                opciones["lossless"] = True
-            else:
-                opciones["quality"] = job.quality
-            if tiene_alfa and not job.flatten:
-                opciones["exact"] = True
-
-        if icc_salida:
-            opciones["icc_profile"] = icc_salida
-
-        dst.parent.mkdir(parents=True, exist_ok=True)
-
-        if job.target_kb > 0 and not job.lossless:
-            datos, nota = _encode_ajustando_peso(
-                im, formato, opciones, job.target_kb, job.quality
-            )
-            dst.write_bytes(datos)
-            if nota:
-                aviso = f"{aviso}; {nota}" if aviso else nota
-        else:
-            if job.target_kb > 0 and job.lossless:
-                aviso = f"{aviso}; el peso maximo no aplica en modo sin perdida" if aviso \
-                    else "el peso maximo no aplica en modo sin perdida"
-            im.save(dst, formato, **opciones)
+        aviso = _codificar(im, dst, job, icc_salida, aviso)
 
     return src.stat().st_size, dst.stat().st_size, aviso
 
@@ -526,6 +851,36 @@ def run_job(job: Job, emit, cancel_event: threading.Event) -> None:
         hechas = total - len(tareas)
         if hechas:
             emit("progress", (hechas, total))
+
+        # ---- GPU: preparar solo si el lote lo amortiza ----
+        if job.usar_gpu and job.max_dimension:
+            n_grandes = contar_jpeg_grandes(tareas, job)
+            if n_grandes >= GPU_MIN_LOTE or job.gpu_forzar:
+                emit("status", "Preparando aceleracion GPU...")
+                estado = iniciar_gpu()
+                if estado.activa:
+                    emit(
+                        "log",
+                        (
+                            "info",
+                            f"GPU activa: {estado.nvidia or estado.hardware[0]} · CUDA · "
+                            f"torch {estado.torch}",
+                        ),
+                    )
+                elif estado.hardware:
+                    emit(
+                        "log",
+                        ("muted", f"GPU detectada ({nombre_gpu()}) sin aceleracion: {estado.motivo}"),
+                    )
+            elif n_grandes:
+                emit(
+                    "log",
+                    (
+                        "muted",
+                        f"GPU no usada: {n_grandes} foto(s) grande(s). CUDA tarda varios "
+                        "segundos en cargar y no compensa en lotes pequenos (fuerza con --gpu).",
+                    ),
+                )
 
         # ---- fase 2: convertir (en paralelo si hay lote) ----
         def exito(src: Path, dst: Path, tam_in: int, tam_out: int, aviso: str) -> None:
@@ -835,6 +1190,29 @@ class VentanaAcerca(tk.Toplevel):
                                  else "Arrastrar y soltar: no disponible (instala tkinterdnd2)\n"), "li")
         t.insert("end", "•  " + (f"Extractor de comprimidos: {tool}\n" if tool
                                  else "Extractor de comprimidos: ninguno (solo .zip)\n"), "li")
+        estado_gpu = detectar_hardware_gpu()
+        gpu = estado_gpu.nvidia or (estado_gpu.hardware[0] if estado_gpu.hardware else "no detectada")
+        t.insert("end", "•  " + f"GPU: {gpu}\n", "li")
+        t.insert(
+            "end",
+            "•  "
+            + (
+                "Aceleracion CUDA: activa\n"
+                if _GPU.activa
+                else "Aceleracion CUDA: opcional (Herramientas -> Aceleracion GPU)\n"
+            ),
+            "li",
+        )
+
+        t.insert("end", "Aceleración GPU\n", "h2")
+        t.insert(
+            "end",
+            "Se detecta la tarjeta gráfica y, si hay PyTorch con CUDA, se usa para decodificar y "
+            "reducir JPEG grandes (8 MP o más). La codificación WebP/AVIF sigue siendo CPU, así que "
+            "la ganancia aparece al redimensionar fotos grandes (~1,3-1,5x); en imágenes pequeñas "
+            "no se usa.\n",
+            "p",
+        )
 
         t.insert("end", "Consejos\n", "h2")
         for linea in (
@@ -885,6 +1263,9 @@ class App(BaseTk):  # type: ignore[misc,valid-type]
         self._aplicando_preset = False
         self.formato = tk.StringVar(value="WebP")
         self.csv_report = tk.BooleanVar(value=False)
+        self.usar_gpu = tk.BooleanVar(value=False)
+        self.gpu_path = ""
+        self.gpu_forzar_var = tk.BooleanVar(value=False)
 
         self.queue: queue.Queue = queue.Queue()
         self.cancel_event = threading.Event()
@@ -1110,6 +1491,15 @@ class App(BaseTk):  # type: ignore[misc,valid-type]
         )
         self.chk_csv.pack(anchor="w", pady=(6, 0))
 
+        fila_gpu = ttk.Frame(card_out, style="Card.TFrame")
+        fila_gpu.pack(fill="x", pady=(6, 0))
+        self.chk_gpu = ttk.Checkbutton(
+            fila_gpu, text="Acelerar con GPU (CUDA)", variable=self.usar_gpu
+        )
+        self.chk_gpu.pack(side="left")
+        self.lbl_gpu = ttk.Label(fila_gpu, text="", style="MutedCard.TLabel")
+        self.lbl_gpu.pack(side="right")
+
         ttk.Label(card_cal, text="3. Calidad y opciones", style="Section.TLabel").pack(anchor="w")
 
         fila_preset = ttk.Frame(card_cal, style="Card.TFrame")
@@ -1268,6 +1658,7 @@ class App(BaseTk):  # type: ignore[misc,valid-type]
         self._on_flatten()
         self._on_formato()
         self._refrescar_extractor()
+        self._refrescar_gpu_ui()
 
     def _build_menu(self) -> None:
         barra = tk.Menu(self)
@@ -1283,6 +1674,13 @@ class App(BaseTk):  # type: ignore[misc,valid-type]
             label="Anadir a 'Enviar a' del Explorador", command=self._instalar_sendto
         )
         herr.add_command(label="Quitar de 'Enviar a'", command=self._quitar_sendto)
+        herr.add_separator()
+        herr.add_command(label="Aceleracion GPU (CUDA)...", command=self._dialogo_gpu)
+        herr.add_checkbutton(
+            label="Forzar GPU en lotes pequenos",
+            variable=self.gpu_forzar_var,
+            command=self._toggle_forzar_gpu,
+        )
         barra.add_cascade(label="Herramientas", menu=herr)
         barra.add_command(label="Acerca de", command=self._acerca_de)
         self.configure(menu=barra)
@@ -1377,6 +1775,84 @@ class App(BaseTk):  # type: ignore[misc,valid-type]
             self.lbl_extractor.configure(
                 text="Sin 7-Zip/WinRAR: solo .zip", foreground="#b45309"
             )
+
+    def _refrescar_gpu_ui(self) -> None:
+        estado = detectar_hardware_gpu()
+        if not estado.hardware:
+            self.lbl_gpu.configure(text="Sin GPU detectada")
+            self.chk_gpu.configure(state="disabled")
+            self.usar_gpu.set(False)
+            return
+        nombre = estado.nvidia or estado.hardware[0]
+        if _GPU.activa:
+            texto = f"Activa: {nombre}"
+        elif _GPU.intentado:
+            texto = "Sin CUDA (ver Herramientas)"
+        else:
+            texto = nombre
+        self.lbl_gpu.configure(text=texto)
+
+    def _dialogo_gpu(self) -> None:
+        estado = iniciar_gpu(refrescar=True)
+        lineas = [
+            "Aceleracion por GPU (CUDA)",
+            "",
+            "Tarjetas detectadas:",
+            ("  · " + "\n  · ".join(estado.hardware)) if estado.hardware else "  (ninguna)",
+        ]
+        if estado.nvidia:
+            lineas.append(
+                f"\nNVIDIA: {estado.nvidia} · {estado.memoria} · driver {estado.driver}"
+            )
+        lineas.append(f"PyTorch: {estado.torch or 'no cargado'}")
+        lineas.append(f"torchvision: {estado.torchvision or 'no cargado'}")
+        lineas.append(f"Ruta de PyTorch: {estado.ruta or '(integrada en el sistema)'}")
+        lineas.append(
+            "Forzar en lotes pequenos: " + ("si" if self.gpu_forzar_var.get() else "no")
+        )
+        lineas.append("\nEstado: " + ("ACTIVA" if estado.activa else f"CPU · {estado.motivo}"))
+        texto = "\n".join(lineas)
+
+        if estado.activa:
+            messagebox.showinfo(
+                APP_NAME,
+                texto
+                + "\n\nSe usara automaticamente en lotes de 30 o mas JPEG grandes que se "
+                "reduzcan (CUDA tarda varios segundos en cargar). Puedes forzarla en "
+                "Herramientas -> 'Forzar GPU en lotes pequenos'. El codificador WebP/AVIF "
+                "sigue siendo CPU.",
+            )
+            self._refrescar_gpu_ui()
+            return
+
+        texto += (
+            "\n\nSi PyTorch CUDA esta instalado, puedes indicar la carpeta site-packages "
+            "que lo contiene (por ejemplo, una .venv\\Lib\\site-packages)."
+        )
+        if not messagebox.askyesno(APP_NAME, texto + "\n\n¿Elegir la carpeta de PyTorch ahora?"):
+            self._refrescar_gpu_ui()
+            return
+
+        carpeta = filedialog.askdirectory(title="Carpeta site-packages con PyTorch CUDA")
+        if not carpeta:
+            return
+        self.gpu_path = carpeta
+        self._save_config()
+        estado = iniciar_gpu(refrescar=True)
+        if estado.activa:
+            messagebox.showinfo(
+                APP_NAME,
+                f"GPU activa: {estado.nvidia or nombre_gpu()}\n"
+                f"PyTorch {estado.torch} · torchvision {estado.torchvision}",
+            )
+        else:
+            messagebox.showwarning(APP_NAME, f"No se pudo activar la GPU:\n{estado.motivo}")
+        self._refrescar_gpu_ui()
+
+    def _toggle_forzar_gpu(self) -> None:
+        self._save_config()
+        estado = "activado" if self.gpu_forzar_var.get() else "desactivado"
+        self._log("info", f"GPU forzada en lotes pequenos: {estado}")
 
     def _center(self) -> None:
         self.update_idletasks()
@@ -1859,6 +2335,8 @@ class App(BaseTk):  # type: ignore[misc,valid-type]
             target_kb=self._target_kb(),
             formato="AVIF" if self.formato.get().upper() == "AVIF" else "WEBP",
             csv_report=self.csv_report.get(),
+            usar_gpu=self.usar_gpu.get(),
+            gpu_forzar=self.gpu_forzar_var.get(),
         )
 
         self._set_running(True)
@@ -1871,6 +2349,8 @@ class App(BaseTk):  # type: ignore[misc,valid-type]
             self._log("info", f"Peso maximo por imagen: {job.target_kb} KB")
         if job.csv_report:
             self._log("info", "Se guardara un informe CSV al terminar.")
+        if job.usar_gpu and job.max_dimension:
+            self._log("info", "Aceleracion GPU: se comprobara al empezar (solo JPEG grandes).")
         if job.make_zip:
             self._log("info", f"ZIP resultante: {job.zip_name}")
         self.total = 0
@@ -2066,6 +2546,9 @@ class App(BaseTk):  # type: ignore[misc,valid-type]
         self.make_zip.set(booleano("make_zip", True))
         self.beep.set(booleano("beep", True))
         self.csv_report.set(booleano("csv_report", False))
+        self.usar_gpu.set(booleano("usar_gpu", False))
+        self.gpu_path = str(data.get("gpu_path", "") or "")
+        self.gpu_forzar_var.set(booleano("gpu_forzar", False))
         self.formato.set("AVIF" if str(data.get("formato", "WebP")).upper() == "AVIF" else "WebP")
 
         fondo = data.get("background", "#ffffff")
@@ -2108,6 +2591,7 @@ class App(BaseTk):  # type: ignore[misc,valid-type]
         self._on_formato()
         self._refrescar_combo_preset()
         self._refrescar_historial()
+        self._refrescar_gpu_ui()
 
     def _save_config(self) -> None:
         try:
@@ -2130,6 +2614,9 @@ class App(BaseTk):  # type: ignore[misc,valid-type]
                     "target_kb": self._target_kb(),
                     "formato": self.formato.get(),
                     "csv_report": self.csv_report.get(),
+                    "usar_gpu": self.usar_gpu.get(),
+                    "gpu_path": self.gpu_path,
+                    "gpu_forzar": self.gpu_forzar_var.get(),
                     "presets": self.presets_usuario,
                     "historial": self.historial,
                 },
@@ -2188,6 +2675,9 @@ def run_cli(argv: list[str]) -> int:
     parser.add_argument("--format", dest="formato", default="webp", type=str.lower,
                         choices=["webp", "avif"], help="Formato de salida (webp o avif)")
     parser.add_argument("--csv", action="store_true", help="Guardar informe CSV en la salida")
+    parser.add_argument("--gpu", action="store_true",
+                        help="Forzar la GPU (aunque el lote sea pequeno)")
+    parser.add_argument("--no-gpu", action="store_true", help="Desactivar la aceleracion GPU")
     args = parser.parse_args(argv)
 
     job = Job(
@@ -2207,6 +2697,8 @@ def run_cli(argv: list[str]) -> int:
         target_kb=max(0, args.max_kb),
         formato="AVIF" if args.formato == "avif" else "WEBP",
         csv_report=bool(args.csv),
+        usar_gpu=bool(args.gpu) and not args.no_gpu,
+        gpu_forzar=bool(args.gpu) and not args.no_gpu,
     )
     try:
         job.output_dir.mkdir(parents=True, exist_ok=True)
@@ -2237,6 +2729,11 @@ def run_cli(argv: list[str]) -> int:
 
 def write_diag(destino: str) -> int:
     """Escribe un informe de diagnostico (util para soporte y pruebas)."""
+    estado_gpu = iniciar_gpu(refrescar=True)
+    try:
+        importable = importlib.util.find_spec("torch") is not None
+    except Exception:
+        importable = False
     info: dict = {
         "app": APP_NAME,
         "version": APP_VERSION,
@@ -2247,6 +2744,14 @@ def write_diag(destino: str) -> int:
         "extractor": str(find_extractor()) if find_extractor() else None,
         "manual": str(ruta_manual()) if ruta_manual() else None,
         "winsound": winsound is not None,
+        "gpu": estado_gpu.hardware,
+        "gpu_nvidia": estado_gpu.nvidia,
+        "gpu_driver": estado_gpu.driver,
+        "gpu_candidatos": [str(p) for p in candidatos_torch()],
+        "torch_importable": importable,
+        "gpu_activa": _GPU.activa,
+        "gpu_motivo": _GPU.motivo,
+        "gpu_ruta": _GPU.ruta,
     }
     if DND_AVAILABLE:
         try:

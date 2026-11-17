@@ -40,7 +40,7 @@ No adjuntes imágenes personales ni rutas privadas; basta con describir el caso 
    python -m unittest discover -s tests -v
    ```
 
-5. Ejecuta la lista de comprobación de [`docs/ARQUITECTURA.md`](docs/ARQUITECTURA.md#10-pruebas).
+5. Ejecuta la lista de comprobación de [`docs/ARQUITECTURA.md`](docs/ARQUITECTURA.md#11-pruebas).
 6. Si el cambio afecta a la interfaz o a las opciones, actualiza `README.md`,
    `MANUAL_DE_USO.html` y `CHANGELOG.md`.
 7. Abre el *pull request* explicando el problema, la solución y cómo lo has probado.

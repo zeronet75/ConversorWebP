@@ -11,8 +11,6 @@ env/
 # PyInstaller
 build/
 dist/
-*.spec
-*.manifest
 
 # Sistema
 Thumbs.db

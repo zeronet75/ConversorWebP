@@ -10,7 +10,7 @@
 </p>
 
 <p align="center">
-  <img alt="Versión" src="https://img.shields.io/badge/version-2.3.1-1a73e8">
+  <img alt="Versión" src="https://img.shields.io/badge/version-2.4.0-1a73e8">
   <img alt="Windows" src="https://img.shields.io/badge/Windows-10%20%7C%2011-0078D6">
   <img alt="Python" src="https://img.shields.io/badge/Python-3.12-3776AB">
   <img alt="Pillow" src="https://img.shields.io/badge/Pillow-13-11557C">
@@ -84,6 +84,7 @@ El programa se distribuye en dos formas:
 - **Peso máximo por imagen** en KB: ajusta la calidad automáticamente para no superarlo.
 - **Presets** incluidos y presets propios guardados por el usuario.
 - Conversión **en paralelo** para lotes grandes.
+- **Detección de la tarjeta gráfica** y modo **CUDA experimental** opcional (desactivado por defecto).
 - Conserva **transparencia**, **perfil de color ICC** y corrige la **orientación EXIF**.
 - Opción de **aplanar la transparencia** sobre un color sólido.
 
@@ -309,6 +310,59 @@ El botón principal y la extensión de los archivos se adaptan al formato elegid
 
 ---
 
+## Aceleración GPU (experimental, desactivada por defecto)
+
+La aplicación **detecta la tarjeta gráfica** al arrancar (registro de Windows + `nvidia-smi`) y muestra su
+nombre junto a la casilla `Acelerar con GPU (CUDA)`. El modo CUDA está **desactivado por defecto** porque,
+en las pruebas reales, la conversión por CPU en paralelo resulta más rápida para lotes.
+
+### Por qué está desactivado
+
+El codificador WebP/AVIF de Pillow es **CPU**; la GPU solo puede decodificar JPEG (nvJPEG) y reescalar.
+Además, la app ya reparte el trabajo entre varios hilos de CPU. Medido en una RTX 3060:
+
+| Escenario | CPU | GPU | Resultado |
+|---|---|---|---|
+| 1 foto de 24 MP → 1920 px | 669 ms | 435 ms | 1,54× más rápida |
+| 1 foto de 24 MP → 1200 px | 317 ms | 158 ms | 2,00× más rápida |
+| 60 fotos de 24 MP → 1600 px (app completa) | **12,5 s** | 18,0 s | **CPU 1,44× más rápida** |
+
+La causa: cargar CUDA cuesta ~7,5 s y la GPU no puede paralelizar la codificación, mientras que la CPU usa
+8 hilos. Solo compensa en casos concretos (una imagen enorme suelta, CPU muy cargada o equipo con CPU
+modesta), por lo que queda como opción manual.
+
+### Cuándo se usaría
+
+Si la activas, la ruta GPU se aplica solo cuando el archivo es **JPEG RGB**, tiene **8 MP o más** y se va a
+**reducir**. En lotes pequeños ni siquiera se carga CUDA salvo que marques
+`Herramientas → Forzar GPU en lotes pequeños` o uses `--gpu`. Cualquier fallo de CUDA revierte a CPU para
+esa imagen.
+
+### Cómo activarla
+
+- **Ejecutable**: usa el PyTorch CUDA que ya tengas instalado; lo busca en entornos habituales
+  (`...\.venv\Lib\site-packages`, Python del sistema, una carpeta `gpu` junto al `.exe`). Puedes indicar la
+  carpeta en `Herramientas → Aceleración GPU`.
+- **Desde el código**:
+
+  ```bat
+  pip install -r requirements-gpu.txt --index-url https://download.pytorch.org/whl/cu121
+  python conversor_webp.py
+  ```
+
+- Comprueba el estado en `Herramientas → Aceleración GPU` o con
+  `ConversorWebP.exe --diag "%TEMP%\diag.json"`.
+
+### Límites
+
+- Solo se acelera JPEG grande reducido; PNG, WebP, AVIF, GIF y BMP van por CPU.
+- La codificación final siempre es CPU.
+- El `.exe` no incluye PyTorch (ocuparía ~2,4 GB); lo carga de la instalación del sistema si existe.
+
+
+
+---
+
 ## Modo consola
 
 El mismo ejecutable funciona sin ventana. Sin argumentos, abre la interfaz.
@@ -445,8 +499,10 @@ ConversorWebP/
 ├── MANUAL_DE_USO.html      Manual de usuario ilustrado
 ├── LEEME.txt               Guía rápida
 ├── icon.ico / icon.png     Icono de la aplicación
+├── ConversorWebP.spec      Especificación de PyInstaller
 ├── requirements.txt        Dependencias de ejecución
 ├── requirements-dev.txt    Dependencias para compilar
+├── requirements-gpu.txt    PyTorch CUDA opcional
 ├── CHANGELOG.md            Historial de versiones
 ├── CONTRIBUTING.md         Guía para contribuir
 ├── LICENSE                 Licencia MIT
@@ -468,6 +524,7 @@ ConversorWebP/
 
 Consulta [CHANGELOG.md](CHANGELOG.md). Resumen:
 
+- **2.4.0** — detección de GPU y modo CUDA experimental (desactivado por defecto).
 - **2.3.1** — corrección de color CMYK, historial completo, nombres de ZIP seguros y otros ajustes.
 - **2.3** — presets, redimensionado, peso objetivo, historial, atajos, paralelo, CSV, AVIF y “Enviar a”.
 - **2.2** — menú Historial y mejoras internas de la interfaz.

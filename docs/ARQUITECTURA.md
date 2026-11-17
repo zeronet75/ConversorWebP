@@ -285,7 +285,59 @@ El ZIP se construye en la fase 4 de `run_job`; basta con sustituir `zipfile` por
 
 ---
 
-## 10. Pruebas
+## 10. Aceleración GPU (experimental)
+
+### Objetivo y realidad
+
+Se detecta la GPU (registro de Windows + `nvidia-smi`) y se expone en la interfaz, «Acerca de» y
+diagnóstico. La ruta CUDA usa **torchvision/nvJPEG** para decodificar y **CUDA** para reescalar JPEG.
+La codificación WebP/AVIF sigue en CPU, y la app ya paraleliza con hilos, así que el modo está
+**desactivado por defecto**: en la app completa, 60 fotos de 24 MP tardaron 12,5 s con CPU y 18,0 s con GPU.
+
+### Carga dinámica de PyTorch
+
+- **No hay `import torch` estático**: se usa `importlib.import_module`, de modo que PyInstaller no empaqueta
+  los ~2,4 GB de CUDA y el `.exe` se queda en ~24 MB.
+- `candidatos_torch()` busca `site-packages` con `torch/__init__.py` en:
+  - una carpeta `gpu` junto al ejecutable o al script;
+  - la ruta configurada (`gpu_path`);
+  - entornos de usuario y Python del sistema;
+  - patrones acotados en las unidades `C:` a `F:` (`*/.venv/Lib/site-packages`, `*/Lib/site-packages`,
+    `*/*/Lib/site-packages`).
+- Si la primera ruta falla, se limpian todos los módulos `torch.*` antes de probar la siguiente (evita
+  DLLs mezcladas de versiones distintas).
+- El resultado se cachea en `EstadoGPU`; `iniciar_gpu(refrescar=True)` fuerza un nuevo intento.
+
+### Ruta de conversión
+
+`convert_one` intenta primero `convertir_jpeg_gpu` y, si devuelve `None`, sigue el camino CPU:
+
+1. Solo JPEG (`format == "JPEG"`, modo `RGB`), `max_dimension > 0`, ≥ 8 MP y reducción real.
+2. Decodifica con `torchvision.io.decode_jpeg(device="cuda")`.
+3. Aplica orientación EXIF con `torch.flip`/`rot90` (las 8 orientaciones están probadas contra Pillow).
+4. Reescala con `torch.nn.functional.interpolate` (bicúbica, antialias).
+5. Descarga a CPU y codifica con `_codificar` (mismo código que la ruta CPU, incluido peso objetivo e ICC).
+
+`_GPU_LOCK` limita a 2 conversiones simultáneas en GPU para no saturar memoria/streams. Cualquier excepción
+revierte silenciosamente a CPU para esa imagen.
+
+### Activación
+
+- Casilla **Acelerar con GPU (CUDA)** (apagada por defecto).
+- `Herramientas → Forzar GPU en lotes pequeños` (config `gpu_forzar`).
+- `run_job` carga CUDA solo si hay 30+ JPEG grandes o `gpu_forzar`.
+- CLI: `--gpu` (fuerza) y `--no-gpu`.
+
+### Empaquetado
+
+El `.exe` excluye `torch`/`torchvision` y carga los del sistema. Como esas bibliotecas importan módulos de
+la stdlib no detectados estáticamente (`timeit`, `pdb`, `pickletools`, `modulefinder`, `cProfile`,
+`html.parser`…), la especificación `ConversorWebP.spec` incluye toda la stdlib y los submódulos de
+`html`, `http`, `urllib`, `email` y `xml`, además de varios módulos de Pillow.
+
+---
+
+## 11. Pruebas
 
 El repositorio incluye `tests/test_conversor.py` (unittest), que genera sus propias imágenes y no necesita
 interfaz gráfica:

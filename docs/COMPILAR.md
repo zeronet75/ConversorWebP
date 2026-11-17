@@ -32,29 +32,42 @@ python conversor_webp.py
 Desde la raíz del repositorio:
 
 ```bat
-pyinstaller --noconfirm --clean --onefile --windowed --name ConversorWebP ^
-  --icon icon.ico ^
-  --collect-all tkinterdnd2 ^
-  --add-data "MANUAL_DE_USO.html;." ^
-  --exclude-module numpy --exclude-module matplotlib ^
-  conversor_webp.py
+pyinstaller --noconfirm --clean ConversorWebP.spec
 ```
 
-Resultado: `dist\ConversorWebP.exe` (unos 22 MB).
+Resultado: `dist\ConversorWebP.exe` (~24 MB).
 
-### Por qué cada opción
+La especificación `ConversorWebP.spec` contiene toda la configuración: modo *onefile* sin consola, icono,
+manual incrustado, TkDND, exclusiones y la lista de módulos que necesita la carga opcional de PyTorch.
 
-| Opción | Motivo |
+### Por qué el `.spec` y no una línea de comandos
+
+| Elemento | Motivo |
 |---|---|
-| `--onefile` | Un único archivo fácil de mover y compartir. |
-| `--windowed` | Sin ventana de consola al abrir la GUI. |
-| `--icon icon.ico` | Icono del ejecutable y de la barra de tareas. |
-| `--collect-all tkinterdnd2` | Copia los binarios TkDND, necesarios para arrastrar y soltar. Sin esto, el `.exe` abre pero no acepta arrastres. |
-| `--add-data "MANUAL_DE_USO.html;."` | Incrusta el manual para que `Ayuda → Manual de uso` funcione aunque el HTML no esté al lado. |
-| `--exclude-module ...` | Evita arrastrar dependencias que no se usan. |
+| `--onefile` / `console=False` | Un único archivo, sin ventana de consola. |
+| `icon="icon.ico"` | Icono del ejecutable y de la barra de tareas. |
+| `collect_all("tkinterdnd2")` | Copia los binarios TkDND; sin ellos el `.exe` abre pero no acepta arrastres. |
+| `datas` con el manual | `Ayuda → Manual de uso` funciona aunque el HTML no esté al lado. |
+| `excludes=["torch", "torchvision", ...]` | Evita empaquetar ~2,4 GB de CUDA; se cargan del sistema si existen. |
+| Toda la stdlib en `hiddenimports` | torch/torchvision importan módulos (`timeit`, `pdb`, `pickletools`, `modulefinder`, `cProfile`, `html.parser`…) que un análisis estático de la app no detecta. |
+| `collect_submodules("html", "http", ...)` | Submódulos que torchvision carga de forma dinámica. |
 
-> En Linux/macOS el separador de `--add-data` es `:` en lugar de `;`. El programa está pensado para
-> Windows.
+> La lista de la stdlib se genera con `sys.stdlib_module_names`, así que se adapta a la versión de Python
+> con la que compiles. En Linux/macOS el separador de datas sería `:` y el programa no está pensado para
+> esas plataformas.
+
+### Aceleración GPU en el ejecutable
+
+El `.exe` **no incluye PyTorch**. Al activar la GPU, `conversor_webp.py` busca una instalación existente
+(`...\.venv\Lib\site-packages`, Python del sistema o una carpeta `gpu` junto al `.exe`) y la importa en
+tiempo de ejecución. Comprueba el resultado con:
+
+```bat
+ConversorWebP.exe --diag "%TEMP%\diag.json"
+```
+
+Debe aparecer `"gpu_activa": true` cuando encuentra CUDA. Si no, revisa `gpu_motivo` y
+`gpu_candidatos`.
 
 ---
 

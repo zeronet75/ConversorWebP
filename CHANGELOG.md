@@ -6,6 +6,30 @@ Todos los cambios relevantes del proyecto. Formato basado en
 
 ---
 
+## [2.4.0] — 2026-11-17
+
+### Añadido
+
+- **Detección de GPU** al arrancar (registro de Windows + `nvidia-smi`) con nombre, driver y memoria.
+- **Aceleración CUDA opcional**: decodificado nvJPEG y reescalado en GPU para JPEG RGB de 8 MP o más que
+  se vayan a reducir, con `fallback` automático a CPU por imagen.
+- **Carga de PyTorch desde el sistema**: el `.exe` no incluye CUDA (~2,4 GB); busca una instalación
+  existente o una carpeta indicada por el usuario.
+- Menú **Herramientas → Aceleración GPU** con estado, ruta de PyTorch y selección de carpeta.
+- Opción **Forzar GPU en lotes pequeños** y argumentos `--gpu` / `--no-gpu`.
+- `--diag` ampliado con GPU, candidatos de PyTorch y estado de CUDA.
+- `requirements-gpu.txt` y documentación con mediciones reales.
+
+### Notas
+
+- La codificación WebP/AVIF es CPU; la ganancia aparece al redimensionar fotos grandes (1,3–2× por imagen).
+- **El modo CUDA está desactivado por defecto**: en la app completa, 60 fotos de 24 MP tardaron 12,5 s con
+  CPU (8 hilos) y 18,0 s con GPU. Se mantiene como opción experimental.
+- La activación automática, si se marca la casilla, exige un lote de 30+ fotos grandes porque cargar CUDA
+  tarda ~7 s.
+
+---
+
 ## [2.3.1] — 2026-11-16
 
 ### Corregido
@@ -124,7 +148,6 @@ Todos los cambios relevantes del proyecto. Formato basado en
 - Modo consola básico.
 
 [2.3.1]: #231--2026-11-16
-[2.3]: #23--2026-11-16
 [2.2]: #22--2026-11-16
 [2.1]: #21--2026-11-16
 [2.0]: #20--2026-11-16

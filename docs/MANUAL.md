@@ -140,6 +140,19 @@ Al activarlo, el programa busca automáticamente la calidad más alta que deje c
 
 El peso máximo es aproximado y por imagen: se comprueba el archivo real generado, así que el resultado siempre queda en o por debajo del límite (salvo el caso imposible citado).
 
+### Aceleración GPU (experimental)
+
+El programa detecta la tarjeta gráfica al arrancar y muestra su nombre junto a la casilla **Acelerar con GPU (CUDA)**. El modo CUDA está **desactivado por defecto**: en las pruebas reales la CPU en paralelo es más rápida para lotes, porque el codificador WebP/AVIF es de CPU y la GPU solo puede decodificar JPEG y reescalar.
+
+| Escenario medido (RTX 3060) | CPU | GPU |
+|----|----|----|
+| 1 foto de 24 MP reducida a 1920 px | 669 ms | 435 ms (1,5×) |
+| 60 fotos de 24 MP reducidas a 1600 px (app completa) | **12,5 s** | 18,0 s |
+
+Si la activas, solo se aplica a **JPEG RGB de 8 MP o más que se vayan a reducir**. En lotes pequeños ni siquiera se carga CUDA salvo que marques *Herramientas → Forzar GPU en lotes pequeños*. Cualquier fallo de CUDA revierte a CPU para esa imagen.
+
+El ejecutable no incluye PyTorch (ocuparía ~2,4 GB): usa el que ya esté instalado en el equipo. En *Herramientas → Aceleración GPU* puedes ver el estado y elegir la carpeta que lo contiene.
+
 ## 6. Botones de acción, progreso y registro
 
 | Elemento | Qué hace |
@@ -230,6 +243,8 @@ El mismo ejecutable puede usarse sin ventana, por ejemplo en un script o una tar
 | `--max-dim N` | Redimensiona al lado máximo de N píxeles (no amplía). |
 | `--max-kb N` | Busca la calidad necesaria para no superar N KB por imagen. |
 | `--csv` | Genera el informe CSV en la carpeta de salida. |
+| `--gpu` | Fuerza la GPU CUDA aunque el lote sea pequeño. |
+| `--no-gpu` | Desactiva la aceleración GPU. |
 | `--lossless` | Modo sin pérdida. |
 | `--flat --bg "#ffffff"` | Aplana la transparencia sobre ese color. |
 | `--no-recursive` | No mantiene subcarpetas (todo plano). |
