@@ -132,3 +132,42 @@ Los iconos ya están en el repositorio:
 
 Si quieres regenerarlos, cualquier editor de imágenes sirve; el `.ico` debe contener al menos 16, 32,
 48, 64, 128 y 256 px.
+
+---
+
+## 7. Instalador, versión portable y CI
+
+### Instalador con Inno Setup
+
+```bat
+winget install --id JRSoftware.InnoSetup
+"C:\Program Files (x86)\Inno Setup 6\ISCC.exe" instalador\ConversorWebP.iss
+```
+
+Genera `dist_instalador\ConversorWebP-Setup-2.5.0.exe` con accesos en Inicio, desinstalador y el manual.
+La configuración se guarda en `%APPDATA%\ConversorWebP`.
+
+### Versión portable
+
+El modo portable se activa con un archivo `portable.txt` junto al `.exe` (o con la variable de entorno
+`CONVERSORWEBP_PORTABLE=1`). En ese caso la configuración se escribe en `config.json` al lado del programa.
+
+```bat
+mkdir dist_portable\ConversorWebP
+copy dist\ConversorWebP.exe dist_portable\ConversorWebP\
+copy MANUAL_DE_USO.html dist_portable\ConversorWebP\
+copy LEEME.txt dist_portable\ConversorWebP\
+copy LICENSE dist_portable\ConversorWebP\
+type nul > dist_portable\ConversorWebP\portable.txt
+powershell Compress-Archive -Path dist_portable\ConversorWebP -DestinationPath dist\ConversorWebP-Portable-2.5.0.zip -Force
+```
+
+### Integración continua
+
+`.github/workflows/pruebas.yml` ejecuta en cada push y pull request:
+
+```bat
+python -m pip install -r requirements.txt
+python -m py_compile conversor_webp.py
+python -m unittest discover -s tests -v
+```

@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Manual de uso · Conversor WebP 2.4.1</title>
+<title>Manual de uso · Conversor WebP 2.5.0</title>
 <style>
   :root{
     --azul:#1a73e8; --azul-osc:#1557b0; --texto:#1f2933; --gris:#5f6b7a;
@@ -67,7 +67,7 @@
 <div class="hoja">
 
 <header>
-  <h1>Conversor WebP 2.4.1</h1>
+  <h1>Conversor WebP 2.5.0</h1>
   <p class="sub">Manual de uso · Qué hace cada opción y cómo sacarle partido</p>
 </header>
 
@@ -88,11 +88,12 @@
     <li><a href="#ajustes">Dónde se guardan los ajustes</a></li>
     <li><a href="#faq">Preguntas frecuentes</a></li>
     <li><a href="#problemas">Solución de problemas</a></li>
+    <li><a href="#extras">Automatización, instalador y portable</a></li>
   </ol>
 </div>
 
 <div class="nota">
-  <strong>Novedades de la versión 2.4.1:</strong> detección de GPU, modo CUDA experimental, presets de calidad, redimensionado, peso máximo por imagen,
+  <strong>Novedades de la versión 2.5.0:</strong> HEIC, carpeta vigilada, patrones de nombre, solo analizar, tabla de resultados, vista previa, menú contextual, instalador y portable, detección de GPU, presets de calidad, redimensionado, peso máximo por imagen,
   historial de trabajos, selección múltiple, atajos de teclado, conversión en paralelo, informe CSV,
   formato AVIF y acceso directo en <strong>Enviar a</strong> del Explorador.
 </div>
@@ -524,8 +525,48 @@ verás un error en el registro.</p>
   </tr>
 </table>
 
+
+<h2 id="extras">15. Automatización, extras y distribución</h2>
+
+<h3>Carpeta vigilada</h3>
+<p><em>Herramientas → Carpeta vigilada…</em> permite elegir una carpeta de entrada y otra de salida. Cada
+3 segundos se revisan las imágenes y comprimidos nuevos y se convierten con los ajustes actuales, sin
+sobrescribir lo que ya exista. Se detiene desde el mismo menú o al cerrar el programa.</p>
+
+<h3>Patrón de nombres</h3>
+<p>El campo <strong>Nombre de salida</strong> acepta marcadores: <code>{nombre}</code>, <code>{ancho}</code>,
+<code>{alto}</code>, <code>{hash}</code>, <code>{fecha}</code>, <code>{formato}</code> y
+<code>{calidad}</code>. Vacío conserva el nombre original. Ejemplo: <code>{nombre}_{ancho}x{alto}</code>.</p>
+
+<h3>Solo analizar</h3>
+<p>Calcula el peso estimado de todo el lote sin crear imágenes. Con el informe CSV se guarda un
+<code>analisis_*.csv</code> con los tamaños estimados.</p>
+
+<h3>Vista previa</h3>
+<p><em>Herramientas → Vista previa de la primera imagen</em> muestra el original y el resultado lado a lado,
+con dimensiones, peso y porcentaje de ahorro.</p>
+
+<h3>Menú contextual de Windows</h3>
+<p>Se puede añadir «Convertir a WebP con Conversor WebP» al clic derecho de imágenes, carpetas y
+comprimidos. Se instala en HKCU (sin administrador) y se quita desde Herramientas.</p>
+
+<h3>HEIC/HEIF</h3>
+<p>Las fotos de iPhone en <code>.heic</code>/<code>.heif</code> se abren y convierten como cualquier otra
+imagen (requiere pillow-heif, incluido en el ejecutable).</p>
+
+<h3>Instalador y versión portable</h3>
+<p>El instalador crea accesos directos y desinstalador, instala en
+<code>%LOCALAPPDATA%\Programs\ConversorWebP</code> (sin pedir administrador) y guarda la configuración en
+<code>%APPDATA%</code>. La versión portable se descomprime y usa un <code>config.json</code> junto al
+<code>.exe</code>, sin tocar el registro ni el perfil del usuario.</p>
+
+<h3>Actualizaciones</h3>
+<p>Ambas ediciones comprueban la última release de GitHub al arrancar (como máximo una vez al día) y
+muestran un aviso en la barra de estado. <em>Ayuda → Buscar actualizaciones</em> fuerza la comprobación y
+ofrece abrir la página de descarga.</p>
+
 <p class="pie">
-  Conversor WebP 2.4.1 · Programa local para Windows · Interfaz Tkinter, conversión con Pillow, arrastre con
+  Conversor WebP 2.5.0 · Programa local para Windows · Interfaz Tkinter, conversión con Pillow, arrastre con
   TkDND, extracción con 7-Zip/WinRAR.<br>
   Este manual se abre desde el programa en <strong>Ayuda → Manual de uso</strong> y también puede abrirse
   con doble clic en cualquier navegador.

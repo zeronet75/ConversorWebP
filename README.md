@@ -10,7 +10,7 @@
 </p>
 
 <p align="center">
-  <img alt="Versión" src="https://img.shields.io/badge/version-2.4.1-1a73e8">
+  <img alt="Versión" src="https://img.shields.io/badge/version-2.5.0-1a73e8">
   <img alt="Windows" src="https://img.shields.io/badge/Windows-10%20%7C%2011-0078D6">
   <img alt="Python" src="https://img.shields.io/badge/Python-3.12-3776AB">
   <img alt="Pillow" src="https://img.shields.io/badge/Pillow-13-11557C">
@@ -71,7 +71,14 @@ El programa se distribuye en dos formas:
 ## Características
 
 ### Entrada y organización
-- Imágenes **JPG, JPEG, JFIF, PNG, BMP, DIB, GIF, TIFF, ICO, TGA, PCX, DDS, PPM, PGM, PBM**.
+- Imágenes **JPG, JPEG, JFIF, PNG, BMP, DIB, GIF, TIFF, ICO, TGA, PCX, DDS, PPM, PGM, PBM**, **HEIC/HEIF**.
+- **Carpeta vigilada**: convierte automáticamente lo que aparezca en una carpeta.
+- **Patrón de nombres** (`{nombre}_{ancho}x{alto}`, `{hash}`, `{fecha}`...).
+- **Solo analizar**: calcula el peso estimado sin escribir archivos.
+- **Tabla de resultados** con doble clic para abrir cada archivo.
+- **Vista previa** antes/después con peso y ahorro.
+- **Menú contextual** de Windows (imágenes, carpetas y comprimidos).
+- **Instalador** y **versión portable**, con comprobación de actualizaciones.
 - Trabajo con **archivos sueltos**, **carpetas completas** (recursivo) y **comprimidos** ZIP/RAR/7Z.
 - **Arrastrar y soltar** desde el Explorador de Windows en cualquier punto de la ventana.
 - **Selección múltiple** en la lista de origen, con borrado por lote.
@@ -129,8 +136,10 @@ tkinterdnd2 >= 0.4     # opcional: activa arrastrar y soltar
 
 ### Opción 1: ejecutable
 
-1. Descarga `ConversorWebP.exe` desde la sección **Releases** del repositorio
-   (o compílalo tú, ver [docs/COMPILAR.md](docs/COMPILAR.md)).
+1. Descarga desde la sección **Releases** la edición que prefieras:
+   - **Instalador**: `ConversorWebP-Setup-x.y.z.exe` (recomendado).
+   - **Portable**: `ConversorWebP-Portable-x.y.z.zip` (sin instalación).
+   - **Solo el ejecutable**: `ConversorWebP.exe` (o compílalo tú, ver [docs/COMPILAR.md](docs/COMPILAR.md)).
 2. Coloca el `.exe` donde quieras y ejecútalo.
 3. Opcional: deja `MANUAL_DE_USO.html` junto al ejecutable para que el menú **Ayuda → Manual de uso**
    abra el manual. Si no está, se usa la copia incrustada en el propio `.exe`.
@@ -359,6 +368,73 @@ esa imagen.
 - La codificación final siempre es CPU.
 - El `.exe` no incluye PyTorch (ocuparía ~2,4 GB); lo carga de la instalación del sistema si existe.
 
+---
+
+## Automatización y extras (2.5)
+
+### Carpeta vigilada
+
+`Herramientas → Carpeta vigilada...` permite elegir una carpeta de entrada y otra de salida. El programa
+la revisa cada 3 segundos y convierte automáticamente las imágenes (y comprimidos) que aparezcan, con los
+ajustes actuales. Se detiene desde el mismo menú o al cerrar la aplicación. Los archivos que ya existen en
+destino no se sobrescriben.
+
+### Patrón de nombres
+
+Campo **Nombre de salida** de la tarjeta de destino. Vacío conserva el nombre original. Marcadores:
+
+| Marcador | Valor |
+|---|---|
+| `{nombre}` | Nombre original sin extensión |
+| `{ancho}` / `{alto}` | Dimensiones finales en píxeles |
+| `{hash}` | SHA-1 corto del archivo original |
+| `{fecha}` | `AAAAMMDD-HHMMSS` |
+| `{formato}` | `webp` o `avif` |
+| `{calidad}` | Calidad configurada |
+
+Ejemplo: `{nombre}_{ancho}x{alto}` genera `foto_1600x1200.webp`.
+
+### Solo analizar
+
+Marca **Solo analizar (no escribir archivos)** para calcular el peso estimado de todo el lote sin crear
+imágenes. Con «Guardar informe CSV» se obtiene un `analisis_*.csv` con los tamaños estimados.
+
+### Vista previa
+
+`Herramientas → Vista previa de la primera imagen` convierte una imagen de muestra en memoria y muestra
+original y resultado lado a lado con dimensiones, peso y ahorro.
+
+### Menú contextual de Windows
+
+`Herramientas → Añadir al menú contextual de Windows` registra (solo HKCU, sin administrador) la opción
+**Convertir a WebP con Conversor WebP** para imágenes, carpetas y archivos `.zip`, `.rar` y `.7z`.
+Se elimina desde el mismo menú.
+
+### HEIC/HEIF
+
+Con `pillow-heif` instalado (incluido en el ejecutable), se pueden abrir fotos de iPhone `.heic`/`.heif`
+y convertirlas como cualquier otra imagen.
+
+---
+
+## Instalador y versión portable
+
+Hay dos ediciones con el mismo programa:
+
+| Edición | Configuración | Uso |
+|---|---|---|
+| **Instalador** (`ConversorWebP-Setup-x.y.z.exe`) | `%APPDATA%\ConversorWebP\config.json` | Instala en `%LOCALAPPDATA%\Programs` (sin administrador), crea accesos en Inicio/Escritorio y desinstalador. |
+| **Portable** (`ConversorWebP-Portable-x.y.z.zip`) | `config.json` junto al `.exe` (por `portable.txt`) | Descomprimir en una carpeta o USB y ejecutar; no escribe en el registro ni en `%APPDATA%`. |
+
+Ambas incluyen el manual, el mismo motor y la comprobación de actualizaciones.
+
+### Actualizaciones
+
+Al arrancar, si han pasado más de 24 horas, se consulta la última release del repositorio y se muestra
+`Actualizacion disponible: vX.Y.Z` en la barra de estado. `Ayuda → Buscar actualizaciones` fuerza la
+comprobación y, si hay una nueva, ofrece abrir la página de descarga. No se instala nada automáticamente.
+
+
 
 
 ---
@@ -500,6 +576,8 @@ ConversorWebP/
 ├── LEEME.txt               Guía rápida
 ├── icon.ico / icon.png     Icono de la aplicación
 ├── ConversorWebP.spec      Especificación de PyInstaller
+├── instalador/
+│   └── ConversorWebP.iss   Script de Inno Setup
 ├── requirements.txt        Dependencias de ejecución
 ├── requirements-dev.txt    Dependencias para compilar
 ├── requirements-gpu.txt    PyTorch CUDA opcional
@@ -514,7 +592,8 @@ ConversorWebP/
 ├── tools/
 │   └── html_a_md.py        Regenera docs/MANUAL.md desde el HTML (opcional)
 ├── tests/
-│   └── test_conversor.py   Pruebas automáticas del motor (unittest)
+│   ├── test_conversor.py   Pruebas del motor (unittest)
+│   └── test_nuevas.py      Pruebas de patrones, dry-run, HEIC y portable
 └── .gitignore
 ```
 
@@ -524,6 +603,7 @@ ConversorWebP/
 
 Consulta [CHANGELOG.md](CHANGELOG.md). Resumen:
 
+- **2.5.0** — HEIC, carpeta vigilada, patrones, dry-run, tabla, vista previa, menú contextual, instalador, portable y actualizaciones.
 - **2.4.1** — elimina el menú «Acerca de» duplicado de la barra superior; queda en Ayuda.
 - **2.4.0** — detección de GPU y modo CUDA experimental (desactivado por defecto).
 - **2.3.1** — corrección de color CMYK, historial completo, nombres de ZIP seguros y otros ajustes.

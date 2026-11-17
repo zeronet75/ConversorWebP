@@ -33,16 +33,17 @@ hiddenimports = stdlib + [
     # módulos de Pillow que usa torchvision y la app no necesita
     "PIL.ImageDraw", "PIL.ImageFont", "PIL.ImageColor", "PIL.ImageEnhance",
     "PIL.ImageFilter", "PIL.ImageChops", "PIL.ImageOps", "PIL.ImageMath",
-    "PIL.ImagePalette",
+    "PIL.ImagePalette", "PIL.ImageTk",
 ]
 
 for paquete in ("html", "http", "urllib", "email", "xml"):
     hiddenimports += collect_submodules(paquete)
 
 datos_tkdnd = collect_all("tkinterdnd2")
-datas = [("MANUAL_DE_USO.html", ".")] + datos_tkdnd[0]
-binaries = datos_tkdnd[1]
-hiddenimports += datos_tkdnd[2]
+datos_heif = collect_all("pillow_heif")
+datas = [("MANUAL_DE_USO.html", ".")] + datos_tkdnd[0] + datos_heif[0]
+binaries = datos_tkdnd[1] + datos_heif[1]
+hiddenimports += datos_tkdnd[2] + datos_heif[2]
 
 a = Analysis(
     ["conversor_webp.py"],

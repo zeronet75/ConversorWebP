@@ -20,12 +20,13 @@ Manual completo del programa: qué hace cada opción y cómo sacarle partido.
 - [12. Dónde se guardan los ajustes](#12-dónde-se-guardan-los-ajustes)
 - [13. Preguntas frecuentes](#13-preguntas-frecuentes)
 - [14. Solución de problemas](#14-solución-de-problemas)
+- [15. Automatización, extras y distribución](#15-automatización-extras-y-distribución)
 
 ---
 
-# Conversor WebP 2.4.1
+# Conversor WebP 2.5.0
 
-**Novedades de la versión 2.4.1:** detección de GPU, modo CUDA experimental, presets de calidad, redimensionado, peso máximo por imagen, historial de trabajos, selección múltiple, atajos de teclado, conversión en paralelo, informe CSV, formato AVIF y acceso directo en **Enviar a** del Explorador.
+**Novedades de la versión 2.5.0:** HEIC, carpeta vigilada, patrones de nombre, solo analizar, tabla de resultados, vista previa, menú contextual, instalador y portable, detección de GPU, presets de calidad, redimensionado, peso máximo por imagen, historial de trabajos, selección múltiple, atajos de teclado, conversión en paralelo, informe CSV, formato AVIF y acceso directo en **Enviar a** del Explorador.
 
 ## 1. Qué es y qué hace
 
@@ -320,5 +321,39 @@ Sí, siempre que Windows pueda leer y escribir en ellas. Si la unidad se descone
 | Un archivo aparece como «FALLO» | Está dañado o es un formato no soportado. El registro indica el motivo concreto. |
 | El antivirus bloquea el .exe | Los ejecutables generados con PyInstaller a veces dan falsos positivos. Añade una exclusión o usa el código fuente con Python. |
 
-Conversor WebP 2.4.1 · Programa local para Windows · Interfaz Tkinter, conversión con Pillow, arrastre con TkDND, extracción con 7-Zip/WinRAR.\
+## 15. Automatización, extras y distribución
+
+### Carpeta vigilada
+
+*Herramientas → Carpeta vigilada…* permite elegir una carpeta de entrada y otra de salida. Cada 3 segundos se revisan las imágenes y comprimidos nuevos y se convierten con los ajustes actuales, sin sobrescribir lo que ya exista. Se detiene desde el mismo menú o al cerrar el programa.
+
+### Patrón de nombres
+
+El campo **Nombre de salida** acepta marcadores: `{nombre}`, `{ancho}`, `{alto}`, `{hash}`, `{fecha}`, `{formato}` y `{calidad}`. Vacío conserva el nombre original. Ejemplo: `{nombre}_{ancho}x{alto}`.
+
+### Solo analizar
+
+Calcula el peso estimado de todo el lote sin crear imágenes. Con el informe CSV se guarda un `analisis_*.csv` con los tamaños estimados.
+
+### Vista previa
+
+*Herramientas → Vista previa de la primera imagen* muestra el original y el resultado lado a lado, con dimensiones, peso y porcentaje de ahorro.
+
+### Menú contextual de Windows
+
+Se puede añadir «Convertir a WebP con Conversor WebP» al clic derecho de imágenes, carpetas y comprimidos. Se instala en HKCU (sin administrador) y se quita desde Herramientas.
+
+### HEIC/HEIF
+
+Las fotos de iPhone en `.heic`/`.heif` se abren y convierten como cualquier otra imagen (requiere pillow-heif, incluido en el ejecutable).
+
+### Instalador y versión portable
+
+El instalador crea accesos directos y desinstalador, instala en `%LOCALAPPDATA%\Programs\ConversorWebP` (sin pedir administrador) y guarda la configuración en `%APPDATA%`. La versión portable se descomprime y usa un `config.json` junto al `.exe`, sin tocar el registro ni el perfil del usuario.
+
+### Actualizaciones
+
+Ambas ediciones comprueban la última release de GitHub al arrancar (como máximo una vez al día) y muestran un aviso en la barra de estado. *Ayuda → Buscar actualizaciones* fuerza la comprobación y ofrece abrir la página de descarga.
+
+Conversor WebP 2.5.0 · Programa local para Windows · Interfaz Tkinter, conversión con Pillow, arrastre con TkDND, extracción con 7-Zip/WinRAR.\
 Este manual se abre desde el programa en **Ayuda → Manual de uso** y también puede abrirse con doble clic en cualquier navegador.

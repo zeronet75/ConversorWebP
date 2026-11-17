@@ -1,4 +1,4 @@
-CONVERSOR WEBP 2.4.1
+CONVERSOR WEBP 2.5.0
 ==================
 
 Aplicacion para convertir imagenes (JPG, PNG, BMP, TIFF, GIF, ICO...) a
@@ -45,10 +45,20 @@ COMO USARLA
    En la columna izquierda:
    - Formato de salida: WebP (por defecto) o AVIF.
    - Guardar informe CSV: deja un CSV con peso original, final y ahorro.
+   - Nombre de salida: patron con {nombre}, {ancho}, {alto}, {hash}, {fecha},
+     {formato} y {calidad}. Vacio conserva el nombre original.
+   - Solo analizar: calcula el peso estimado sin escribir imagenes.
+   - Acelerar con GPU: modo CUDA experimental (ver arriba).
 
-5. Pulsa "Convertir" y espera. La barra muestra el progreso y el registro
-   inferior el detalle de cada archivo. Los lotes de 4 o mas imagenes se
-   convierten en paralelo.
+   Extras en Herramientas:
+   - Carpeta vigilada: convierte sola lo que aparezca en una carpeta.
+   - Vista previa de la primera imagen: original y resultado lado a lado.
+   - Menu contextual de Windows: clic derecho -> Convertir a WebP.
+   - Aceleracion GPU y forzar en lotes pequenos.
+
+5. Pulsa "Convertir" y espera. La barra muestra el progreso; abajo tienes las
+   pestanas "Resultados" (tabla, doble clic abre el archivo) y "Registro".
+   Los lotes de 4 o mas imagenes se convierten en paralelo.
 
    Atajos: Ctrl+O archivos, Ctrl+Mayus+O carpeta, Ctrl+Enter o F5 convertir,
    Supr quitar seleccionados, F1 manual.

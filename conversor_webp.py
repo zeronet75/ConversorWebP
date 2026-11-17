@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import ctypes
 import csv
+import hashlib
 import importlib
 import importlib.util
 import io
@@ -32,7 +33,10 @@ import subprocess
 import sys
 import tempfile
 import threading
+import time
 import traceback
+import urllib.request
+import webbrowser
 import zipfile
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -40,7 +44,7 @@ from pathlib import Path
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 try:
-    from PIL import Image, ImageCms, ImageOps
+    from PIL import Image, ImageCms, ImageOps, ImageTk
 
     Image.init()
 except ImportError:  # pragma: no cover
@@ -73,12 +77,21 @@ except Exception:  # pragma: no cover - la app sigue funcionando sin arrastrar
 
 
 APP_NAME = "Conversor WebP"
-APP_VERSION = "2.4.1"
+APP_VERSION = "2.5.0"
+
+try:  # soporte HEIC/HEIF (iPhone) si pillow-heif esta instalado
+    import pillow_heif
+
+    pillow_heif.register_heif_opener()
+    HEIF_DISPONIBLE = True
+except Exception:  # pragma: no cover
+    pillow_heif = None  # type: ignore[assignment]
+    HEIF_DISPONIBLE = False
 
 IMAGE_EXTS = {
     ".jpg", ".jpeg", ".jfif", ".jpe", ".png", ".bmp", ".dib", ".gif",
     ".tif", ".tiff", ".ico", ".ppm", ".pgm", ".pbm", ".tga", ".pcx",
-    ".dds", ".webp",
+    ".dds", ".webp", ".heic", ".heif",
 }
 ARCHIVE_EXTS = {".zip", ".rar", ".7z"}
 DIMENSIONES = ["Sin cambio", "2560", "1920", "1600", "1200", "800", "512"]
@@ -107,7 +120,19 @@ PRESETS_BUILTIN: dict[str, dict] = {
     },
 }
 
-CONFIG_FILE = Path(os.getenv("APPDATA", Path.home())) / "ConversorWebP" / "config.json"
+def _ruta_config() -> Path:
+    """Config en %APPDATA% o junto al programa en modo portatil."""
+    base = (
+        Path(sys.executable).parent
+        if getattr(sys, "frozen", False)
+        else Path(__file__).resolve().parent
+    )
+    if (base / "portable.txt").is_file() or os.environ.get("CONVERSORWEBP_PORTABLE") == "1":
+        return base / "config.json"
+    return Path(os.getenv("APPDATA", Path.home())) / "ConversorWebP" / "config.json"
+
+
+CONFIG_FILE = _ruta_config()
 
 # Paleta
 BG = "#eef1f6"
@@ -257,6 +282,68 @@ def _ps_quote(texto: str) -> str:
     return str(texto).replace("'", "''")
 
 
+def version_tupla(texto: str) -> tuple[int, ...]:
+    """Convierte 'v2.5.1' o '2.5' en una tupla comparable."""
+    return tuple(int(p) for p in re.findall(r"\d+", str(texto))[:3])
+
+
+def consultar_ultima_version(timeout: int = 8) -> tuple[str, str] | None:
+    """Consulta la ultima release publicada en GitHub. Devuelve (tag, url)."""
+    url = "https://api.github.com/repos/zeronet75/ConversorWebP/releases/latest"
+    peticion = urllib.request.Request(
+        url,
+        headers={
+            "User-Agent": f"ConversorWebP/{APP_VERSION}",
+            "Accept": "application/vnd.github+json",
+        },
+    )
+    with urllib.request.urlopen(peticion, timeout=timeout) as respuesta:
+        datos = json.loads(respuesta.read().decode("utf-8"))
+    etiqueta = str(datos.get("tag_name", "")).strip()
+    if not etiqueta:
+        return None
+    return etiqueta, str(datos.get("html_url", ""))
+
+
+def aplicar_patron(patron: str, src: Path, rel: Path, job: Job, ext: str) -> Path:
+    """Construye la ruta relativa de salida segun el patron de nombres."""
+    if not patron.strip():
+        return rel.with_suffix(ext)
+
+    ancho = alto = 0
+    try:
+        with Image.open(src) as im:
+            ancho, alto = im.size
+    except Exception:
+        pass
+    if job.max_dimension and max(ancho, alto) > job.max_dimension:
+        escala = job.max_dimension / max(ancho, alto)
+        ancho, alto = max(1, round(ancho * escala)), max(1, round(alto * escala))
+
+    tokens = {
+        "nombre": rel.stem,
+        "ancho": str(ancho),
+        "alto": str(alto),
+        "formato": ext.lstrip("."),
+        "calidad": str(job.quality),
+        "fecha": datetime.now().strftime("%Y%m%d-%H%M%S"),
+        "hash": "",
+    }
+    texto = patron
+    if "{hash}" in texto:
+        try:
+            tokens["hash"] = hashlib.sha1(src.read_bytes()).hexdigest()[:10]
+        except Exception:
+            tokens["hash"] = ""
+    for clave, valor in tokens.items():
+        texto = texto.replace("{" + clave + "}", valor)
+
+    texto, _ = nombre_seguro(texto, rel.stem)
+    if not texto:
+        texto = rel.stem
+    return rel.parent / (texto + ext)
+
+
 def ruta_manual() -> Path | None:
     """Localiza el manual HTML junto al ejecutable o dentro del paquete."""
     candidatos: list[Path] = []
@@ -296,6 +383,8 @@ class Job:
     csv_report: bool = False    # guardar un informe CSV en la carpeta de salida
     usar_gpu: bool = False      # modo experimental CUDA (desactivado por defecto)
     gpu_forzar: bool = False    # usar GPU aunque el lote sea pequeño
+    name_pattern: str = ""      # patron de nombre; vacio = nombre original
+    dry_run: bool = False       # solo analizar: no escribe archivos
 
 
 @dataclass
@@ -309,6 +398,7 @@ class Result:
     zip_path: Path | None = None
     csv_path: Path | None = None
     cancelled: bool = False
+    dry_run: bool = False
 
 
 # --------------------------------------------------------------------------- #
@@ -589,8 +679,8 @@ def convertir_jpeg_gpu(src: Path, dst: Path, job: Job) -> tuple[int, int, str] |
             arreglo = tensor.permute(1, 2, 0).contiguous().cpu().numpy()
 
         imagen = Image.fromarray(arreglo)
-        aviso = _codificar(imagen, dst, job, icc)
-        return src.stat().st_size, dst.stat().st_size, aviso
+        aviso, tam_out = _codificar(imagen, dst, job, icc)
+        return src.stat().st_size, tam_out, aviso
     except Exception:  # noqa: BLE001 - cualquier fallo cae al camino CPU
         return None
 
@@ -664,8 +754,8 @@ def _perfil_srgb() -> bytes | None:
 
 def _codificar(
     im: Image.Image, dst: Path, job: Job, icc_salida: bytes | None, aviso: str = ""
-) -> str:
-    """Codifica la imagen final (WebP/AVIF), aplicando peso objetivo si toca."""
+) -> tuple[str, int]:
+    """Codifica la imagen final (WebP/AVIF). Devuelve (aviso, bytes de salida)."""
     formato = "AVIF" if str(job.formato).upper() == "AVIF" else "WEBP"
     tiene_alfa = im.mode == "RGBA"
 
@@ -687,11 +777,8 @@ def _codificar(
     if icc_salida:
         opciones["icc_profile"] = icc_salida
 
-    dst.parent.mkdir(parents=True, exist_ok=True)
-
     if job.target_kb > 0 and not job.lossless:
         datos, nota = _encode_ajustando_peso(im, formato, opciones, job.target_kb, job.quality)
-        dst.write_bytes(datos)
         if nota:
             aviso = f"{aviso}; {nota}" if aviso else nota
     else:
@@ -701,8 +788,14 @@ def _codificar(
                 if aviso
                 else "el peso maximo no aplica en modo sin perdida"
             )
-        im.save(dst, formato, **opciones)
-    return aviso
+        datos = _encode_imagen(im, formato, opciones)
+
+    if job.dry_run:
+        return aviso, len(datos)
+
+    dst.parent.mkdir(parents=True, exist_ok=True)
+    dst.write_bytes(datos)
+    return aviso, len(datos)
 
 
 def convert_one(src: Path, dst: Path, job: Job) -> tuple[int, int, str]:
@@ -768,9 +861,9 @@ def convert_one(src: Path, dst: Path, job: Job) -> tuple[int, int, str]:
         elif im.mode not in ("RGB", "L"):
             im = im.convert("RGB")
 
-        aviso = _codificar(im, dst, job, icc_salida, aviso)
+        aviso, tam_out = _codificar(im, dst, job, icc_salida, aviso)
 
-    return src.stat().st_size, dst.stat().st_size, aviso
+    return src.stat().st_size, tam_out, aviso
 
 
 def run_job(job: Job, emit, cancel_event: threading.Event) -> None:
@@ -781,6 +874,7 @@ def run_job(job: Job, emit, cancel_event: threading.Event) -> None:
     filas: list[tuple] = []  # informe CSV
     formato = "AVIF" if str(job.formato).upper() == "AVIF" else "WEBP"
     ext = ".avif" if formato == "AVIF" else ".webp"
+    res.dry_run = job.dry_run
     try:
         temp_root = Path(tempfile.mkdtemp(prefix="conversor_webp_"))
         entradas: list[tuple[Path, Path]] = []  # (archivo, ruta relativa)
@@ -833,18 +927,31 @@ def run_job(job: Job, emit, cancel_event: threading.Event) -> None:
         for src, rel in entradas:
             if not job.keep_structure:
                 rel = Path(rel.name)
-            dst = job.output_dir / rel.with_suffix(ext)
+            rel_salida = aplicar_patron(job.name_pattern, src, rel, job, ext)
+            dst = job.output_dir / rel_salida
             clave = str(dst).lower()
             if clave in usados:
                 dst = dst.with_name(f"{dst.stem}_{src.suffix.lstrip('.').lower()}{ext}")
                 clave = str(dst).lower()
             usados.add(clave)
 
-            if dst.exists() and not job.overwrite:
+            if not job.dry_run and dst.exists() and not job.overwrite:
                 res.skipped += 1
                 nombre = dst.relative_to(job.output_dir).as_posix()
                 filas.append((nombre, src.name, "", "", "", "omitida", "ya existia"))
                 emit("log", ("muted", f"OMITIDA  {nombre}  (ya existe)"))
+                emit(
+                    "fila",
+                    {
+                        "archivo": nombre,
+                        "entrada": None,
+                        "salida": None,
+                        "ahorro": None,
+                        "estado": "omitida",
+                        "nota": "ya existia",
+                        "ruta": str(dst),
+                    },
+                )
                 continue
             tareas.append((src, rel, dst))
 
@@ -884,20 +991,35 @@ def run_job(job: Job, emit, cancel_event: threading.Event) -> None:
 
         # ---- fase 2: convertir (en paralelo si hay lote) ----
         def exito(src: Path, dst: Path, tam_in: int, tam_out: int, aviso: str) -> None:
-            producidos.append(dst)
+            if not job.dry_run:
+                producidos.append(dst)
             res.converted += 1
             res.bytes_in += tam_in
             res.bytes_out += tam_out
             nombre = dst.relative_to(job.output_dir).as_posix()
             ahorro = (1 - tam_out / tam_in) * 100 if tam_in else 0
+            estado = "analizada" if job.dry_run else "convertida"
             filas.append(
                 (nombre, src.name, round(tam_in / 1024, 1), round(tam_out / 1024, 1),
-                 round(ahorro, 1), "convertida", aviso)
+                 round(ahorro, 1), estado, aviso)
             )
             nota = f"  ({aviso})" if aviso else ""
+            prefijo = "ANALIZADA" if job.dry_run else "OK       "
             emit(
                 "log",
-                ("ok", f"OK       {nombre}   {tam_in / 1024:.1f} KB -> {tam_out / 1024:.1f} KB{nota}"),
+                ("ok", f"{prefijo} {nombre}   {tam_in / 1024:.1f} KB -> {tam_out / 1024:.1f} KB{nota}"),
+            )
+            emit(
+                "fila",
+                {
+                    "archivo": nombre,
+                    "entrada": round(tam_in / 1024, 1),
+                    "salida": round(tam_out / 1024, 1),
+                    "ahorro": round(ahorro, 1),
+                    "estado": estado,
+                    "nota": aviso,
+                    "ruta": str(src) if job.dry_run else str(dst),
+                },
             )
 
         def fallo(src: Path, dst: Path, error: Exception) -> None:
@@ -908,6 +1030,18 @@ def run_job(job: Job, emit, cancel_event: threading.Event) -> None:
                 nombre = dst.name
             filas.append((nombre, src.name, "", "", "", "fallo", str(error)))
             emit("log", ("err", f"FALLO    {src.name}   {error}"))
+            emit(
+                "fila",
+                {
+                    "archivo": nombre,
+                    "entrada": None,
+                    "salida": None,
+                    "ahorro": None,
+                    "estado": "fallo",
+                    "nota": str(error),
+                    "ruta": str(src),
+                },
+            )
 
         trabajadores = min(8, max(2, os.cpu_count() or 4))
         paralelo = len(tareas) >= 4 and trabajadores > 1
@@ -969,7 +1103,9 @@ def run_job(job: Job, emit, cancel_event: threading.Event) -> None:
             emit("log", ("info", f"ZIP creado: {ruta_zip}  ({len(producidos)} archivos)"))
 
         if job.csv_report and filas:
-            ruta_csv = job.output_dir / f"informe_{datetime.now():%Y%m%d_%H%M%S}.csv"
+            job.output_dir.mkdir(parents=True, exist_ok=True)
+            prefijo = "analisis" if job.dry_run else "informe"
+            ruta_csv = job.output_dir / f"{prefijo}_{datetime.now():%Y%m%d_%H%M%S}.csv"
             with open(ruta_csv, "w", newline="", encoding="utf-8-sig") as fh:
                 escritor = csv.writer(fh, delimiter=";")
                 escritor.writerow(
@@ -1229,6 +1365,92 @@ class VentanaAcerca(tk.Toplevel):
 
 
 # --------------------------------------------------------------------------- #
+#  Carpeta vigilada
+# --------------------------------------------------------------------------- #
+class Vigilante(threading.Thread):
+    """Convierte automaticamente lo que aparezca en una carpeta."""
+
+    def __init__(self, entrada: Path, salida: Path, base: Job, emit, stop_event):
+        super().__init__(daemon=True)
+        self.entrada = Path(entrada)
+        self.salida = Path(salida)
+        self.base = base
+        self.emitir = emit
+        self.stop_event = stop_event
+        self.procesados: set[str] = set()
+
+    def _job_para(self, archivo: Path) -> Job:
+        b = self.base
+        return Job(
+            sources=[archivo],
+            output_dir=self.salida,
+            quality=b.quality,
+            method=b.method,
+            keep_structure=True,
+            overwrite=False,
+            reencode_webp=b.reencode_webp,
+            flatten=b.flatten,
+            background=b.background,
+            lossless=b.lossless,
+            make_zip=False,
+            zip_name="",
+            max_dimension=b.max_dimension,
+            target_kb=b.target_kb,
+            formato=b.formato,
+            csv_report=False,
+            usar_gpu=b.usar_gpu,
+            gpu_forzar=False,
+            name_pattern=b.name_pattern,
+            dry_run=False,
+        )
+
+    def run(self) -> None:
+        self.emitir(f"Vigilando: {self.entrada}  ->  {self.salida}")
+        while not self.stop_event.wait(3):
+            try:
+                archivos = [
+                    p
+                    for p in self.entrada.rglob("*")
+                    if p.is_file()
+                    and (is_image(p) or p.suffix.lower() in ARCHIVE_EXTS)
+                ]
+            except Exception:
+                continue
+
+            for archivo in archivos:
+                if self.stop_event.is_set():
+                    break
+                clave = str(archivo.resolve())
+                if clave in self.procesados:
+                    continue
+                try:
+                    if time.time() - archivo.stat().st_mtime < 3:
+                        continue  # puede estar copiandose todavia
+                except OSError:
+                    continue
+
+                self.emitir(f"Vigilante: convirtiendo {archivo.name} ...")
+                resultado = {}
+                try:
+                    run_job(
+                        self._job_para(archivo),
+                        lambda t, d: resultado.update({"r": d}) if t == "done" else None,
+                        self.stop_event,
+                    )
+                    res = resultado.get("r")
+                    if res is not None:
+                        self.emitir(
+                            f"Vigilante: {archivo.name} -> {res.converted} convertida(s), "
+                            f"{len(res.failed)} fallo(s)"
+                        )
+                except Exception as e:  # noqa: BLE001
+                    self.emitir(f"Vigilante: error con {archivo.name}: {e}")
+                self.procesados.add(clave)
+
+        self.emitir("Vigilante detenido.")
+
+
+# --------------------------------------------------------------------------- #
 #  Interfaz grafica
 # --------------------------------------------------------------------------- #
 class App(BaseTk):  # type: ignore[misc,valid-type]
@@ -1266,6 +1488,8 @@ class App(BaseTk):  # type: ignore[misc,valid-type]
         self.usar_gpu = tk.BooleanVar(value=False)
         self.gpu_path = ""
         self.gpu_forzar_var = tk.BooleanVar(value=False)
+        self.name_pattern = tk.StringVar(value="")
+        self.dry_run = tk.BooleanVar(value=False)
 
         self.queue: queue.Queue = queue.Queue()
         self.cancel_event = threading.Event()
@@ -1273,8 +1497,14 @@ class App(BaseTk):  # type: ignore[misc,valid-type]
         self.running = False
         self.total = 0
         self._acerca_ventana: VentanaAcerca | None = None
+        self._vigilante: Vigilante | None = None
+        self._watch_stop = threading.Event()
         self._closing = False
         self._after_id: str | None = None
+        self._actualizacion: tuple[str, str] | None = None
+        self._comprobando_update = False
+        self.buscar_actualizaciones = True
+        self.ultima_comprobacion = ""
 
         self._dpi_setup()
         self._build_style()
@@ -1293,6 +1523,7 @@ class App(BaseTk):  # type: ignore[misc,valid-type]
         self.protocol("WM_DELETE_WINDOW", self._on_close)
         self.bind("<Destroy>", self._al_destruir, add="+")
         self._after_id = self.after(100, self._drain_queue)
+        self.after(3000, self._auto_comprobar_update)
 
         if DND_AVAILABLE:
             self._registrar_dnd_global()
@@ -1491,6 +1722,24 @@ class App(BaseTk):  # type: ignore[misc,valid-type]
         )
         self.chk_csv.pack(anchor="w", pady=(6, 0))
 
+        fila_nombre = ttk.Frame(card_out, style="Card.TFrame")
+        fila_nombre.pack(fill="x", pady=(6, 0))
+        ttk.Label(fila_nombre, text="Nombre de salida", style="Card.TLabel").pack(side="left")
+        self.entry_patron = ttk.Entry(fila_nombre, textvariable=self.name_pattern)
+        self.entry_patron.pack(side="left", fill="x", expand=True, padx=(6, 4))
+        self.btn_patron_ayuda = ttk.Button(
+            fila_nombre, text="?", width=3, command=self._ayuda_patron
+        )
+        self.btn_patron_ayuda.pack(side="left")
+
+        self.chk_dry = ttk.Checkbutton(
+            card_out,
+            text="Solo analizar (no escribir archivos)",
+            variable=self.dry_run,
+            command=self._on_dry_run,
+        )
+        self.chk_dry.pack(anchor="w", pady=(6, 0))
+
         fila_gpu = ttk.Frame(card_out, style="Card.TFrame")
         fila_gpu.pack(fill="x", pady=(6, 0))
         self.chk_gpu = ttk.Checkbutton(
@@ -1637,9 +1886,45 @@ class App(BaseTk):  # type: ignore[misc,valid-type]
         self.lbl_status = ttk.Label(outer, text="Listo.", style="Muted.TLabel")
         self.lbl_status.pack(anchor="w")
 
-        # ---- Registro --------------------------------------------------- #
-        log_wrap = ttk.Frame(outer)
-        log_wrap.pack(fill="both", expand=True, pady=(6, 0))
+        # ---- Resultados / Registro --------------------------------------- #
+        self.notas = ttk.Notebook(outer)
+        self.notas.pack(fill="both", expand=True, pady=(6, 0))
+
+        tab_res = ttk.Frame(self.notas)
+        self.notas.add(tab_res, text="Resultados")
+
+        columnas = ("archivo", "entrada", "salida", "ahorro", "estado")
+        self.tabla = ttk.Treeview(
+            tab_res, columns=columnas, show="headings", selectmode="browse"
+        )
+        cabeceras = {
+            "archivo": ("Archivo", 460, "w"),
+            "entrada": ("Original (KB)", 100, "e"),
+            "salida": ("Final (KB)", 100, "e"),
+            "ahorro": ("Ahorro %", 80, "e"),
+            "estado": ("Estado", 95, "center"),
+        }
+        for col in columnas:
+            texto, ancho, alineacion = cabeceras[col]
+            self.tabla.heading(col, text=texto)
+            self.tabla.column(col, width=ancho, anchor=alineacion, stretch=(col == "archivo"))
+        self.tabla.pack(side="left", fill="both", expand=True)
+        tsb = ttk.Scrollbar(tab_res, orient="vertical", command=self.tabla.yview)
+        tsb.pack(side="right", fill="y")
+        self.tabla.configure(yscrollcommand=tsb.set)
+        self.tabla.tag_configure("convertida", foreground=OK)
+        self.tabla.tag_configure("analizada", foreground=ACCENT_DARK)
+        self.tabla.tag_configure("omitida", foreground=MUTED)
+        self.tabla.tag_configure("fallo", foreground=ERR)
+        self.tabla.bind("<Double-1>", self._abrir_fila)
+        self.tabla.bind("<Return>", self._abrir_fila)
+        self._rutas_filas: dict[str, str] = {}
+        self._contador_filas = 0
+
+        tab_log = ttk.Frame(self.notas)
+        self.notas.add(tab_log, text="Registro")
+        log_wrap = ttk.Frame(tab_log)
+        log_wrap.pack(fill="both", expand=True)
         self.log = tk.Text(
             log_wrap, height=6, bg="#0f172a", fg="#cbd5e1", insertbackground="#cbd5e1",
             relief="flat", font=("Consolas", 9), padx=10, pady=6, wrap="none",
@@ -1665,6 +1950,10 @@ class App(BaseTk):  # type: ignore[misc,valid-type]
         ayuda = tk.Menu(barra, tearoff=0)
         ayuda.add_command(label="Manual de uso", accelerator="F1", command=self._abrir_manual)
         ayuda.add_separator()
+        ayuda.add_command(
+            label="Buscar actualizaciones",
+            command=lambda: self._comprobar_actualizaciones(manual=True),
+        )
         ayuda.add_command(label="Acerca de Conversor WebP", command=self._acerca_de)
         barra.add_cascade(label="Ayuda", menu=ayuda)
         self.menu_hist = tk.Menu(barra, tearoff=0)
@@ -1675,12 +1964,22 @@ class App(BaseTk):  # type: ignore[misc,valid-type]
         )
         herr.add_command(label="Quitar de 'Enviar a'", command=self._quitar_sendto)
         herr.add_separator()
+        herr.add_command(
+            label="Anadir al menu contextual de Windows", command=self._instalar_menu_contextual
+        )
+        herr.add_command(
+            label="Quitar del menu contextual", command=self._quitar_menu_contextual
+        )
+        herr.add_separator()
         herr.add_command(label="Aceleracion GPU (CUDA)...", command=self._dialogo_gpu)
         herr.add_checkbutton(
             label="Forzar GPU en lotes pequenos",
             variable=self.gpu_forzar_var,
             command=self._toggle_forzar_gpu,
         )
+        herr.add_separator()
+        herr.add_command(label="Carpeta vigilada...", command=self._dialogo_vigilante)
+        herr.add_command(label="Vista previa de la primera imagen", command=self._vista_previa)
         barra.add_cascade(label="Herramientas", menu=herr)
         self.configure(menu=barra)
         self._refrescar_historial()
@@ -1765,6 +2064,136 @@ class App(BaseTk):  # type: ignore[misc,valid-type]
             messagebox.showinfo(APP_NAME, "Acceso eliminado de 'Enviar a'.")
         except Exception as e:  # noqa: BLE001
             messagebox.showerror(APP_NAME, f"No se pudo eliminar el acceso:\n{e}")
+
+    # ---------------- menu contextual y actualizaciones ---------------- #
+    def _comando_contexto(self) -> str:
+        if getattr(sys, "frozen", False):
+            return f'"{Path(sys.executable)}" "%1"'
+        ejecutable = Path(sys.executable)
+        pythonw = ejecutable.with_name("pythonw.exe")
+        objetivo = pythonw if pythonw.exists() else ejecutable
+        return f'"{objetivo}" "{Path(__file__).resolve()}" "%1"'
+
+    def _icono_contexto(self) -> str:
+        if getattr(sys, "frozen", False):
+            return str(Path(sys.executable))
+        return str(Path(__file__).resolve().parent / "icon.ico")
+
+    @staticmethod
+    def _claves_contexto() -> list[str]:
+        claves = [
+            r"Software\Classes\SystemFileAssociations\image\shell\ConversorWebP",
+            r"Software\Classes\Directory\shell\ConversorWebP",
+        ]
+        for ext in (".zip", ".rar", ".7z"):
+            claves.append(
+                rf"Software\Classes\SystemFileAssociations\{ext}\shell\ConversorWebP"
+            )
+        return claves
+
+    def _instalar_menu_contextual(self) -> None:
+        try:
+            import winreg
+
+            comando = self._comando_contexto()
+            icono = self._icono_contexto()
+            for base in self._claves_contexto():
+                with winreg.CreateKey(winreg.HKEY_CURRENT_USER, base) as clave:
+                    winreg.SetValueEx(
+                        clave, "", 0, winreg.REG_SZ, "Convertir a WebP con Conversor WebP"
+                    )
+                    winreg.SetValueEx(clave, "Icon", 0, winreg.REG_SZ, f"{icono},0")
+                with winreg.CreateKey(
+                    winreg.HKEY_CURRENT_USER, base + r"\command"
+                ) as clave:
+                    winreg.SetValueEx(clave, "", 0, winreg.REG_SZ, comando)
+            messagebox.showinfo(
+                APP_NAME,
+                "Menu contextual instalado.\n\n"
+                "Haz clic derecho sobre una imagen, una carpeta o un .zip/.rar y elige "
+                "'Convertir a WebP con Conversor WebP'. El programa se abrira con ese "
+                "contenido cargado.",
+            )
+        except Exception as e:  # noqa: BLE001
+            messagebox.showerror(APP_NAME, f"No se pudo instalar el menu contextual:\n{e}")
+
+    def _quitar_menu_contextual(self) -> None:
+        try:
+            import winreg
+
+            for base in self._claves_contexto():
+                for sub in (base + r"\command", base):
+                    try:
+                        winreg.DeleteKey(winreg.HKEY_CURRENT_USER, sub)
+                    except FileNotFoundError:
+                        pass
+                    except OSError:
+                        pass
+            messagebox.showinfo(APP_NAME, "Menu contextual eliminado.")
+        except Exception as e:  # noqa: BLE001
+            messagebox.showerror(APP_NAME, f"No se pudo quitar el menu contextual:\n{e}")
+
+    def _comprobar_actualizaciones(self, manual: bool = False) -> None:
+        if self._comprobando_update:
+            return
+        self._comprobando_update = True
+        if manual:
+            self.lbl_status.configure(text="Buscando actualizaciones...")
+
+        def tarea() -> None:
+            try:
+                datos = consultar_ultima_version()
+                self.queue.put(("update", {"datos": datos, "manual": manual}))
+            except Exception as e:  # noqa: BLE001
+                self.queue.put(("update", {"error": str(e), "manual": manual}))
+
+        threading.Thread(target=tarea, daemon=True).start()
+
+    def _procesar_update(self, info: dict) -> None:
+        self._comprobando_update = False
+        manual = bool(info.get("manual"))
+        if info.get("error"):
+            if manual:
+                messagebox.showwarning(
+                    APP_NAME,
+                    "No se pudo comprobar si hay actualizaciones:\n" + str(info["error"]),
+                )
+            return
+
+        datos = info.get("datos")
+        if not datos:
+            if manual:
+                messagebox.showinfo(APP_NAME, "No hay ninguna version publicada.")
+            return
+
+        etiqueta, url = datos
+        self.ultima_comprobacion = datetime.now().strftime("%Y-%m-%d %H:%M")
+        self._save_config()
+        if version_tupla(etiqueta) > version_tupla(APP_VERSION):
+            self._actualizacion = (etiqueta, url)
+            self.lbl_status.configure(text=f"Actualizacion disponible: {etiqueta}")
+            self._log("info", f"Nueva version disponible: {etiqueta} -> {url}")
+            if manual and messagebox.askyesno(
+                APP_NAME,
+                f"Hay una version nueva: {etiqueta}\n"
+                f"Tienes instalada la {APP_VERSION}.\n\n¿Abrir la pagina de descarga?",
+            ):
+                webbrowser.open(url)
+        elif manual:
+            messagebox.showinfo(
+                APP_NAME, f"Estas en la ultima version ({APP_VERSION})."
+            )
+
+    def _auto_comprobar_update(self) -> None:
+        if not self.buscar_actualizaciones:
+            return
+        try:
+            ultima = datetime.strptime(self.ultima_comprobacion, "%Y-%m-%d %H:%M")
+        except Exception:
+            ultima = None
+        if ultima and (datetime.now() - ultima).total_seconds() < 86400:
+            return
+        self._comprobar_actualizaciones(manual=False)
 
     def _refrescar_extractor(self) -> None:
         tool = find_extractor()
@@ -1853,6 +2282,159 @@ class App(BaseTk):  # type: ignore[misc,valid-type]
         estado = "activado" if self.gpu_forzar_var.get() else "desactivado"
         self._log("info", f"GPU forzada en lotes pequenos: {estado}")
 
+    # ---------------- carpeta vigilada y vista previa ---------------- #
+    def _crear_job(
+        self,
+        sources: list[Path],
+        salida: Path,
+        analizar: bool = False,
+        zip_activo: bool | None = None,
+    ) -> Job:
+        return Job(
+            sources=list(sources),
+            output_dir=salida,
+            quality=int(round(float(self.scale_q.get()))),
+            method=int(self.method.get()),
+            keep_structure=self.keep_structure.get(),
+            overwrite=self.overwrite.get(),
+            reencode_webp=self.reencode_webp.get(),
+            flatten=self.flatten.get(),
+            background=self.background.get(),
+            lossless=self.lossless.get(),
+            make_zip=(self.make_zip.get() if zip_activo is None else zip_activo),
+            zip_name=self.zip_name.get(),
+            max_dimension=self._max_dimension(),
+            target_kb=self._target_kb(),
+            formato="AVIF" if self.formato.get().upper() == "AVIF" else "WEBP",
+            csv_report=self.csv_report.get(),
+            usar_gpu=self.usar_gpu.get(),
+            gpu_forzar=self.gpu_forzar_var.get(),
+            name_pattern=self.name_pattern.get(),
+            dry_run=analizar,
+        )
+
+    def _dialogo_vigilante(self) -> None:
+        if self._vigilante is not None and self._vigilante.is_alive():
+            if messagebox.askyesno(
+                APP_NAME,
+                "La carpeta vigilada esta activa.\n\n¿Quieres detenerla?",
+            ):
+                self._watch_stop.set()
+                self._vigilante = None
+                self._log("info", "Vigilante: detenido.")
+            return
+
+        entrada = filedialog.askdirectory(title="Carpeta que quieres vigilar")
+        if not entrada:
+            return
+        salida = filedialog.askdirectory(title="Carpeta de salida del vigilante")
+        if not salida:
+            return
+        try:
+            Path(salida).mkdir(parents=True, exist_ok=True)
+        except Exception as e:  # noqa: BLE001
+            messagebox.showerror(APP_NAME, f"No se puede crear la carpeta de salida:\n{e}")
+            return
+
+        base = self._crear_job([], Path(salida), zip_activo=False)
+        base.usar_gpu = False  # evitar cargar CUDA en segundo plano
+        self._watch_stop = threading.Event()
+        self._vigilante = Vigilante(
+            Path(entrada),
+            Path(salida),
+            base,
+            lambda texto: self.queue.put(("watch", texto)),
+            self._watch_stop,
+        )
+        self._vigilante.start()
+        self._log("info", f"Vigilante activo: {entrada}  ->  {salida}")
+        self.lbl_status.configure(text="Carpeta vigilada activa.")
+
+    def _primera_imagen(self) -> Path | None:
+        for origen in self.sources:
+            if origen.is_file() and is_image(origen):
+                return origen
+            if origen.is_dir():
+                imagenes = collect_images_from_dir(origen)
+                if imagenes:
+                    return imagenes[0]
+        return None
+
+    def _miniatura(self, imagen: Image.Image, ancho: int, alto: int) -> ImageTk.PhotoImage:
+        copia = imagen.copy()
+        copia.thumbnail((ancho, alto), Image.LANCZOS)
+        return ImageTk.PhotoImage(copia)
+
+    def _vista_previa(self) -> None:
+        origen = self._primera_imagen()
+        if origen is None:
+            messagebox.showinfo(
+                APP_NAME,
+                "Para la vista previa necesito una imagen suelta o una carpeta "
+                "(no un comprimido). Anade una imagen primero.",
+            )
+            return
+
+        temporal = Path(tempfile.mkdtemp(prefix="conversor_preview_"))
+        ext = ".avif" if self.formato.get().upper() == "AVIF" else ".webp"
+        destino = temporal / ("vista_previa" + ext)
+        job = self._crear_job([origen], temporal, zip_activo=False)
+        job.csv_report = False
+        try:
+            convert_one(origen, destino, job)
+            with Image.open(origen) as original:
+                original.load()
+                tam_original = original.size
+                imagen_original = original.convert("RGB")
+            with Image.open(destino) as convertida:
+                convertida.load()
+                tam_convertida = convertida.size
+                imagen_convertida = convertida.convert("RGB")
+        except Exception as e:  # noqa: BLE001
+            shutil.rmtree(temporal, ignore_errors=True)
+            messagebox.showerror(APP_NAME, f"No se pudo generar la vista previa:\n{e}")
+            return
+
+        ventana = tk.Toplevel(self)
+        ventana.title(f"Vista previa · {origen.name}")
+        ventana.configure(bg=BG)
+        ventana.transient(self)
+        cont = ttk.Frame(ventana, padding=14)
+        cont.pack(fill="both", expand=True)
+
+        mini_a = self._miniatura(imagen_original, 380, 320)
+        mini_b = self._miniatura(imagen_convertida, 380, 320)
+        lbl_a = tk.Label(cont, image=mini_a, bg=CARD, relief="flat")
+        lbl_a.grid(row=0, column=0, padx=8, pady=8)
+        lbl_b = tk.Label(cont, image=mini_b, bg=CARD, relief="flat")
+        lbl_b.grid(row=0, column=1, padx=8, pady=8)
+        ventana._miniaturas = (mini_a, mini_b)  # type: ignore[attr-defined]
+
+        peso_in = origen.stat().st_size / 1024
+        peso_out = destino.stat().st_size / 1024
+        ahorro = (1 - peso_out / peso_in) * 100 if peso_in else 0
+        ttk.Label(
+            cont,
+            text=f"Original\n{tam_original[0]}x{tam_original[1]} px\n{peso_in:.1f} KB",
+            style="TLabel",
+            justify="center",
+        ).grid(row=1, column=0, pady=(0, 8))
+        ttk.Label(
+            cont,
+            text=(
+                f"Resultado {job.formato}\n{tam_convertida[0]}x{tam_convertida[1]} px\n"
+                f"{peso_out:.1f} KB  ({ahorro:.1f} % menos)"
+            ),
+            style="TLabel",
+            justify="center",
+        ).grid(row=1, column=1, pady=(0, 8))
+
+        ttk.Button(
+            cont,
+            text="Cerrar",
+            command=lambda: (shutil.rmtree(temporal, ignore_errors=True), ventana.destroy()),
+        ).grid(row=2, column=0, columnspan=2, pady=(6, 0))
+
     def _center(self) -> None:
         self.update_idletasks()
         w, h = self.winfo_width(), self.winfo_height()
@@ -1870,7 +2452,37 @@ class App(BaseTk):  # type: ignore[misc,valid-type]
         self.cmb_method.configure(state="disabled" if perdida else "readonly")
 
     def _on_zip_toggle(self) -> None:
-        self.entry_zip.configure(state="normal" if self.make_zip.get() else "disabled")
+        activo = self.make_zip.get() and not self.dry_run.get()
+        self.entry_zip.configure(state="normal" if activo else "disabled")
+
+    def _on_dry_run(self) -> None:
+        analizar = self.dry_run.get()
+        self.chk_zip.configure(state="disabled" if analizar else "normal")
+        self._on_zip_toggle()
+        self.lbl_status.configure(
+            text="Modo analisis: se calcula el peso sin escribir archivos."
+            if analizar
+            else "Listo."
+        )
+
+    def _ayuda_patron(self) -> None:
+        messagebox.showinfo(
+            APP_NAME,
+            "Patron de nombre de salida\n\n"
+            "Dejalo vacio para conservar el nombre original.\n\n"
+            "Marcadores disponibles:\n"
+            "  {nombre}   nombre original sin extension\n"
+            "  {ancho}    ancho final en px (tras redimensionar)\n"
+            "  {alto}     alto final en px\n"
+            "  {hash}     SHA-1 corto del archivo original\n"
+            "  {fecha}    AAAAMMDD-HHMMSS\n"
+            "  {formato}  webp o avif\n"
+            "  {calidad}  calidad configurada\n\n"
+            "Ejemplos:\n"
+            "  {nombre}_{ancho}x{alto}\n"
+            "  {hash}\n"
+            "  {fecha}_{nombre}",
+        )
 
     def _on_formato(self, _event=None) -> None:
         fmt = "AVIF" if self.formato.get().upper() == "AVIF" else "WebP"
@@ -2030,7 +2642,7 @@ class App(BaseTk):  # type: ignore[misc,valid-type]
 
     # ---------------- historial ---------------- #
     def _registrar_historial(self, res: Result) -> None:
-        if not res.converted or res.cancelled:
+        if res.dry_run or not res.converted or res.cancelled:
             return
         entrada = {
             "fecha": datetime.now().strftime("%d/%m/%Y %H:%M"),
@@ -2281,18 +2893,30 @@ class App(BaseTk):  # type: ignore[misc,valid-type]
             messagebox.showwarning(APP_NAME, "Arrastra o anade al menos una imagen, carpeta o comprimido.")
             return
         destino = self.output_dir.get().strip()
-        if not destino:
+        analizar = self.dry_run.get()
+        if not destino and not analizar:
             messagebox.showwarning(APP_NAME, "Selecciona la carpeta de salida.")
             return
-        salida = Path(destino)
-        try:
-            salida.mkdir(parents=True, exist_ok=True)
-            prueba = salida / ".escritura_test"
-            prueba.write_text("ok", encoding="utf-8")
-            prueba.unlink()
-        except Exception as e:  # noqa: BLE001
-            messagebox.showerror(APP_NAME, f"No se puede escribir en la carpeta de salida:\n{e}")
-            return
+        salida = (
+            Path(destino)
+            if destino
+            else Path(tempfile.gettempdir()) / "conversor_webp_analisis"
+        )
+        if not analizar:
+            try:
+                salida.mkdir(parents=True, exist_ok=True)
+                prueba = salida / ".escritura_test"
+                prueba.write_text("ok", encoding="utf-8")
+                prueba.unlink()
+            except Exception as e:  # noqa: BLE001
+                messagebox.showerror(APP_NAME, f"No se puede escribir en la carpeta de salida:\n{e}")
+                return
+        elif self.csv_report.get():
+            try:
+                salida.mkdir(parents=True, exist_ok=True)
+            except Exception as e:  # noqa: BLE001
+                messagebox.showerror(APP_NAME, f"No se puede escribir el informe CSV:\n{e}")
+                return
 
         if self.peso_activo.get():
             texto_peso = self.peso_kb.get().strip()
@@ -2328,7 +2952,7 @@ class App(BaseTk):  # type: ignore[misc,valid-type]
             flatten=self.flatten.get(),
             background=self.background.get(),
             lossless=self.lossless.get(),
-            make_zip=self.make_zip.get(),
+            make_zip=self.make_zip.get() and not analizar,
             zip_name=self.zip_name.get(),
             max_dimension=self._max_dimension(),
             target_kb=self._target_kb(),
@@ -2336,12 +2960,19 @@ class App(BaseTk):  # type: ignore[misc,valid-type]
             csv_report=self.csv_report.get(),
             usar_gpu=self.usar_gpu.get(),
             gpu_forzar=self.gpu_forzar_var.get(),
+            name_pattern=self.name_pattern.get(),
+            dry_run=analizar,
         )
 
         self._set_running(True)
         self.progress.configure(value=0, maximum=100)
         self._clear_log()
+        self._limpiar_tabla()
+        if analizar:
+            self._log("warn", "MODO ANALISIS: no se escribiran imagenes, solo el informe.")
         self._log("info", f"Salida: {salida}  ·  Formato: {job.formato}")
+        if job.name_pattern.strip():
+            self._log("info", f"Patron de nombres: {job.name_pattern}")
         if job.max_dimension:
             self._log("info", f"Redimensionando al lado maximo: {job.max_dimension} px")
         if job.target_kb and not job.lossless:
@@ -2386,6 +3017,46 @@ class App(BaseTk):  # type: ignore[misc,valid-type]
         self.log.delete("1.0", "end")
         self.log.configure(state="disabled")
 
+    def _limpiar_tabla(self) -> None:
+        for iid in self.tabla.get_children():
+            self.tabla.delete(iid)
+        self._rutas_filas.clear()
+        self._contador_filas = 0
+        self.notas.select(0)
+
+    def _anadir_fila(self, fila: dict) -> None:
+        self._contador_filas += 1
+        iid = f"f{self._contador_filas}"
+        valores = (
+            fila.get("archivo", ""),
+            "" if fila.get("entrada") is None else f"{float(fila['entrada']):.1f}",
+            "" if fila.get("salida") is None else f"{float(fila['salida']):.1f}",
+            "" if fila.get("ahorro") is None else f"{float(fila['ahorro']):.1f}",
+            fila.get("estado", ""),
+        )
+        self.tabla.insert(
+            "", "end", iid=iid, values=valores, tags=(str(fila.get("estado", "")),)
+        )
+        if fila.get("ruta"):
+            self._rutas_filas[iid] = str(fila["ruta"])
+        self.tabla.see(iid)
+
+    def _abrir_fila(self, _event=None):
+        seleccion = self.tabla.selection()
+        if not seleccion:
+            return
+        ruta = self._rutas_filas.get(seleccion[0], "")
+        if not ruta:
+            return
+        destino = Path(ruta)
+        if not destino.exists():
+            messagebox.showinfo(APP_NAME, "El archivo de esa fila ya no existe.")
+            return
+        try:
+            os.startfile(destino)  # type: ignore[attr-defined]
+        except Exception:
+            pass
+
     def _log(self, tag: str, texto: str) -> None:
         self.log.configure(state="normal")
         self.log.insert("end", texto + "\n", tag)
@@ -2412,6 +3083,12 @@ class App(BaseTk):  # type: ignore[misc,valid-type]
                     self.lbl_status.configure(text=dato)
                 elif tipo == "log":
                     self._log(*dato)
+                elif tipo == "fila":
+                    self._anadir_fila(dato)
+                elif tipo == "watch":
+                    self._log("info", str(dato))
+                elif tipo == "update":
+                    self._procesar_update(dato)
                 elif tipo == "done":
                     self._finish(dato)
         except queue.Empty:
@@ -2451,8 +3128,8 @@ class App(BaseTk):  # type: ignore[misc,valid-type]
         ahorro = (1 - res.bytes_out / res.bytes_in) * 100 if res.bytes_in else 0
 
         resumen = (
-            f"Convertidas: {res.converted}   Omitidas: {res.skipped}   "
-            f"Fallidas: {len(res.failed)}"
+            f"{'Analizadas' if res.dry_run else 'Convertidas'}: {res.converted}   "
+            f"Omitidas: {res.skipped}   Fallidas: {len(res.failed)}"
         )
         self._log("info", "-" * 72)
         self._log("info", resumen)
@@ -2465,6 +3142,15 @@ class App(BaseTk):  # type: ignore[misc,valid-type]
         self.lbl_status.configure(text=resumen)
         if self.total:
             self.progress.configure(value=self.progress.cget("maximum"))
+
+        if res.dry_run and not res.cancelled:
+            extra = f"\n\nPeso estimado: {mb_in:.2f} MB -> {mb_out:.2f} MB  (ahorro {ahorro:.1f} %)"
+            if res.csv_path:
+                extra += f"\nInforme CSV:\n{res.csv_path.name}"
+            if res.failed:
+                extra += "\n\nRevisa el registro para ver los errores."
+            messagebox.showinfo(APP_NAME, "Analisis completado.\n" + resumen + extra)
+            return
 
         if res.cancelled:
             messagebox.showwarning(APP_NAME, "Proceso cancelado.\n\n" + resumen)
@@ -2502,11 +3188,14 @@ class App(BaseTk):  # type: ignore[misc,valid-type]
 
     def _on_close(self) -> None:
         if self.running:
-            if not messagebox.askyesno(APP_NAME, "Hay una conversion en curso. ¿Salir de todas formas?"):
+            if not messagebox.askyesno(
+                APP_NAME, "Hay una conversion en curso. ¿Salir de todas formas?"
+            ):
                 return
             self.cancel_event.set()
             if self.worker is not None:
                 self.worker.join(timeout=1.5)
+        self._watch_stop.set()
         self._al_destruir()
         self._save_config()
         self.destroy()
@@ -2548,6 +3237,10 @@ class App(BaseTk):  # type: ignore[misc,valid-type]
         self.usar_gpu.set(booleano("usar_gpu", False))
         self.gpu_path = str(data.get("gpu_path", "") or "")
         self.gpu_forzar_var.set(booleano("gpu_forzar", False))
+        self.name_pattern.set(str(data.get("name_pattern", "") or ""))
+        self.dry_run.set(booleano("dry_run", False))
+        self.buscar_actualizaciones = booleano("buscar_actualizaciones", True)
+        self.ultima_comprobacion = str(data.get("ultima_comprobacion", "") or "")
         self.formato.set("AVIF" if str(data.get("formato", "WebP")).upper() == "AVIF" else "WebP")
 
         fondo = data.get("background", "#ffffff")
@@ -2591,6 +3284,7 @@ class App(BaseTk):  # type: ignore[misc,valid-type]
         self._refrescar_combo_preset()
         self._refrescar_historial()
         self._refrescar_gpu_ui()
+        self._on_dry_run()
 
     def _save_config(self) -> None:
         try:
@@ -2616,6 +3310,10 @@ class App(BaseTk):  # type: ignore[misc,valid-type]
                     "usar_gpu": self.usar_gpu.get(),
                     "gpu_path": self.gpu_path,
                     "gpu_forzar": self.gpu_forzar_var.get(),
+                    "name_pattern": self.name_pattern.get(),
+                    "dry_run": self.dry_run.get(),
+                    "buscar_actualizaciones": self.buscar_actualizaciones,
+                    "ultima_comprobacion": self.ultima_comprobacion,
                     "presets": self.presets_usuario,
                     "historial": self.historial,
                 },
@@ -2743,6 +3441,11 @@ def write_diag(destino: str) -> int:
         "extractor": str(find_extractor()) if find_extractor() else None,
         "manual": str(ruta_manual()) if ruta_manual() else None,
         "winsound": winsound is not None,
+        "heif": HEIF_DISPONIBLE,
+        "config": str(CONFIG_FILE),
+        "portable": (Path(sys.executable).parent / "portable.txt").is_file()
+        if getattr(sys, "frozen", False)
+        else (Path(__file__).parent / "portable.txt").is_file(),
         "gpu": estado_gpu.hardware,
         "gpu_nvidia": estado_gpu.nvidia,
         "gpu_driver": estado_gpu.driver,

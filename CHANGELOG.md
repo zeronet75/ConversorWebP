@@ -6,6 +6,29 @@ Todos los cambios relevantes del proyecto. Formato basado en
 
 ---
 
+## [2.5.0] — 2026-11-17
+
+### Añadido
+
+- **HEIC/HEIF** (fotos de iPhone) mediante `pillow-heif`, incluido en el ejecutable.
+- **Carpeta vigilada**: convierte automáticamente lo que aparezca en una carpeta, con los ajustes actuales.
+- **Patrón de nombres** con marcadores `{nombre}`, `{ancho}`, `{alto}`, `{hash}`, `{fecha}`, `{formato}` y `{calidad}`.
+- **Modo solo analizar** (dry-run) con informe CSV de pesos estimados.
+- **Tabla de resultados** con doble clic para abrir cada archivo, junto al registro tradicional.
+- **Vista previa** antes/después con dimensiones, peso y ahorro.
+- **Menú contextual de Windows** para imágenes, carpetas y `.zip/.rar/.7z` (HKCU, sin administrador).
+- **Instalador Inno Setup** y **versión portable** (config junto al `.exe`).
+- **Comprobación de actualizaciones** desde GitHub Releases, manual y automática (1 vez/día).
+- **GitHub Actions** para ejecutar las pruebas en cada push.
+- Nuevas pruebas: patrones, dry-run, HEIC, portable y versiones (19 en total).
+
+### Cambiado
+
+- El área inferior pasa a dos pestañas: **Resultados** (tabla) y **Registro**.
+- La especificación de PyInstaller incluye `pillow_heif` e `ImageTk`.
+
+---
+
 ## [2.4.1] — 2026-11-17
 
 ### Cambiado
@@ -156,6 +179,7 @@ Todos los cambios relevantes del proyecto. Formato basado en
 - Conservación de transparencia, perfil ICC y orientación EXIF.
 - Modo consola básico.
 
+[2.5.0]: #250--2026-11-17
 [2.4.1]: #241--2026-11-17
 [2.4.0]: #240--2026-11-17
 [2.3.1]: #231--2026-11-16

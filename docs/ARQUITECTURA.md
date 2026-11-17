@@ -370,3 +370,55 @@ Checklist manual recomendada antes de publicar una versión:
 8. Arrastrar una carpeta sobre el campo de salida.
 9. Crear y eliminar el acceso de «Enviar a».
 10. Revisar que la configuración se conserva entre sesiones.
+
+---
+
+## 12. Extras de la versión 2.5
+
+### Patrón de nombres
+
+`aplicar_patron(patron, src, rel, job, ext)` sustituye marcadores (`{nombre}`, `{ancho}`, `{alto}`,
+`{hash}`, `{fecha}`, `{formato}`, `{calidad}`) y sanea el resultado con `nombre_seguro`. Las dimensiones son
+las **finales** (tras aplicar `max_dimension`). `{hash}` solo lee el archivo si el patrón lo usa.
+
+### Dry-run
+
+`Job.dry_run` hace que `_codificar` devuelva el tamaño en memoria sin escribir. `run_job` marca las filas
+como `analizada`, no añade archivos al ZIP y genera `analisis_*.csv`. No requiere que exista la carpeta de
+salida salvo para el CSV.
+
+### Tabla de resultados
+
+`run_job` emite un evento `fila` por cada archivo con `archivo`, `entrada`, `salida`, `ahorro`, `estado`,
+`nota` y `ruta`. La GUI lo inserta en un `ttk.Treeview`; el registro tradicional sigue disponible en otra
+pestaña. Doble clic abre el archivo.
+
+### Carpeta vigilada
+
+`Vigilante` es un hilo que cada 3 s recorre la carpeta, salta lo ya procesado y lo modificado hace menos de
+3 s (copias en curso) y ejecuta `run_job` con una copia de los ajustes. Usa `overwrite=False` y no genera
+ZIP/CSV. Se detiene con un `Event`.
+
+### Vista previa
+
+Convierte la primera imagen a una carpeta temporal usando el mismo `Job` y muestra original/resultado con
+`ImageTk`. La carpeta temporal se borra al cerrar la ventana.
+
+### Menú contextual
+
+Se registran claves en `HKCU\Software\Classes\SystemFileAssociations\image\shell\ConversorWebP` (y para
+`.zip/.rar/.7z` y carpetas) con `command` apuntando al ejecutable y `"%1"`. No requiere administrador y se
+elimina recursivamente desde la app.
+
+### Actualizaciones
+
+`consultar_ultima_version()` consulta `api.github.com/repos/zeronet75/ConversorWebP/releases/latest` con
+`urllib` y User-Agent propio. `version_tupla` compara versiones numéricamente. La comprobación automática se
+ejecuta 3 s después de abrir, como máximo una vez cada 24 h (`ultima_comprobacion`), y nunca bloquea la UI.
+
+### Portable e instalador
+
+`_ruta_config()` usa `config.json` junto al ejecutable si existe `portable.txt` o la variable
+`CONVERSORWEBP_PORTABLE=1`; si no, `%APPDATA%\ConversorWebP`. El instalador de Inno Setup incluye el
+ejecutable, el manual y el desinstalador. La compilación está descrita en `docs/COMPILAR.md`.
+

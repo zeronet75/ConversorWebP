@@ -11,6 +11,8 @@ env/
 # PyInstaller
 build/
 dist/
+dist_instalador/
+dist_portable/
 
 # Sistema
 Thumbs.db
