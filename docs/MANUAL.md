@@ -24,9 +24,9 @@ Manual completo del programa: qué hace cada opción y cómo sacarle partido.
 
 ---
 
-# Conversor WebP 2.5.0
+# Conversor WebP 2.5.1
 
-**Novedades de la versión 2.5.0:** HEIC, carpeta vigilada, patrones de nombre, solo analizar, tabla de resultados, vista previa, menú contextual, instalador y portable, detección de GPU, presets de calidad, redimensionado, peso máximo por imagen, historial de trabajos, selección múltiple, atajos de teclado, conversión en paralelo, informe CSV, formato AVIF y acceso directo en **Enviar a** del Explorador.
+**Novedades de la versión 2.5.1:** tooltips explicativos, HEIC, carpeta vigilada, patrones de nombre, solo analizar, tabla de resultados, vista previa, menú contextual, instalador y portable, detección de GPU, presets de calidad, redimensionado, peso máximo por imagen, historial de trabajos, selección múltiple, atajos de teclado, conversión en paralelo, informe CSV, formato AVIF y acceso directo en **Enviar a** del Explorador.
 
 ## 1. Qué es y qué hace
 
@@ -347,6 +347,10 @@ Se puede añadir «Convertir a WebP con Conversor WebP» al clic derecho de imá
 
 Las fotos de iPhone en `.heic`/`.heif` se abren y convierten como cualquier otra imagen (requiere pillow-heif, incluido en el ejecutable).
 
+### Ayuda emergente (tooltips)
+
+Al dejar el ratón unos instantes sobre cualquier botón, casilla, campo o desplegable aparece un globo con una explicación breve de para qué sirve. Al recorrer los menús, la barra de estado inferior muestra la descripción de la opción resaltada.
+
 ### Instalador y versión portable
 
 El instalador crea accesos directos y desinstalador, instala en `%LOCALAPPDATA%\Programs\ConversorWebP` (sin pedir administrador) y guarda la configuración en `%APPDATA%`. La versión portable se descomprime y usa un `config.json` junto al `.exe`, sin tocar el registro ni el perfil del usuario.
@@ -355,5 +359,5 @@ El instalador crea accesos directos y desinstalador, instala en `%LOCALAPPDATA%\
 
 Ambas ediciones comprueban la última release de GitHub al arrancar (como máximo una vez al día) y muestran un aviso en la barra de estado. *Ayuda → Buscar actualizaciones* fuerza la comprobación y ofrece abrir la página de descarga.
 
-Conversor WebP 2.5.0 · Programa local para Windows · Interfaz Tkinter, conversión con Pillow, arrastre con TkDND, extracción con 7-Zip/WinRAR.\
+Conversor WebP 2.5.1 · Programa local para Windows · Interfaz Tkinter, conversión con Pillow, arrastre con TkDND, extracción con 7-Zip/WinRAR.\
 Este manual se abre desde el programa en **Ayuda → Manual de uso** y también puede abrirse con doble clic en cualquier navegador.

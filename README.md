@@ -10,7 +10,7 @@
 </p>
 
 <p align="center">
-  <img alt="Versión" src="https://img.shields.io/badge/version-2.5.0-1a73e8">
+  <img alt="Versión" src="https://img.shields.io/badge/version-2.5.1-1a73e8">
   <img alt="Windows" src="https://img.shields.io/badge/Windows-10%20%7C%2011-0078D6">
   <img alt="Python" src="https://img.shields.io/badge/Python-3.12-3776AB">
   <img alt="Pillow" src="https://img.shields.io/badge/Pillow-13-11557C">
@@ -79,6 +79,7 @@ El programa se distribuye en dos formas:
 - **Vista previa** antes/después con peso y ahorro.
 - **Menú contextual** de Windows (imágenes, carpetas y comprimidos).
 - **Instalador** y **versión portable**, con comprobación de actualizaciones.
+- **Tooltips**: al pasar el ratón por cada opción se explica brevemente para qué sirve.
 - Trabajo con **archivos sueltos**, **carpetas completas** (recursivo) y **comprimidos** ZIP/RAR/7Z.
 - **Arrastrar y soltar** desde el Explorador de Windows en cualquier punto de la ventana.
 - **Selección múltiple** en la lista de origen, con borrado por lote.
@@ -603,6 +604,7 @@ ConversorWebP/
 
 Consulta [CHANGELOG.md](CHANGELOG.md). Resumen:
 
+- **2.5.1** — tooltips explicativos en todos los controles y descripciones en los menús.
 - **2.5.0** — HEIC, carpeta vigilada, patrones, dry-run, tabla, vista previa, menú contextual, instalador, portable y actualizaciones.
 - **2.4.1** — elimina el menú «Acerca de» duplicado de la barra superior; queda en Ayuda.
 - **2.4.0** — detección de GPU y modo CUDA experimental (desactivado por defecto).

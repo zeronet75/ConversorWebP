@@ -77,7 +77,7 @@ except Exception:  # pragma: no cover - la app sigue funcionando sin arrastrar
 
 
 APP_NAME = "Conversor WebP"
-APP_VERSION = "2.5.0"
+APP_VERSION = "2.5.1"
 
 try:  # soporte HEIC/HEIF (iPhone) si pillow-heif esta instalado
     import pillow_heif
@@ -1450,6 +1450,92 @@ class Vigilante(threading.Thread):
         self.emitir("Vigilante detenido.")
 
 
+class ToolTip:
+    """Globo de ayuda que aparece al pasar el ratón por un widget."""
+
+    _activo: "ToolTip | None" = None
+
+    def __init__(self, widget: tk.Misc, texto: str, retardo: int = 450):
+        self.widget = widget
+        self.texto = texto
+        self.retardo = retardo
+        self._id_after: str | None = None
+        self._ventana: tk.Toplevel | None = None
+
+        widget.bind("<Enter>", self._entrar, add="+")
+        widget.bind("<Leave>", self._salir, add="+")
+        widget.bind("<ButtonPress>", self._salir, add="+")
+        widget.bind("<Destroy>", lambda _e: self._ocultar(), add="+")
+
+    def _entrar(self, _evento=None) -> None:
+        self._cancelar()
+        self._id_after = self.widget.after(self.retardo, self._mostrar)
+
+    def _salir(self, _evento=None) -> None:
+        self._cancelar()
+        self._ocultar()
+
+    def _cancelar(self) -> None:
+        if self._id_after is not None:
+            try:
+                self.widget.after_cancel(self._id_after)
+            except Exception:
+                pass
+            self._id_after = None
+
+    def _mostrar(self) -> None:
+        if self._ventana is not None or not self.texto:
+            return
+        if ToolTip._activo is not None and ToolTip._activo is not self:
+            ToolTip._activo._ocultar()
+        ToolTip._activo = self
+
+        x = self.widget.winfo_rootx() + 12
+        y = self.widget.winfo_rooty() + self.widget.winfo_height() + 8
+
+        ventana = tk.Toplevel(self.widget)
+        ventana.wm_overrideredirect(True)
+        try:
+            ventana.attributes("-topmost", True)
+        except Exception:
+            pass
+        marco = tk.Frame(ventana, bg="#1f2933", bd=1, relief="solid")
+        marco.pack()
+        tk.Label(
+            marco,
+            text=self.texto,
+            bg="#1f2933",
+            fg="#f8fafc",
+            font=("Segoe UI", 8),
+            justify="left",
+            wraplength=360,
+            padx=9,
+            pady=6,
+        ).pack()
+        ventana.update_idletasks()
+
+        ancho = ventana.winfo_width()
+        alto = ventana.winfo_height()
+        pantalla_w = self.widget.winfo_screenwidth()
+        pantalla_h = self.widget.winfo_screenheight()
+        if x + ancho > pantalla_w - 12:
+            x = max(6, pantalla_w - ancho - 12)
+        if y + alto > pantalla_h - 12:
+            y = max(6, self.widget.winfo_rooty() - alto - 8)
+        ventana.wm_geometry(f"+{x}+{y}")
+        self._ventana = ventana
+
+    def _ocultar(self) -> None:
+        if self._ventana is not None:
+            try:
+                self._ventana.destroy()
+            except Exception:
+                pass
+            self._ventana = None
+        if ToolTip._activo is self:
+            ToolTip._activo = None
+
+
 # --------------------------------------------------------------------------- #
 #  Interfaz grafica
 # --------------------------------------------------------------------------- #
@@ -1505,6 +1591,9 @@ class App(BaseTk):  # type: ignore[misc,valid-type]
         self._comprobando_update = False
         self.buscar_actualizaciones = True
         self.ultima_comprobacion = ""
+        self._tooltips: list[ToolTip] = []
+        self._menu_descripciones: dict[str, str] = {}
+        self._after_menu: str | None = None
 
         self._dpi_setup()
         self._build_style()
@@ -1944,6 +2033,86 @@ class App(BaseTk):  # type: ignore[misc,valid-type]
         self._on_formato()
         self._refrescar_extractor()
         self._refrescar_gpu_ui()
+        self._instalar_tooltips()
+
+    def _tip(self, widget, texto: str) -> None:
+        if widget is not None:
+            self._tooltips.append(ToolTip(widget, texto))
+
+    def _instalar_tooltips(self) -> None:
+        tips = {
+            "btn_add_files": "Añade una o varias imágenes al lote.",
+            "btn_add_folder": "Añade una carpeta completa, incluidas sus subcarpetas.",
+            "btn_add_zip": "Añade archivos .zip, .rar o .7z y convierte su contenido.",
+            "btn_remove": "Quita de la lista las entradas seleccionadas (tecla Supr).",
+            "btn_clear": "Vacía la lista de origen sin tocar tus archivos.",
+            "drop_zone": "Arrastra aquí imágenes, carpetas o comprimidos desde el Explorador.",
+            "source_list": "Orígenes añadidos. Selecciona varios con Ctrl o Mayús y pulsa Supr para quitarlos.",
+            "lbl_count": "Resumen de carpetas, comprimidos e imágenes añadidos.",
+            "lbl_extractor": "Herramienta usada para abrir .rar y .7z (7-Zip o WinRAR).",
+            "entry_out": "Carpeta donde se guardarán los archivos convertidos.",
+            "btn_browse": "Elige la carpeta de salida.",
+            "chk_structure": "Reproduce las subcarpetas del origen en la carpeta de salida.",
+            "chk_overwrite": "Activado reemplaza archivos existentes; desactivado los omite.",
+            "chk_zip": "Crea además un ZIP con todos los archivos generados.",
+            "entry_zip": "Nombre del ZIP que se creará en la carpeta de salida.",
+            "cmb_formato": "Formato de salida: WebP (compatible) o AVIF (pesa menos).",
+            "chk_csv": "Guarda un CSV con el peso original, final y el ahorro de cada archivo.",
+            "entry_patron": "Patrón de nombre. Vacío conserva el original. Ej.: {nombre}_{ancho}x{alto}.",
+            "btn_patron_ayuda": "Ver los marcadores disponibles para el nombre de salida.",
+            "chk_dry": "Calcula el peso estimado sin escribir ninguna imagen.",
+            "chk_gpu": "Modo experimental: usa CUDA en JPEG grandes. Desactivado por defecto.",
+            "lbl_gpu": "Tarjeta gráfica detectada en este equipo.",
+            "cmb_preset": "Aplica una combinación guardada de calidad y tamaño.",
+            "btn_save_preset": "Guarda los ajustes actuales como preset propio.",
+            "btn_del_preset": "Borra el preset propio seleccionado.",
+            "scale_q": "Calidad de 1 a 100. Más calidad = mejor aspecto y más peso.",
+            "lbl_q": "Valor de calidad actual.",
+            "cmb_method": "Esfuerzo 0-6: más esfuerzo comprime mejor pero tarda más.",
+            "chk_lossless": "Sin pérdida: fidelidad exacta, archivos más grandes.",
+            "chk_webp": "Vuelve a convertir archivos que ya están en el formato de destino.",
+            "chk_flatten": "Rellena la transparencia con un color sólido.",
+            "btn_color": "Elige el color de fondo al aplanar la transparencia.",
+            "cmb_dim": "Reduce el lado mayor a este tamaño; nunca amplía imágenes pequeñas.",
+            "chk_peso": "Ajusta la calidad automáticamente para no superar el peso indicado.",
+            "entry_peso": "Peso máximo por imagen, en KB (mínimo 5).",
+            "btn_start": "Inicia la conversión con los ajustes actuales (Ctrl+Enter o F5).",
+            "btn_cancel": "Detiene el proceso después del archivo en curso.",
+            "chk_beep": "Pitido al terminar: agudo si todo va bien, grave si hay errores.",
+            "btn_open": "Abre el Explorador en la carpeta de salida.",
+            "tabla": "Resultados del último trabajo. Doble clic para abrir un archivo.",
+            "notas": "Resultados en tabla y registro detallado del proceso.",
+        }
+        for atributo, texto in tips.items():
+            self._tip(getattr(self, atributo, None), texto)
+
+    def _al_recorrer_menu(self, event=None) -> None:
+        if event is None or self.running:
+            return
+        menu = event.widget
+        try:
+            indice = menu.index("active")
+        except Exception:
+            return
+        if indice in (None, "none", -1):
+            return
+        try:
+            etiqueta = str(menu.entrycget(indice, "label"))
+        except Exception:
+            return
+        texto = self._menu_descripciones.get(etiqueta)
+        if not texto:
+            return
+        self.lbl_status.configure(text=texto)
+        if self._after_menu is not None:
+            try:
+                self.after_cancel(self._after_menu)
+            except Exception:
+                pass
+        self._after_menu = self.after(
+            6000,
+            lambda: None if self.running else self.lbl_status.configure(text="Listo."),
+        )
 
     def _build_menu(self) -> None:
         barra = tk.Menu(self)
@@ -1981,6 +2150,22 @@ class App(BaseTk):  # type: ignore[misc,valid-type]
         herr.add_command(label="Carpeta vigilada...", command=self._dialogo_vigilante)
         herr.add_command(label="Vista previa de la primera imagen", command=self._vista_previa)
         barra.add_cascade(label="Herramientas", menu=herr)
+        self._menu_descripciones = {
+            "Manual de uso": "Abre el manual completo en el navegador (F1).",
+            "Buscar actualizaciones": "Comprueba si hay una versión nueva publicada en GitHub.",
+            "Acerca de Conversor WebP": "Versión, características y entorno del equipo.",
+            "Anadir a 'Enviar a' del Explorador": "Crea un acceso en 'Enviar a' para abrir la app con los archivos seleccionados.",
+            "Quitar de 'Enviar a'": "Elimina el acceso creado en 'Enviar a'.",
+            "Anadir al menu contextual de Windows": "Añade 'Convertir a WebP' al clic derecho de imágenes, carpetas y comprimidos.",
+            "Quitar del menu contextual": "Elimina la entrada del menú contextual de Windows.",
+            "Aceleracion GPU (CUDA)...": "Muestra el estado de CUDA y permite indicar la carpeta de PyTorch.",
+            "Forzar GPU en lotes pequenos": "Usa la GPU aunque el lote sea pequeño (puede tardar más al inicio).",
+            "Carpeta vigilada...": "Convierte automáticamente lo que aparezca en una carpeta.",
+            "Vista previa de la primera imagen": "Compara el original y el resultado con su peso y ahorro.",
+            "Vaciar historial": "Borra el historial de trabajos.",
+        }
+        for menu in (ayuda, self.menu_hist, herr):
+            menu.bind("<<MenuSelect>>", self._al_recorrer_menu)
         self.configure(menu=barra)
         self._refrescar_historial()
         self.bind_all("<F1>", lambda _e: self._abrir_manual())
@@ -3185,6 +3370,14 @@ class App(BaseTk):  # type: ignore[misc,valid-type]
             except Exception:
                 pass
             self._after_id = None
+        if self._after_menu is not None:
+            try:
+                self.after_cancel(self._after_menu)
+            except Exception:
+                pass
+            self._after_menu = None
+        for tip in self._tooltips:
+            tip._ocultar()
 
     def _on_close(self) -> None:
         if self.running:

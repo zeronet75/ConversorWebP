@@ -6,6 +6,17 @@ Todos los cambios relevantes del proyecto. Formato basado en
 
 ---
 
+## [2.5.1] — 2026-11-17
+
+### Añadido
+
+- **Tooltips explicativos** en 41 controles: al pasar el ratón por botones, casillas, campos, desplegables
+  y la tabla aparece un globo con una explicación breve.
+- **Descripciones de menú** en la barra de estado al recorrer `Ayuda`, `Historial` y `Herramientas`.
+- El globo se oculta al hacer clic o al salir del control, y se coloca dentro de la pantalla.
+
+---
+
 ## [2.5.0] — 2026-11-17
 
 ### Añadido
@@ -179,6 +190,7 @@ Todos los cambios relevantes del proyecto. Formato basado en
 - Conservación de transparencia, perfil ICC y orientación EXIF.
 - Modo consola básico.
 
+[2.5.1]: #251--2026-11-17
 [2.5.0]: #250--2026-11-17
 [2.4.1]: #241--2026-11-17
 [2.4.0]: #240--2026-11-17

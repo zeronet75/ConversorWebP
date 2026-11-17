@@ -1,4 +1,4 @@
-CONVERSOR WEBP 2.5.0
+CONVERSOR WEBP 2.5.1
 ==================
 
 Aplicacion para convertir imagenes (JPG, PNG, BMP, TIFF, GIF, ICO...) a
@@ -49,6 +49,7 @@ COMO USARLA
      {formato} y {calidad}. Vacio conserva el nombre original.
    - Solo analizar: calcula el peso estimado sin escribir imagenes.
    - Acelerar con GPU: modo CUDA experimental (ver arriba).
+   Pasa el raton por cualquier opcion para ver una ayuda breve.
 
    Extras en Herramientas:
    - Carpeta vigilada: convierte sola lo que aparezca en una carpeta.
