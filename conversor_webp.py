@@ -77,7 +77,7 @@ except Exception:  # pragma: no cover - la app sigue funcionando sin arrastrar
 
 
 APP_NAME = "Conversor WebP"
-APP_VERSION = "2.5.1"
+APP_VERSION = "2.6.0"
 
 try:  # soporte HEIC/HEIF (iPhone) si pillow-heif esta instalado
     import pillow_heif
@@ -399,6 +399,17 @@ class Result:
     csv_path: Path | None = None
     cancelled: bool = False
     dry_run: bool = False
+
+
+def debe_apagar(res: Result, activado: bool) -> bool:
+    """True solo si el usuario lo pidio y la conversion termino bien."""
+    return bool(
+        activado
+        and res.converted > 0
+        and not res.failed
+        and not res.cancelled
+        and not res.dry_run
+    )
 
 
 # --------------------------------------------------------------------------- #
@@ -1576,6 +1587,7 @@ class App(BaseTk):  # type: ignore[misc,valid-type]
         self.gpu_forzar_var = tk.BooleanVar(value=False)
         self.name_pattern = tk.StringVar(value="")
         self.dry_run = tk.BooleanVar(value=False)
+        self.apagar = tk.BooleanVar(value=False)
 
         self.queue: queue.Queue = queue.Queue()
         self.cancel_event = threading.Event()
@@ -1594,6 +1606,8 @@ class App(BaseTk):  # type: ignore[misc,valid-type]
         self._tooltips: list[ToolTip] = []
         self._menu_descripciones: dict[str, str] = {}
         self._after_menu: str | None = None
+        self._apagado_win: tk.Toplevel | None = None
+        self._apagado_lanzado = False
 
         self._dpi_setup()
         self._build_style()
@@ -1969,6 +1983,14 @@ class App(BaseTk):  # type: ignore[misc,valid-type]
             style="Bar.TCheckbutton",
         )
         self.chk_beep.pack(side="right", padx=(0, 18))
+        self.chk_apagar = ttk.Checkbutton(
+            accion,
+            text="Apagar al terminar",
+            variable=self.apagar,
+            style="Bar.TCheckbutton",
+            command=self._on_apagar_toggle,
+        )
+        self.chk_apagar.pack(side="right", padx=(0, 12))
 
         self.progress = ttk.Progressbar(outer, mode="determinate", maximum=100)
         self.progress.pack(fill="x", pady=(10, 3))
@@ -2079,6 +2101,7 @@ class App(BaseTk):  # type: ignore[misc,valid-type]
             "btn_start": "Inicia la conversión con los ajustes actuales (Ctrl+Enter o F5).",
             "btn_cancel": "Detiene el proceso después del archivo en curso.",
             "chk_beep": "Pitido al terminar: agudo si todo va bien, grave si hay errores.",
+            "chk_apagar": "Apaga el equipo al terminar una conversión correcta, con cuenta atrás cancelable.",
             "btn_open": "Abre el Explorador en la carpeta de salida.",
             "tabla": "Resultados del último trabajo. Doble clic para abrir un archivo.",
             "notas": "Resultados en tabla y registro detallado del proceso.",
@@ -2649,6 +2672,17 @@ class App(BaseTk):  # type: ignore[misc,valid-type]
             if analizar
             else "Listo."
         )
+
+    def _on_apagar_toggle(self) -> None:
+        if not self.apagar.get():
+            return
+        if not messagebox.askyesno(
+            APP_NAME,
+            "Al terminar una conversión correcta, el equipo se apagará tras una cuenta atrás "
+            "de 30 segundos desde la propia aplicación.\n\n"
+            "Podrás cancelarlo en esa ventana.\n\n¿Activar el apagado automático?",
+        ):
+            self.apagar.set(False)
 
     def _ayuda_patron(self) -> None:
         messagebox.showinfo(
@@ -3359,6 +3393,111 @@ class App(BaseTk):  # type: ignore[misc,valid-type]
         else:
             messagebox.showinfo(APP_NAME, "No se encontro ninguna imagen que convertir.")
 
+        if debe_apagar(res, self.apagar.get()):
+            self._ventana_apagado()
+        elif self.apagar.get():
+            self._log(
+                "muted",
+                "Apagado automatico omitido: analisis, cancelacion o errores.",
+            )
+
+    def _ventana_apagado(self) -> None:
+        if self._apagado_win is not None and self._apagado_win.winfo_exists():
+            return
+
+        ventana = tk.Toplevel(self)
+        self._apagado_win = ventana
+        ventana.title("Apagado automatico")
+        ventana.configure(bg=BG)
+        ventana.transient(self)
+        ventana.resizable(False, False)
+        ventana.attributes("-topmost", True)
+        try:
+            ventana.grab_set()
+        except Exception:
+            pass
+
+        cont = ttk.Frame(ventana, padding=22)
+        cont.pack(fill="both", expand=True)
+        ttk.Label(cont, text="Conversion completada", style="Title.TLabel").pack()
+        etiqueta = ttk.Label(cont, text="", style="TLabel")
+        etiqueta.configure(font=("Segoe UI", 11))
+        etiqueta.pack(pady=(10, 4))
+        ttk.Label(
+            cont,
+            text="Pulsa 'Cancelar apagado' para evitarlo.",
+            style="Sub.TLabel",
+        ).pack()
+
+        botones = ttk.Frame(cont)
+        botones.pack(pady=(16, 0))
+        estado = {"restante": 30, "id": None}
+
+        def cancelar() -> None:
+            if estado["id"] is not None:
+                try:
+                    ventana.after_cancel(estado["id"])
+                except Exception:
+                    pass
+                estado["id"] = None
+            self._log("info", "Apagado cancelado por el usuario.")
+            ventana.destroy()
+            self._apagado_win = None
+
+        def apagar_ahora() -> None:
+            if estado["id"] is not None:
+                try:
+                    ventana.after_cancel(estado["id"])
+                except Exception:
+                    pass
+                estado["id"] = None
+            self._ejecutar_apagado()
+            ventana.destroy()
+            self._apagado_win = None
+
+        def tick() -> None:
+            if not ventana.winfo_exists():
+                return
+            estado["restante"] -= 1
+            if estado["restante"] <= 0:
+                self._ejecutar_apagado()
+                ventana.destroy()
+                self._apagado_win = None
+                return
+            etiqueta.configure(text=f"El equipo se apagara en {estado['restante']} s")
+            estado["id"] = ventana.after(1000, tick)
+
+        ttk.Button(botones, text="Cancelar apagado", command=cancelar).pack(side="left")
+        ttk.Button(botones, text="Apagar ahora", command=apagar_ahora).pack(
+            side="left", padx=(8, 0)
+        )
+        ventana.protocol("WM_DELETE_WINDOW", cancelar)
+        etiqueta.configure(text="El equipo se apagara en 30 s")
+        estado["id"] = ventana.after(1000, tick)
+
+        ventana.update_idletasks()
+        x = self.winfo_rootx() + (self.winfo_width() - ventana.winfo_width()) // 2
+        y = self.winfo_rooty() + 140
+        ventana.geometry(f"+{max(0, x)}+{max(0, y)}")
+
+    def _ejecutar_apagado(self) -> None:
+        if self._apagado_lanzado:
+            return
+        self._apagado_lanzado = True
+        try:
+            subprocess.run(
+                ["shutdown", "/s", "/t", "10", "/c", "Conversor WebP: apagado solicitado."],
+                creationflags=_no_window_flags(),
+                check=False,
+            )
+            self._log(
+                "warn",
+                "Apagado programado en 10 segundos. Para cancelarlo: shutdown /a",
+            )
+        except Exception as e:  # noqa: BLE001
+            self._apagado_lanzado = False
+            messagebox.showerror(APP_NAME, f"No se pudo programar el apagado:\n{e}")
+
     def _al_destruir(self, event=None) -> None:
         """Detiene el bucle de eventos pendiente al cerrar la ventana."""
         if event is not None and event.widget is not self:
@@ -3434,6 +3573,7 @@ class App(BaseTk):  # type: ignore[misc,valid-type]
         self.dry_run.set(booleano("dry_run", False))
         self.buscar_actualizaciones = booleano("buscar_actualizaciones", True)
         self.ultima_comprobacion = str(data.get("ultima_comprobacion", "") or "")
+        self.apagar.set(booleano("apagar_al_terminar", False))
         self.formato.set("AVIF" if str(data.get("formato", "WebP")).upper() == "AVIF" else "WebP")
 
         fondo = data.get("background", "#ffffff")
@@ -3507,6 +3647,7 @@ class App(BaseTk):  # type: ignore[misc,valid-type]
                     "dry_run": self.dry_run.get(),
                     "buscar_actualizaciones": self.buscar_actualizaciones,
                     "ultima_comprobacion": self.ultima_comprobacion,
+                    "apagar_al_terminar": self.apagar.get(),
                     "presets": self.presets_usuario,
                     "historial": self.historial,
                 },
@@ -3568,6 +3709,10 @@ def run_cli(argv: list[str]) -> int:
     parser.add_argument("--gpu", action="store_true",
                         help="Forzar la GPU (aunque el lote sea pequeno)")
     parser.add_argument("--no-gpu", action="store_true", help="Desactivar la aceleracion GPU")
+    parser.add_argument("--shutdown", action="store_true",
+                        help="Apagar el equipo al terminar correctamente")
+    parser.add_argument("--shutdown-delay", type=int, default=60,
+                        help="Segundos antes de apagar (60 por defecto)")
     args = parser.parse_args(argv)
 
     job = Job(
@@ -3614,6 +3759,17 @@ def run_cli(argv: list[str]) -> int:
         _say(f"{res.bytes_in / 1048576:.2f} MB -> {res.bytes_out / 1048576:.2f} MB (ahorro {ahorro:.1f} %)")
     if res.zip_path:
         _say(f"ZIP: {res.zip_path}")
+    if args.shutdown and res.converted and not res.failed and not res.cancelled:
+        retardo = max(10, args.shutdown_delay)
+        try:
+            subprocess.run(
+                ["shutdown", "/s", "/t", str(retardo), "/c", "Conversor WebP"],
+                creationflags=_no_window_flags(),
+                check=False,
+            )
+            _say(f"Apagado programado en {retardo} s. Para cancelar: shutdown /a")
+        except Exception as e:  # noqa: BLE001
+            _say(f"ERROR: no se pudo programar el apagado: {e}")
     return 0 if not res.failed else 1
 
 

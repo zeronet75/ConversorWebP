@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Manual de uso · Conversor WebP 2.5.1</title>
+<title>Manual de uso · Conversor WebP 2.6.0</title>
 <style>
   :root{
     --azul:#1a73e8; --azul-osc:#1557b0; --texto:#1f2933; --gris:#5f6b7a;
@@ -67,7 +67,7 @@
 <div class="hoja">
 
 <header>
-  <h1>Conversor WebP 2.5.1</h1>
+  <h1>Conversor WebP 2.6.0</h1>
   <p class="sub">Manual de uso · Qué hace cada opción y cómo sacarle partido</p>
 </header>
 
@@ -93,7 +93,7 @@
 </div>
 
 <div class="nota">
-  <strong>Novedades de la versión 2.5.1:</strong> tooltips explicativos, HEIC, carpeta vigilada, patrones de nombre, solo analizar, tabla de resultados, vista previa, menú contextual, instalador y portable, detección de GPU, presets de calidad, redimensionado, peso máximo por imagen,
+  <strong>Novedades de la versión 2.6.0:</strong> apagado opcional al terminar, tooltips explicativos, HEIC, carpeta vigilada, patrones de nombre, solo analizar, tabla de resultados, vista previa, menú contextual, instalador y portable, detección de GPU, presets de calidad, redimensionado, peso máximo por imagen,
   historial de trabajos, selección múltiple, atajos de teclado, conversión en paralelo, informe CSV,
   formato AVIF y acceso directo en <strong>Enviar a</strong> del Explorador.
 </div>
@@ -335,6 +335,7 @@ Cualquier fallo de CUDA revierte a CPU para esa imagen.</p>
   <tr><td><strong>Cancelar</strong></td><td>Detiene el proceso después del archivo en curso. Lo ya convertido se conserva.</td></tr>
   <tr><td><strong>Abrir carpeta de salida</strong></td><td>Abre el Explorador de Windows en la carpeta de destino.</td></tr>
   <tr><td><strong>Aviso sonoro al terminar</strong></td><td>Pitido al finalizar: dos tonos agudos si todo salió bien y dos graves si hubo errores o cancelaste. Se puede desactivar con la casilla que está a la derecha de los botones.</td></tr>
+  <tr><td><strong>Apagar al terminar</strong></td><td>Apaga el equipo tras una conversión correcta. Muestra una ventana con cuenta atrás de 30 segundos y botones «Cancelar apagado» y «Apagar ahora». Desactivado por defecto; al activarlo pide confirmación.</td></tr>
   <tr><td><strong>Barra de progreso</strong></td><td>Archivos procesados sobre el total y porcentaje. Si hay comprimidos, primero indica «Extrayendo…».</td></tr>
   <tr><td><strong>Registro</strong></td><td>Detalle línea a línea. Colores: <span style="color:#137333"><strong>verde</strong></span> = convertida,
       <span style="color:#c5221f"><strong>rojo</strong></span> = error, <span style="color:#b45309"><strong>ámbar</strong></span> = aviso,
@@ -435,6 +436,8 @@ instalados; el programa los busca solo en las rutas habituales de Windows.</p>
   <tr><td><code>--csv</code></td><td>Genera el informe CSV en la carpeta de salida.</td></tr>
   <tr><td><code>--gpu</code></td><td>Fuerza la GPU CUDA aunque el lote sea pequeño.</td></tr>
   <tr><td><code>--no-gpu</code></td><td>Desactiva la aceleración GPU.</td></tr>
+  <tr><td><code>--shutdown</code></td><td>Apaga el equipo al terminar correctamente.</td></tr>
+  <tr><td><code>--shutdown-delay N</code></td><td>Segundos antes de apagar (mínimo 10; 60 por defecto).</td></tr>
   <tr><td><code>--lossless</code></td><td>Modo sin pérdida.</td></tr>
   <tr><td><code>--flat --bg "#ffffff"</code></td><td>Aplana la transparencia sobre ese color.</td></tr>
   <tr><td><code>--no-recursive</code></td><td>No mantiene subcarpetas (todo plano).</td></tr>
@@ -555,6 +558,14 @@ comprimidos. Se instala en HKCU (sin administrador) y se quita desde Herramienta
 imagen (requiere pillow-heif, incluido en el ejecutable).</p>
 
 
+
+<h3>Apagado automático al terminar</h3>
+<p>La casilla <strong>Apagar al terminar</strong> (barra inferior) permite apagar el equipo cuando la
+conversión acaba correctamente. Al activarla se pide confirmación. Al finalizar aparece una ventana con
+cuenta atrás de 30 segundos y dos botones: <em>Cancelar apagado</em> y <em>Apagar ahora</em>. No se apaga
+si hubo errores, si se canceló el trabajo o si era un análisis. En consola: <code>--shutdown</code> y
+<code>--shutdown-delay</code>.</p>
+
 <h3>Ayuda emergente (tooltips)</h3>
 <p>Al dejar el ratón unos instantes sobre cualquier botón, casilla, campo o desplegable aparece un globo
 con una explicación breve de para qué sirve. Al recorrer los menús, la barra de estado inferior muestra la
@@ -572,7 +583,7 @@ muestran un aviso en la barra de estado. <em>Ayuda → Buscar actualizaciones</e
 ofrece abrir la página de descarga.</p>
 
 <p class="pie">
-  Conversor WebP 2.5.1 · Programa local para Windows · Interfaz Tkinter, conversión con Pillow, arrastre con
+  Conversor WebP 2.6.0 · Programa local para Windows · Interfaz Tkinter, conversión con Pillow, arrastre con
   TkDND, extracción con 7-Zip/WinRAR.<br>
   Este manual se abre desde el programa en <strong>Ayuda → Manual de uso</strong> y también puede abrirse
   con doble clic en cualquier navegador.

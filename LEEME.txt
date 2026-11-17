@@ -1,4 +1,4 @@
-CONVERSOR WEBP 2.5.1
+CONVERSOR WEBP 2.6.0
 ==================
 
 Aplicacion para convertir imagenes (JPG, PNG, BMP, TIFF, GIF, ICO...) a
@@ -32,6 +32,8 @@ COMO USARLA
    - Aplanar transparencia sobre un color: para PNG con fondo transparente.
    - Aviso sonoro al terminar: pitido agudo si todo va bien y grave si hubo
      errores o cancelaste. Se desactiva con la casilla de la barra inferior.
+   - Apagar al terminar: apaga el equipo tras una conversion correcta, con
+     cuenta atras de 30 s y boton de cancelar. Desactivado por defecto.
    - Acelerar con GPU (experimental): usa CUDA para JPEG grandes que se
      reduzcan. Desactivado por defecto (la CPU en paralelo es mas rapida en
      lotes). Estado en Herramientas -> Aceleracion GPU.

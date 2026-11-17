@@ -6,6 +6,18 @@ Todos los cambios relevantes del proyecto. Formato basado en
 
 ---
 
+## [2.6.0] — 2026-11-17
+
+### Añadido
+
+- Casilla **Apagar al terminar** (barra inferior), desactivada por defecto y con confirmación al activarla.
+- Ventana de **cuenta atrás de 30 segundos** con «Cancelar apagado» y «Apagar ahora».
+- El apagado solo se ejecuta si hubo conversiones, no hubo fallos, no se canceló y no era un análisis.
+- Opciones de consola `--shutdown` y `--shutdown-delay N`.
+- El apagado real se lanza con `shutdown /s /t 10`, por lo que sigue siendo cancelable con `shutdown /a`.
+
+---
+
 ## [2.5.1] — 2026-11-17
 
 ### Añadido
@@ -190,6 +202,7 @@ Todos los cambios relevantes del proyecto. Formato basado en
 - Conservación de transparencia, perfil ICC y orientación EXIF.
 - Modo consola básico.
 
+[2.6.0]: #260--2026-11-17
 [2.5.1]: #251--2026-11-17
 [2.5.0]: #250--2026-11-17
 [2.4.1]: #241--2026-11-17

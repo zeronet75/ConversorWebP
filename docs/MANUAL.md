@@ -24,9 +24,9 @@ Manual completo del programa: qué hace cada opción y cómo sacarle partido.
 
 ---
 
-# Conversor WebP 2.5.1
+# Conversor WebP 2.6.0
 
-**Novedades de la versión 2.5.1:** tooltips explicativos, HEIC, carpeta vigilada, patrones de nombre, solo analizar, tabla de resultados, vista previa, menú contextual, instalador y portable, detección de GPU, presets de calidad, redimensionado, peso máximo por imagen, historial de trabajos, selección múltiple, atajos de teclado, conversión en paralelo, informe CSV, formato AVIF y acceso directo en **Enviar a** del Explorador.
+**Novedades de la versión 2.6.0:** apagado opcional al terminar, tooltips explicativos, HEIC, carpeta vigilada, patrones de nombre, solo analizar, tabla de resultados, vista previa, menú contextual, instalador y portable, detección de GPU, presets de calidad, redimensionado, peso máximo por imagen, historial de trabajos, selección múltiple, atajos de teclado, conversión en paralelo, informe CSV, formato AVIF y acceso directo en **Enviar a** del Explorador.
 
 ## 1. Qué es y qué hace
 
@@ -162,6 +162,7 @@ El ejecutable no incluye PyTorch (ocuparía ~2,4 GB): usa el que ya esté instal
 | **Cancelar** | Detiene el proceso después del archivo en curso. Lo ya convertido se conserva. |
 | **Abrir carpeta de salida** | Abre el Explorador de Windows en la carpeta de destino. |
 | **Aviso sonoro al terminar** | Pitido al finalizar: dos tonos agudos si todo salió bien y dos graves si hubo errores o cancelaste. Se puede desactivar con la casilla que está a la derecha de los botones. |
+| **Apagar al terminar** | Apaga el equipo tras una conversión correcta. Muestra una ventana con cuenta atrás de 30 segundos y botones «Cancelar apagado» y «Apagar ahora». Desactivado por defecto; al activarlo pide confirmación. |
 | **Barra de progreso** | Archivos procesados sobre el total y porcentaje. Si hay comprimidos, primero indica «Extrayendo…». |
 | **Registro** | Detalle línea a línea. Colores: **verde** = convertida, **rojo** = error, **ámbar** = aviso, **gris** = omitida/informativa. |
 
@@ -246,6 +247,8 @@ El mismo ejecutable puede usarse sin ventana, por ejemplo en un script o una tar
 | `--csv` | Genera el informe CSV en la carpeta de salida. |
 | `--gpu` | Fuerza la GPU CUDA aunque el lote sea pequeño. |
 | `--no-gpu` | Desactiva la aceleración GPU. |
+| `--shutdown` | Apaga el equipo al terminar correctamente. |
+| `--shutdown-delay N` | Segundos antes de apagar (mínimo 10; 60 por defecto). |
 | `--lossless` | Modo sin pérdida. |
 | `--flat --bg "#ffffff"` | Aplana la transparencia sobre ese color. |
 | `--no-recursive` | No mantiene subcarpetas (todo plano). |
@@ -347,6 +350,10 @@ Se puede añadir «Convertir a WebP con Conversor WebP» al clic derecho de imá
 
 Las fotos de iPhone en `.heic`/`.heif` se abren y convierten como cualquier otra imagen (requiere pillow-heif, incluido en el ejecutable).
 
+### Apagado automático al terminar
+
+La casilla **Apagar al terminar** (barra inferior) permite apagar el equipo cuando la conversión acaba correctamente. Al activarla se pide confirmación. Al finalizar aparece una ventana con cuenta atrás de 30 segundos y dos botones: *Cancelar apagado* y *Apagar ahora*. No se apaga si hubo errores, si se canceló el trabajo o si era un análisis. En consola: `--shutdown` y `--shutdown-delay`.
+
 ### Ayuda emergente (tooltips)
 
 Al dejar el ratón unos instantes sobre cualquier botón, casilla, campo o desplegable aparece un globo con una explicación breve de para qué sirve. Al recorrer los menús, la barra de estado inferior muestra la descripción de la opción resaltada.
@@ -359,5 +366,5 @@ El instalador crea accesos directos y desinstalador, instala en `%LOCALAPPDATA%\
 
 Ambas ediciones comprueban la última release de GitHub al arrancar (como máximo una vez al día) y muestran un aviso en la barra de estado. *Ayuda → Buscar actualizaciones* fuerza la comprobación y ofrece abrir la página de descarga.
 
-Conversor WebP 2.5.1 · Programa local para Windows · Interfaz Tkinter, conversión con Pillow, arrastre con TkDND, extracción con 7-Zip/WinRAR.\
+Conversor WebP 2.6.0 · Programa local para Windows · Interfaz Tkinter, conversión con Pillow, arrastre con TkDND, extracción con 7-Zip/WinRAR.\
 Este manual se abre desde el programa en **Ayuda → Manual de uso** y también puede abrirse con doble clic en cualquier navegador.
