@@ -6,6 +6,20 @@ Todos los cambios relevantes del proyecto. Formato basado en
 
 ---
 
+## [2.9.0] — 2026-11-18
+
+### Añadido
+
+- **DDS en C++:** texturas DXT1, DXT3, DXT5 y DDS sin comprimir.
+
+### Pendiente
+
+- Menú contextual moderno de Windows 11 (extensión COM/MSIX).
+- Traducción completa al inglés.
+- DPI nítido por monitor; el escalado GDI se mantiene como solución compatible.
+
+---
+
 ## [2.8.0] — 2026-11-18
 
 ### Añadido
@@ -314,6 +328,7 @@ Todos los cambios relevantes del proyecto. Formato basado en
 - Conservación de transparencia, perfil ICC y orientación EXIF.
 - Modo consola básico.
 
+[2.9.0]: #290--2026-11-18
 [2.8.0]: #280--2026-11-18
 [2.7.0]: #270--2026-11-18
 [2.6.5]: #265--2026-11-18

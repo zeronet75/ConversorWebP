@@ -79,7 +79,7 @@ using Microsoft::WRL::ComPtr;
 namespace fs = std::filesystem;
 
 static const wchar_t* APP_NAME = L"Conversor WebP";
-static const wchar_t* APP_VERSION = L"2.8.0";
+static const wchar_t* APP_VERSION = L"2.9.0";
 
 // ---------------------------------------------------------------------------
 //  Utilidades generales
@@ -1092,12 +1092,138 @@ static bool decodificar_pcx(const std::wstring& ruta, Bitmap& bmp, std::wstring&
     return true;
 }
 
+static bool decodificar_dds(const std::wstring& ruta, Bitmap& bmp, std::wstring& error) {
+    std::ifstream f(ruta, std::ios::binary);
+    if (!f) { error = L"no se pudo abrir el DDS"; return false; }
+    std::vector<uint8_t> d((std::istreambuf_iterator<char>(f)),
+                           std::istreambuf_iterator<char>());
+    if (d.size() < 128 || memcmp(d.data(), "DDS ", 4) != 0) {
+        error = L"DDS no valido"; return false;
+    }
+    auto u32 = [&](size_t p) -> uint32_t {
+        if (p + 4 > d.size()) return 0;
+        return (uint32_t)d[p] | ((uint32_t)d[p + 1] << 8) |
+               ((uint32_t)d[p + 2] << 16) | ((uint32_t)d[p + 3] << 24);
+    };
+    int h = (int)u32(12), w = (int)u32(16);
+    if (w <= 0 || h <= 0 || (uint64_t)w * h > 120000000ull) {
+        error = L"tamano DDS no valido"; return false;
+    }
+    uint32_t pf_flags = u32(80), fourcc = u32(84), bits = u32(88);
+    uint32_t rm = u32(92), gm = u32(96), bm = u32(100), am = u32(104);
+    bmp.w = w; bmp.h = h; bmp.alfa = false;
+    bmp.rgba.assign((size_t)w * h * 4, 255);
+    size_t pos = 128;
+    if (fourcc == 0x31545844 || fourcc == 0x33545844 || fourcc == 0x35545844) {
+        int bloques_x = (w + 3) / 4, bloques_y = (h + 3) / 4;
+        int tam_bloque = fourcc == 0x31545844 ? 8 : 16;
+        if (pos + (size_t)bloques_x * bloques_y * tam_bloque > d.size()) {
+            error = L"DDS truncado"; return false;
+        }
+        auto c565 = [](uint16_t c, uint8_t& r, uint8_t& g, uint8_t& b) {
+            r = (uint8_t)(((c >> 11) & 31) * 255 / 31);
+            g = (uint8_t)(((c >> 5) & 63) * 255 / 63);
+            b = (uint8_t)((c & 31) * 255 / 31);
+        };
+        for (int by = 0; by < bloques_y; by++) {
+            for (int bx = 0; bx < bloques_x; bx++) {
+                const uint8_t* bloque = d.data() + pos;
+                uint8_t alfa[16];
+                for (int i = 0; i < 16; i++) alfa[i] = 255;
+                const uint8_t* colores = bloque;
+                if (fourcc == 0x33545844) {
+                    for (int i = 0; i < 16; i++) {
+                        int nibble = (bloque[i / 2] >> ((i & 1) * 4)) & 0xF;
+                        alfa[i] = (uint8_t)(nibble * 17);
+                    }
+                    colores = bloque + 8;
+                } else if (fourcc == 0x35545844) {
+                    uint8_t a0 = bloque[0], a1 = bloque[1];
+                    uint8_t tabla[8] = {a0, a1};
+                    if (a0 > a1) {
+                        for (int i = 1; i <= 6; i++)
+                            tabla[i + 1] = (uint8_t)(((7 - i) * a0 + i * a1) / 7);
+                    } else {
+                        for (int i = 1; i <= 4; i++)
+                            tabla[i + 1] = (uint8_t)(((5 - i) * a0 + i * a1) / 5);
+                        tabla[6] = 0;
+                        tabla[7] = 255;
+                    }
+                    uint64_t bits_alfa = 0;
+                    for (int i = 0; i < 6; i++) bits_alfa |= (uint64_t)bloque[2 + i] << (8 * i);
+                    for (int i = 0; i < 16; i++)
+                        alfa[i] = tabla[(bits_alfa >> (3 * i)) & 7];
+                    colores = bloque + 8;
+                }
+                uint16_t c0 = (uint16_t)(colores[0] | (colores[1] << 8));
+                uint16_t c1 = (uint16_t)(colores[2] | (colores[3] << 8));
+                uint8_t pal[4][4];
+                c565(c0, pal[0][0], pal[0][1], pal[0][2]);
+                c565(c1, pal[1][0], pal[1][1], pal[1][2]);
+                pal[0][3] = pal[1][3] = 255;
+                if (c0 > c1) {
+                    for (int c = 0; c < 3; c++) {
+                        pal[2][c] = (uint8_t)((2 * pal[0][c] + pal[1][c]) / 3);
+                        pal[3][c] = (uint8_t)((pal[0][c] + 2 * pal[1][c]) / 3);
+                    }
+                    pal[2][3] = pal[3][3] = 255;
+                } else {
+                    for (int c = 0; c < 3; c++)
+                        pal[2][c] = (uint8_t)((pal[0][c] + pal[1][c]) / 2);
+                    pal[2][3] = 255;
+                    pal[3][0] = pal[3][1] = pal[3][2] = 0;
+                    pal[3][3] = 0;
+                }
+                uint32_t indices = u32(pos + (fourcc == 0x31545844 ? 4 : 12));
+                for (int py = 0; py < 4; py++) {
+                    for (int px = 0; px < 4; px++) {
+                        int x = bx * 4 + px, y = by * 4 + py;
+                        if (x >= w || y >= h) continue;
+                        int idx = (indices >> (2 * (py * 4 + px))) & 3;
+                        uint8_t* q = bmp.rgba.data() + ((size_t)y * w + x) * 4;
+                        q[0] = pal[idx][0]; q[1] = pal[idx][1]; q[2] = pal[idx][2];
+                        q[3] = (uint8_t)((pal[idx][3] * alfa[py * 4 + px]) / 255);
+                        if (q[3] < 255) bmp.alfa = true;
+                    }
+                }
+                pos += tam_bloque;
+            }
+        }
+        return true;
+    }
+    if (pf_flags & 0x40 && (bits == 24 || bits == 32)) {
+        int canales = bits / 8;
+        if (pos + (size_t)w * h * canales > d.size()) {
+            error = L"DDS truncado"; return false;
+        }
+        auto canal = [](uint32_t v, uint32_t mascara, uint8_t por_defecto) -> uint8_t {
+            if (!mascara) return por_defecto;
+            int shift = 0;
+            while (((mascara >> shift) & 1) == 0) shift++;
+            uint32_t maximo = mascara >> shift;
+            return (uint8_t)(((v >> shift) & maximo) * 255 / maximo);
+        };
+        for (size_t i = 0; i < (size_t)w * h; i++) {
+            uint32_t v = 0;
+            for (int c = 0; c < canales; c++) v |= (uint32_t)d[pos + i * canales + c] << (8 * c);
+            uint8_t* q = bmp.rgba.data() + i * 4;
+            q[0] = canal(v, rm, 0); q[1] = canal(v, gm, 0); q[2] = canal(v, bm, 0);
+            q[3] = am ? canal(v, am, 255) : 255;
+            if (q[3] < 255) bmp.alfa = true;
+        }
+        return true;
+    }
+    error = L"formato DDS no soportado";
+    return false;
+}
+
 static bool decodificar_imagen(IWICImagingFactory* factory, const std::wstring& ruta,
                                Bitmap& bmp, std::wstring& error) {
     std::wstring ext = lower(fs::path(ruta).extension().wstring());
     if (ext == L".avif") return decodificar_avif(ruta, bmp, error);
     if (ext == L".tga") return decodificar_tga(ruta, bmp, error);
     if (ext == L".pcx") return decodificar_pcx(ruta, bmp, error);
+    if (ext == L".dds") return decodificar_dds(ruta, bmp, error);
     if (ext == L".ppm" || ext == L".pgm" || ext == L".pbm")
         return decodificar_ppm(ruta, bmp, error);
     return decodificar_wic(factory, ruta, bmp, error);
@@ -1616,7 +1742,7 @@ struct Options {
     bool beep = true;
     bool csv = false;
     std::wstring salida;
-    std::wstring zip_nombre = L"imagenes_2.8.0-cpp.zip";
+    std::wstring zip_nombre = L"imagenes_2.9.0-cpp.zip";
     std::wstring patron;
     std::wstring formato = L"WEBP";
     bool dry_run = false;
@@ -5971,7 +6097,7 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
 
             // Cabecera
             etiqueta(L"Conversor WebP", 16, 17, 300, 30, 1400, g_font_title);
-            etiqueta(L"v2.8.0", 200, 29, 120, 18, 1401, g_font_muted);
+            etiqueta(L"v2.9.0", 200, 29, 120, 18, 1401, g_font_muted);
             etiqueta(L"JPG · PNG · BMP · TIFF · GIF · ICO  →  WebP / AVIF", 560, 23, 390, 20,
                      1402, g_font_muted, SS_RIGHT);
             boton(L"", 958, 20, 26, 26, ID_TEMA, BS_OWNERDRAW);
@@ -7347,7 +7473,7 @@ int wmain(int argc, wchar_t** argv) {
     wc.hIconSm = icono_pequeno;
     RegisterClassExW(&wc);
 
-    g_hwnd = CreateWindowExW(0, wc.lpszClassName, L"Conversor WebP 2.8.0",
+    g_hwnd = CreateWindowExW(0, wc.lpszClassName, L"Conversor WebP 2.9.0",
                              WS_OVERLAPPEDWINDOW,
                              CW_USEDEFAULT, CW_USEDEFAULT, 1016, 900, nullptr, nullptr, inst, nullptr);
     if (!g_hwnd) return 1;
