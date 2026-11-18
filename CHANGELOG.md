@@ -6,6 +6,31 @@ Todos los cambios relevantes del proyecto. Formato basado en
 
 ---
 
+## [2.13.0] — 2026-11-18
+
+### Añadido
+
+- **Opciones avanzadas de vídeo** en Python y C++, accesibles con el botón **Vídeo: …** junto a «Formato de salida».
+- **Resolución de salida:** Original, 2160p, 1440p, 1080p, 720p, 480p o 360p; altura máxima sin ampliar y proporción conservada.
+- **Modo de calidad:** CRF (calidad constante) o VBR (tasa de bits objetivo).
+- **CRF manual** 15–50 o automático según la calidad global.
+- **Bitrate de vídeo** 250–200000 kbps, con `-maxrate` y `-bufsize` para limitar picos.
+- **Audio Opus:** sin audio, 64, 96, 128 o 192 kbps.
+- **FPS máximo:** Original, 60, 30, 24 o 15.
+- **Contenido:** Normal, Pantalla o Película (`-tune-content` de VP9).
+- **Reducción de ruido** opcional con `hqdn3d`.
+- Escalado **Lanczos** de alta calidad y dimensiones pares para `yuv420p`.
+- Nuevos argumentos CLI: `--video-height`, `--video-mode`, `--video-crf`, `--video-bitrate`, `--video-fps`, `--audio-bitrate`, `--video-tune` y `--denoise`.
+- Los parámetros se guardan en `config.ini`/`config.json`, presets, historial y cola pendiente.
+
+### Pruebas
+
+- 30 pruebas Python superadas, incluida una de resolución, bitrate, FPS y sin audio.
+- C++ probado con parámetros de vídeo, incluido el diálogo y una conversión desde la GUI.
+- Python probado con el diálogo, la configuración y una conversión con todos los parámetros.
+
+---
+
 ## [2.12.0] — 2026-11-18
 
 ### Añadido
@@ -419,6 +444,7 @@ Todos los cambios relevantes del proyecto. Formato basado en
 - Conservación de transparencia, perfil ICC y orientación EXIF.
 - Modo consola básico.
 
+[2.13.0]: #2130--2026-11-18
 [2.12.0]: #2120--2026-11-18
 [2.11.0]: #2110--2026-11-18
 [2.10.0]: #2100--2026-11-18

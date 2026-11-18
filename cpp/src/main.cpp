@@ -80,7 +80,7 @@ using Microsoft::WRL::ComPtr;
 namespace fs = std::filesystem;
 
 static const wchar_t* APP_NAME = L"Conversor WebP";
-static const wchar_t* APP_VERSION = L"2.12.0";
+static const wchar_t* APP_VERSION = L"2.13.0";
 
 // ---------------------------------------------------------------------------
 //  Utilidades generales
@@ -1763,7 +1763,7 @@ struct Options {
     bool beep = true;
     bool csv = false;
     std::wstring salida;
-    std::wstring zip_nombre = L"imagenes_2.12.0-cpp.zip";
+    std::wstring zip_nombre = L"imagenes_2.13.0-cpp.zip";
     std::wstring patron;
     std::wstring formato = L"WEBP";
     bool dry_run = false;
@@ -1773,6 +1773,14 @@ struct Options {
     bool preservar_fecha = false;
     int jobs = 0;
     std::wstring ffmpeg;  // ruta explicita a ffmpeg.exe (opcional)
+    int video_height = 0;          // 0 = original
+    std::wstring video_mode = L"CRF";
+    int video_crf = 0;             // 0 = automatico segun calidad
+    int video_bitrate = 0;         // kbps en modo VBR
+    int video_audio = 96;          // kbps; 0 = sin audio
+    int video_fps = 0;             // 0 = original
+    std::wstring video_tune = L"default";
+    bool video_denoise = false;
 };
 
 struct Preset {
@@ -1813,7 +1821,15 @@ static std::wstring serializar_opciones(const Options& o) {
       << L"|salida=" << o.salida
       << L"|zipnombre=" << o.zip_nombre
       << L"|patron=" << o.patron
-      << L"|formato=" << o.formato;
+      << L"|formato=" << o.formato
+      << L"|vheight=" << o.video_height
+      << L"|vmode=" << o.video_mode
+      << L"|vcrf=" << o.video_crf
+      << L"|vbitrate=" << o.video_bitrate
+      << L"|vaudio=" << o.video_audio
+      << L"|vfps=" << o.video_fps
+      << L"|vtune=" << o.video_tune
+      << L"|vdenoise=" << (o.video_denoise ? 1 : 0);
     return s.str();
 }
 
@@ -1830,6 +1846,17 @@ static void normalizar_opciones(Options& o) {
     o.objetivo_kb = std::clamp(o.objetivo_kb, 0, 1000000);
     o.jobs = std::clamp(o.jobs, 0, 32);
     o.formato = (_wcsicmp(o.formato.c_str(), L"AVIF") == 0) ? L"AVIF" : L"WEBP";
+    o.video_height = std::clamp(o.video_height, 0, 4320);
+    o.video_mode = (_wcsicmp(o.video_mode.c_str(), L"VBR") == 0) ? L"VBR" : L"CRF";
+    o.video_crf = std::clamp(o.video_crf, 0, 63);
+    o.video_bitrate = std::clamp(o.video_bitrate, 0, 200000);
+    o.video_audio = std::clamp(o.video_audio, 0, 256);
+    o.video_fps = std::clamp(o.video_fps, 0, 240);
+    if (_wcsicmp(o.video_tune.c_str(), L"screen") == 0 ||
+        _wcsicmp(o.video_tune.c_str(), L"film") == 0)
+        o.video_tune = lower(o.video_tune);
+    else
+        o.video_tune = L"default";
     if (o.zip_nombre.empty()) o.zip_nombre = L"webp.zip";
     if (o.patron.size() > 512) o.patron.resize(512);
 }
@@ -1864,6 +1891,14 @@ static Options deserializar_opciones(const std::wstring& texto) {
         else if (clave == L"zipnombre") o.zip_nombre = valor;
         else if (clave == L"patron") o.patron = valor;
         else if (clave == L"formato") o.formato = (valor == L"AVIF") ? L"AVIF" : L"WEBP";
+        else if (clave == L"vheight") o.video_height = _wtoi(valor.c_str());
+        else if (clave == L"vmode") o.video_mode = valor;
+        else if (clave == L"vcrf") o.video_crf = _wtoi(valor.c_str());
+        else if (clave == L"vbitrate") o.video_bitrate = _wtoi(valor.c_str());
+        else if (clave == L"vaudio") o.video_audio = _wtoi(valor.c_str());
+        else if (clave == L"vfps") o.video_fps = _wtoi(valor.c_str());
+        else if (clave == L"vtune") o.video_tune = valor;
+        else if (clave == L"vdenoise") o.video_denoise = _wtoi(valor.c_str()) != 0;
     }
     normalizar_opciones(o);
     return o;
@@ -1953,6 +1988,8 @@ static HWND g_btn_color = nullptr;
 static HWND g_check_apagar = nullptr;
 static HWND g_combo_preset = nullptr;
 static HWND g_combo_formato = nullptr;
+static HWND g_btn_video = nullptr;
+static void actualizar_boton_video();
 static HWND g_btn_save_preset = nullptr;
 static HWND g_btn_del_preset = nullptr;
 static HWND g_btn_archive = nullptr;
@@ -2292,6 +2329,7 @@ enum {
     ID_TEMA = 3910, ID_PAUSA = 3911, ID_RETRY = 3912,
     ID_ORIGEN_UP = 3913, ID_ORIGEN_DOWN = 3914, ID_FECHA = 3915,
     ID_MENU_FFMPEG = 3916,
+    ID_VIDEO_OPTS = 3917,
     ID_SECTION_ORIGEN = 1105, ID_LBL_EXTRACTOR = 1106,
     ID_HIST_BASE = 40000, ID_HIST_CLEAR = 40050
 };
@@ -3087,6 +3125,18 @@ static void cargar_config() {
     wchar_t ffmpeg[MAX_PATH] = L"";
     GetPrivateProfileStringW(L"opciones", L"ffmpeg", L"", ffmpeg, MAX_PATH, g_ini.c_str());
     g_opt.ffmpeg = ffmpeg;
+    g_opt.video_height = GetPrivateProfileIntW(L"opciones", L"video_height", 0, g_ini.c_str());
+    wchar_t vmode[16] = L"CRF";
+    GetPrivateProfileStringW(L"opciones", L"video_mode", L"CRF", vmode, 16, g_ini.c_str());
+    g_opt.video_mode = vmode;
+    g_opt.video_crf = GetPrivateProfileIntW(L"opciones", L"video_crf", 0, g_ini.c_str());
+    g_opt.video_bitrate = GetPrivateProfileIntW(L"opciones", L"video_bitrate", 2500, g_ini.c_str());
+    g_opt.video_audio = GetPrivateProfileIntW(L"opciones", L"video_audio", 96, g_ini.c_str());
+    g_opt.video_fps = GetPrivateProfileIntW(L"opciones", L"video_fps", 0, g_ini.c_str());
+    wchar_t vtune[16] = L"default";
+    GetPrivateProfileStringW(L"opciones", L"video_tune", L"default", vtune, 16, g_ini.c_str());
+    g_opt.video_tune = vtune;
+    g_opt.video_denoise = GetPrivateProfileIntW(L"opciones", L"video_denoise", 0, g_ini.c_str()) != 0;
 
     // Presets propios
     inicializar_presets();
@@ -3160,6 +3210,20 @@ static void guardar_config() {
     WritePrivateProfileStringW(L"opciones", L"tema", g_oscuro ? L"1" : L"0", destino.c_str());
     WritePrivateProfileStringW(L"opciones", L"dpi", g_dpi_config.c_str(), destino.c_str());
     WritePrivateProfileStringW(L"opciones", L"ffmpeg", g_opt.ffmpeg.c_str(), destino.c_str());
+    swprintf_s(buf, L"%d", g_opt.video_height);
+    WritePrivateProfileStringW(L"opciones", L"video_height", buf, destino.c_str());
+    WritePrivateProfileStringW(L"opciones", L"video_mode", g_opt.video_mode.c_str(), destino.c_str());
+    swprintf_s(buf, L"%d", g_opt.video_crf);
+    WritePrivateProfileStringW(L"opciones", L"video_crf", buf, destino.c_str());
+    swprintf_s(buf, L"%d", g_opt.video_bitrate);
+    WritePrivateProfileStringW(L"opciones", L"video_bitrate", buf, destino.c_str());
+    swprintf_s(buf, L"%d", g_opt.video_audio);
+    WritePrivateProfileStringW(L"opciones", L"video_audio", buf, destino.c_str());
+    swprintf_s(buf, L"%d", g_opt.video_fps);
+    WritePrivateProfileStringW(L"opciones", L"video_fps", buf, destino.c_str());
+    WritePrivateProfileStringW(L"opciones", L"video_tune", g_opt.video_tune.c_str(), destino.c_str());
+    WritePrivateProfileStringW(L"opciones", L"video_denoise",
+                               g_opt.video_denoise ? L"1" : L"0", destino.c_str());
     WritePrivateProfileStringW(L"opciones", L"salida", g_opt.salida.c_str(), destino.c_str());
     WritePrivateProfileStringW(L"opciones", L"zipnombre", g_opt.zip_nombre.c_str(), destino.c_str());
     WritePrivateProfileStringW(L"opciones", L"patron", g_opt.patron.c_str(), destino.c_str());
@@ -3907,30 +3971,57 @@ static bool procesar_video(const Tarea& t, const Options& opt, Row& fila,
 
     int calidad = std::clamp(opt.calidad, 1, 100);
     int metodo = std::clamp(opt.metodo, 0, 6);
-    int crf = (int)std::lround(63.0 - (calidad - 1) * 39.0 / 99.0);
+    int crf = opt.video_crf > 0
+                  ? opt.video_crf
+                  : (int)std::lround(63.0 - (calidad - 1) * 39.0 / 99.0);
     crf = std::clamp(crf, 15, 63);
     int cpu = std::clamp(8 - (int)std::lround(metodo * 0.75), 2, 8);
+    int bitrate = (opt.video_mode == L"VBR") ? opt.video_bitrate : 0;
 
-    std::wstring filtros = L"scale=trunc(iw/2)*2:trunc(ih/2)*2";
-    if (opt.max_dim > 0) {
+    std::vector<std::wstring> partes;
+    if (opt.video_fps > 0)
+        partes.push_back(L"fps=" + std::to_wstring(std::clamp(opt.video_fps, 1, 240)));
+    if (opt.video_height > 0) {
+        int alto = std::clamp(opt.video_height, 2, 4320);
+        partes.push_back(L"scale=w=-2:h='min(ih," + std::to_wstring(alto) + L")'");
+    } else if (opt.max_dim > 0) {
         int d = std::max(2, opt.max_dim);
-        filtros = L"scale=w='min(iw," + std::to_wstring(d) + L")':h='min(ih," +
-                  std::to_wstring(d) +
-                  L")':force_original_aspect_ratio=decrease," + filtros;
+        partes.push_back(L"scale=w='min(iw," + std::to_wstring(d) + L")':h='min(ih," +
+                         std::to_wstring(d) +
+                         L")':force_original_aspect_ratio=decrease");
+    }
+    if (opt.video_denoise) partes.push_back(L"hqdn3d=1.5:1.5:6:6");
+    partes.push_back(L"scale=trunc(iw/2)*2:trunc(ih/2)*2");
+    std::wstring filtros;
+    for (auto& parte : partes) {
+        if (!filtros.empty()) filtros += L",";
+        filtros += parte;
     }
 
     std::wstring cmd = citar_arg(ffmpeg) +
                        L" -nostdin -hide_banner -loglevel error -y -i " +
                        citar_arg(t.src.wstring()) +
                        L" -map 0:v:0 -map 0:a? -c:v libvpx-vp9 -row-mt 1"
-                       L" -deadline good -cpu-used " + std::to_wstring(cpu);
-    if (opt.sin_perdida)
+                       L" -tile-columns 2 -deadline good -cpu-used " +
+                       std::to_wstring(cpu);
+    if (opt.video_tune == L"screen" || opt.video_tune == L"film")
+        cmd += L" -tune-content " + opt.video_tune;
+    if (opt.sin_perdida) {
         cmd += L" -lossless 1 -b:v 0";
-    else
+    } else if (bitrate > 0) {
+        int maxrate = std::min(200000, (int)std::lround(bitrate * 1.5));
+        int bufsize = std::min(400000, bitrate * 2);
+        cmd += L" -b:v " + std::to_wstring(bitrate) + L"k -maxrate " +
+               std::to_wstring(maxrate) + L"k -bufsize " + std::to_wstring(bufsize) + L"k";
+    } else {
         cmd += L" -crf " + std::to_wstring(crf) + L" -b:v 0";
+    }
+    if (opt.video_audio > 0)
+        cmd += L" -c:a libopus -b:a " + std::to_wstring(opt.video_audio) + L"k";
+    else
+        cmd += L" -an";
     cmd += L" -pix_fmt yuv420p -vf " + citar_arg(filtros) +
-           L" -c:a libopus -b:a 96k -map_metadata 0 -f webm " +
-           citar_arg(parcial.wstring());
+           L" -map_metadata 0 -f webm " + citar_arg(parcial.wstring());
 
     fs::path log = parcial;
     log += L".log";
@@ -3969,7 +4060,18 @@ static bool procesar_video(const Tarea& t, const Options& opt, Row& fila,
     fila.ahorro = fila.kb_in > 0 ? (1.0 - fila.kb_out / fila.kb_in) * 100.0 : 0;
     fila.estado = L"convertida";
     fila.ruta = t.dst.wstring();
-    fila.nota = opt.sin_perdida ? L"VP9 sin perdida" : (L"VP9 CRF " + std::to_wstring(crf));
+    if (opt.sin_perdida)
+        fila.nota = L"VP9 sin perdida";
+    else if (bitrate > 0)
+        fila.nota = L"VP9 " + std::to_wstring(bitrate) + L" kbps";
+    else
+        fila.nota = L"VP9 CRF " + std::to_wstring(crf);
+    if (opt.video_height > 0)
+        fila.nota += L", " + std::to_wstring(opt.video_height) + L"p";
+    if (opt.video_fps > 0)
+        fila.nota += L", " + std::to_wstring(opt.video_fps) + L" fps";
+    if (opt.video_audio <= 0) fila.nota += L", sin audio";
+    if (opt.video_denoise) fila.nota += L", denoise";
     if (opt.objetivo_kb > 0)
         fila.nota += L"; el peso maximo no se aplica a videos";
     return true;
@@ -4509,6 +4611,7 @@ static void aplicar_opciones_controles(const Options& o, bool incluir_salida) {
         if (g_edit_salida) SetWindowTextW(g_edit_salida, o.salida.c_str());
         if (g_edit_zip) SetWindowTextW(g_edit_zip, o.zip_nombre.c_str());
     }
+    actualizar_boton_video();
 }
 
 static Options leer_opciones_controles() {
@@ -4704,6 +4807,10 @@ static LRESULT CALLBACK InputWndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) 
             return 1;
         }
         case WM_CTLCOLORSTATIC:
+            SetBkMode((HDC)wp, TRANSPARENT);
+            SetTextColor((HDC)wp, g_pal.text);
+            return (LRESULT)g_brush_bg;
+        case WM_CTLCOLORBTN:
             SetBkMode((HDC)wp, TRANSPARENT);
             SetTextColor((HDC)wp, g_pal.text);
             return (LRESULT)g_brush_bg;
@@ -5569,6 +5676,322 @@ static void actualizar_tooltip() {
     }
 }
 
+static const int ID_VIDEO_RES = 7001;
+static const int ID_VIDEO_MODE = 7002;
+static const int ID_VIDEO_AUTO = 7003;
+static const int ID_VIDEO_CRF = 7004;
+static const int ID_VIDEO_BITRATE = 7005;
+static const int ID_VIDEO_AUDIO = 7006;
+static const int ID_VIDEO_FPS = 7007;
+static const int ID_VIDEO_TUNE = 7008;
+static const int ID_VIDEO_DENOISE = 7009;
+
+static HWND g_video_dlg = nullptr;
+static HWND g_video_res = nullptr;
+static HWND g_video_mode = nullptr;
+static HWND g_video_auto = nullptr;
+static HWND g_video_crf = nullptr;
+static HWND g_video_bitrate = nullptr;
+static HWND g_video_audio = nullptr;
+static HWND g_video_fps = nullptr;
+static HWND g_video_tune = nullptr;
+static HWND g_video_denoise = nullptr;
+
+static void actualizar_estado_video() {
+    if (!g_video_mode) return;
+    bool vbr = SendMessageW(g_video_mode, CB_GETCURSEL, 0, 0) == 1;
+    bool auto_crf = SendMessageW(g_video_auto, BM_GETCHECK, 0, 0) == BST_CHECKED;
+    EnableWindow(g_video_bitrate, vbr);
+    EnableWindow(g_video_crf, !vbr && !auto_crf);
+    EnableWindow(g_video_auto, !vbr);
+}
+
+static void leer_video_dialogo() {
+    auto sel = [](HWND h) { return (int)SendMessageW(h, CB_GETCURSEL, 0, 0); };
+    static const int alturas[] = {0, 2160, 1440, 1080, 720, 480, 360};
+    static const int audios[] = {0, 64, 96, 128, 192};
+    static const int fps[] = {0, 60, 30, 24, 15};
+    int r = std::clamp(sel(g_video_res), 0, 6);
+    g_opt.video_height = alturas[r];
+    g_opt.video_mode = sel(g_video_mode) == 1 ? L"VBR" : L"CRF";
+    bool auto_crf = SendMessageW(g_video_auto, BM_GETCHECK, 0, 0) == BST_CHECKED;
+    int crf = _wtoi(texto_ventana(g_video_crf).c_str());
+    g_opt.video_crf = auto_crf ? 0 : std::clamp(crf, 15, 63);
+    int br = _wtoi(texto_ventana(g_video_bitrate).c_str());
+    g_opt.video_bitrate = g_opt.video_mode == L"VBR" ? std::clamp(br, 250, 200000) : 0;
+    g_opt.video_audio = audios[std::clamp(sel(g_video_audio), 0, 4)];
+    g_opt.video_fps = fps[std::clamp(sel(g_video_fps), 0, 4)];
+    static const wchar_t* tunes[] = {L"default", L"screen", L"film"};
+    g_opt.video_tune = tunes[std::clamp(sel(g_video_tune), 0, 2)];
+    g_opt.video_denoise =
+        SendMessageW(g_video_denoise, BM_GETCHECK, 0, 0) == BST_CHECKED;
+    normalizar_opciones(g_opt);
+    guardar_config();
+    actualizar_boton_video();
+}
+
+static LRESULT CALLBACK VideoWndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
+    switch (msg) {
+        case WM_CREATE: {
+            g_video_dlg = hwnd;
+            HINSTANCE inst = GetModuleHandleW(nullptr);
+            auto texto = [&](const wchar_t* t, int x, int y, int w, int h,
+                             DWORD estilo = SS_LEFT) -> HWND {
+                HWND c = CreateWindowExW(0, L"STATIC", t, WS_CHILD | WS_VISIBLE | estilo,
+                                         dpx(x), dpx(y), dpx(w), dpx(h), hwnd, nullptr,
+                                         inst, nullptr);
+                if (c) SendMessageW(c, WM_SETFONT, (WPARAM)g_font, TRUE);
+                return c;
+            };
+            auto combo = [&](int id, int x, int y, int w) -> HWND {
+                HWND c = CreateWindowExW(0, L"COMBOBOX", L"",
+                                         WS_CHILD | WS_VISIBLE | WS_TABSTOP |
+                                             CBS_DROPDOWNLIST | CBS_HASSTRINGS,
+                                         dpx(x), dpx(y), dpx(w), dpx(200), hwnd,
+                                         (HMENU)(INT_PTR)id, inst, nullptr);
+                if (c) SendMessageW(c, WM_SETFONT, (WPARAM)g_font, TRUE);
+                return c;
+            };
+            auto edit = [&](int id, int x, int y, int w) -> HWND {
+                HWND c = CreateWindowExW(WS_EX_CLIENTEDGE, L"EDIT", L"",
+                                         WS_CHILD | WS_VISIBLE | WS_TABSTOP |
+                                             ES_AUTOHSCROLL | ES_NUMBER,
+                                         dpx(x), dpx(y), dpx(w), dpx(24), hwnd,
+                                         (HMENU)(INT_PTR)id, inst, nullptr);
+                if (c) SendMessageW(c, WM_SETFONT, (WPARAM)g_font, TRUE);
+                return c;
+            };
+            texto(L"Resolución, tasa de bits, audio y FPS para la conversión de vídeo a WebM. "
+                  L"El escalado usa Lanczos de alta calidad.",
+                  18, 12, 520, 34);
+
+            texto(L"Resolución", 18, 52, 90, 18);
+            g_video_res = combo(ID_VIDEO_RES, 112, 50, 150);
+            texto(L"Calidad", 280, 52, 70, 18);
+            g_video_mode = combo(ID_VIDEO_MODE, 360, 50, 180);
+
+            g_video_auto = CreateWindowExW(0, L"BUTTON",
+                                           L"CRF automático (usa la calidad global)",
+                                           WS_CHILD | WS_VISIBLE | WS_TABSTOP |
+                                               BS_AUTOCHECKBOX,
+                                           dpx(18), dpx(86), dpx(300), dpx(20), hwnd,
+                                           (HMENU)(INT_PTR)ID_VIDEO_AUTO, inst, nullptr);
+            SendMessageW(g_video_auto, WM_SETFONT, (WPARAM)g_font, TRUE);
+
+            texto(L"CRF", 18, 116, 46, 18);
+            g_video_crf = edit(ID_VIDEO_CRF, 64, 112, 60);
+            texto(L"Bitrate (kbps)", 200, 116, 100, 18);
+            g_video_bitrate = edit(ID_VIDEO_BITRATE, 304, 112, 80);
+            texto(L"kbps", 390, 116, 50, 18);
+
+            texto(L"Audio", 18, 150, 60, 18);
+            g_video_audio = combo(ID_VIDEO_AUDIO, 82, 148, 110);
+            texto(L"FPS máximo", 280, 150, 80, 18);
+            g_video_fps = combo(ID_VIDEO_FPS, 364, 148, 100);
+
+            texto(L"Contenido", 18, 184, 80, 18);
+            g_video_tune = combo(ID_VIDEO_TUNE, 102, 182, 120);
+            g_video_denoise = CreateWindowExW(0, L"BUTTON", L"Reducir ruido (hqdn3d)",
+                                              WS_CHILD | WS_VISIBLE | WS_TABSTOP |
+                                                  BS_AUTOCHECKBOX,
+                                              dpx(280), dpx(184), dpx(220), dpx(20),
+                                              hwnd, (HMENU)(INT_PTR)ID_VIDEO_DENOISE,
+                                              inst, nullptr);
+            SendMessageW(g_video_denoise, WM_SETFONT, (WPARAM)g_font, TRUE);
+
+            static const wchar_t* resoluciones[] = {
+                L"Original", L"2160p (4K)", L"1440p (2K)", L"1080p",
+                L"720p", L"480p", L"360p"};
+            static const int alturas[] = {0, 2160, 1440, 1080, 720, 480, 360};
+            for (int i = 0; i < 7; i++) {
+                SendMessageW(g_video_res, CB_ADDSTRING, 0, (LPARAM)resoluciones[i]);
+                if (alturas[i] == g_opt.video_height)
+                    SendMessageW(g_video_res, CB_SETCURSEL, i, 0);
+            }
+            if (SendMessageW(g_video_res, CB_GETCURSEL, 0, 0) == CB_ERR)
+                SendMessageW(g_video_res, CB_SETCURSEL, 0, 0);
+
+            SendMessageW(g_video_mode, CB_ADDSTRING, 0, (LPARAM)L"CRF (calidad constante)");
+            SendMessageW(g_video_mode, CB_ADDSTRING, 0, (LPARAM)L"Tasa de bits (VBR)");
+            SendMessageW(g_video_mode, CB_SETCURSEL,
+                         g_opt.video_mode == L"VBR" ? 1 : 0, 0);
+
+            SendMessageW(g_video_auto, BM_SETCHECK,
+                         g_opt.video_crf <= 0 ? BST_CHECKED : BST_UNCHECKED, 0);
+            wchar_t buf[16];
+            swprintf_s(buf, L"%d", g_opt.video_crf > 0 ? g_opt.video_crf : 30);
+            SetWindowTextW(g_video_crf, buf);
+            swprintf_s(buf, L"%d", g_opt.video_bitrate > 0 ? g_opt.video_bitrate : 2500);
+            SetWindowTextW(g_video_bitrate, buf);
+
+            static const wchar_t* audios[] = {
+                L"Sin audio", L"64 kbps", L"96 kbps", L"128 kbps", L"192 kbps"};
+            static const int valores_audio[] = {0, 64, 96, 128, 192};
+            for (int i = 0; i < 5; i++) {
+                SendMessageW(g_video_audio, CB_ADDSTRING, 0, (LPARAM)audios[i]);
+                if (valores_audio[i] == g_opt.video_audio)
+                    SendMessageW(g_video_audio, CB_SETCURSEL, i, 0);
+            }
+            if (SendMessageW(g_video_audio, CB_GETCURSEL, 0, 0) == CB_ERR)
+                SendMessageW(g_video_audio, CB_SETCURSEL, 2, 0);
+
+            static const wchar_t* fps_txt[] = {
+                L"Original", L"60 fps", L"30 fps", L"24 fps", L"15 fps"};
+            static const int valores_fps[] = {0, 60, 30, 24, 15};
+            for (int i = 0; i < 5; i++) {
+                SendMessageW(g_video_fps, CB_ADDSTRING, 0, (LPARAM)fps_txt[i]);
+                if (valores_fps[i] == g_opt.video_fps)
+                    SendMessageW(g_video_fps, CB_SETCURSEL, i, 0);
+            }
+            if (SendMessageW(g_video_fps, CB_GETCURSEL, 0, 0) == CB_ERR)
+                SendMessageW(g_video_fps, CB_SETCURSEL, 0, 0);
+
+            SendMessageW(g_video_tune, CB_ADDSTRING, 0, (LPARAM)L"Normal");
+            SendMessageW(g_video_tune, CB_ADDSTRING, 0, (LPARAM)L"Pantalla");
+            SendMessageW(g_video_tune, CB_ADDSTRING, 0, (LPARAM)L"Película");
+            int tune_sel = g_opt.video_tune == L"screen" ? 1
+                           : (g_opt.video_tune == L"film" ? 2 : 0);
+            SendMessageW(g_video_tune, CB_SETCURSEL, tune_sel, 0);
+            SendMessageW(g_video_denoise, BM_SETCHECK,
+                         g_opt.video_denoise ? BST_CHECKED : BST_UNCHECKED, 0);
+
+            HWND cancelar = CreateWindowExW(0, L"BUTTON", L"Cancelar",
+                                            WS_CHILD | WS_VISIBLE | WS_TABSTOP |
+                                                BS_OWNERDRAW,
+                                            dpx(330), dpx(222), dpx(90), dpx(28), hwnd,
+                                            (HMENU)IDCANCEL, inst, nullptr);
+            HWND aceptar = CreateWindowExW(0, L"BUTTON", L"Aceptar",
+                                           WS_CHILD | WS_VISIBLE | WS_TABSTOP |
+                                               BS_OWNERDRAW,
+                                           dpx(430), dpx(222), dpx(90), dpx(28), hwnd,
+                                           (HMENU)IDOK, inst, nullptr);
+            SendMessageW(cancelar, WM_SETFONT, (WPARAM)g_font, TRUE);
+            SendMessageW(aceptar, WM_SETFONT, (WPARAM)g_font, TRUE);
+            actualizar_estado_video();
+            return 0;
+        }
+        case WM_ERASEBKGND: {
+            RECT rc;
+            GetClientRect(hwnd, &rc);
+            FillRect((HDC)wp, &rc, g_brush_bg);
+            return 1;
+        }
+        case WM_CTLCOLORSTATIC:
+            SetBkMode((HDC)wp, TRANSPARENT);
+            SetTextColor((HDC)wp, g_pal.text);
+            return (LRESULT)g_brush_bg;
+        case WM_CTLCOLORBTN:
+            SetBkMode((HDC)wp, TRANSPARENT);
+            SetTextColor((HDC)wp, g_pal.text);
+            return (LRESULT)g_brush_bg;
+        case WM_CTLCOLOREDIT:
+            SetBkColor((HDC)wp, g_pal.input);
+            SetTextColor((HDC)wp, g_pal.text);
+            return (LRESULT)g_brush_input;
+        case WM_DRAWITEM: {
+            DRAWITEMSTRUCT* di = (DRAWITEMSTRUCT*)lp;
+            if (di && (di->CtlID == IDOK || di->CtlID == IDCANCEL)) {
+                dibujar_boton_tema(di);
+                return TRUE;
+            }
+            break;
+        }
+        case WM_COMMAND: {
+            int id = LOWORD(wp);
+            if (HIWORD(wp) == CBN_SELCHANGE && id == ID_VIDEO_MODE) {
+                actualizar_estado_video();
+                return 0;
+            }
+            if (HIWORD(wp) == BN_CLICKED && id == ID_VIDEO_AUTO) {
+                actualizar_estado_video();
+                return 0;
+            }
+            if (id == IDOK) {
+                leer_video_dialogo();
+                DestroyWindow(hwnd);
+            } else if (id == IDCANCEL) {
+                DestroyWindow(hwnd);
+            }
+            return 0;
+        }
+        case WM_CLOSE:
+            DestroyWindow(hwnd);
+            return 0;
+        case WM_DESTROY:
+            g_video_dlg = nullptr;
+            return 0;
+    }
+    return DefWindowProcW(hwnd, msg, wp, lp);
+}
+
+static void mostrar_dialogo_video(HWND parent) {
+    if (g_video_dlg) {
+        SetForegroundWindow(g_video_dlg);
+        return;
+    }
+    static bool registrada = false;
+    if (!registrada) {
+        WNDCLASSEXW wc{};
+        wc.cbSize = sizeof(wc);
+        wc.lpfnWndProc = VideoWndProc;
+        wc.hInstance = GetModuleHandleW(nullptr);
+        wc.hCursor = LoadCursorW(nullptr, IDC_ARROW);
+        wc.hbrBackground = nullptr;
+        wc.lpszClassName = L"ConversorVideoWnd";
+        RegisterClassExW(&wc);
+        registrada = true;
+    }
+    RECT pr{};
+    GetWindowRect(parent, &pr);
+    int ancho = dpx(560), alto = dpx(305);
+    int x = pr.left + ((pr.right - pr.left) - ancho) / 2;
+    int y = pr.top + ((pr.bottom - pr.top) - alto) / 2;
+    g_video_dlg = CreateWindowExW(WS_EX_DLGMODALFRAME, L"ConversorVideoWnd",
+                                  L"Opciones de vídeo (WebM)",
+                                  WS_POPUP | WS_CAPTION | WS_SYSMENU | WS_VISIBLE,
+                                  x, y, ancho, alto, parent, nullptr,
+                                  GetModuleHandleW(nullptr), nullptr);
+    if (!g_video_dlg) return;
+    aplicar_modo_oscuro_nativo(g_video_dlg, g_oscuro);
+    InvalidateRect(g_video_dlg, nullptr, TRUE);
+    EnableWindow(parent, FALSE);
+    MSG msg;
+    while (IsWindow(g_video_dlg) && GetMessageW(&msg, nullptr, 0, 0)) {
+        if (!IsDialogMessageW(g_video_dlg, &msg)) {
+            TranslateMessage(&msg);
+            DispatchMessageW(&msg);
+        }
+    }
+    EnableWindow(parent, TRUE);
+    SetForegroundWindow(parent);
+}
+
+static std::wstring resumen_video(const Options& o) {
+    std::wstring resolucion = L"original";
+    if (o.video_height >= 2160) resolucion = L"2160p";
+    else if (o.video_height >= 1440) resolucion = L"1440p";
+    else if (o.video_height >= 1080) resolucion = L"1080p";
+    else if (o.video_height >= 720) resolucion = L"720p";
+    else if (o.video_height >= 480) resolucion = L"480p";
+    else if (o.video_height > 0) resolucion = L"360p";
+    std::wstring calidad;
+    if (o.video_mode == L"VBR")
+        calidad = std::to_wstring(o.video_bitrate) + L" kbps";
+    else if (o.video_crf > 0)
+        calidad = L"CRF " + std::to_wstring(o.video_crf);
+    else
+        calidad = L"CRF auto";
+    std::wstring audio = o.video_audio > 0 ? std::to_wstring(o.video_audio) + L"k"
+                                           : std::wstring(L"sin audio");
+    return resolucion + L" · " + calidad + L" · " + audio;
+}
+
+static void actualizar_boton_video() {
+    if (!g_btn_video) return;
+    SetWindowTextW(g_btn_video, (L"Video: " + resumen_video(g_opt)).c_str());
+    InvalidateRect(g_btn_video, nullptr, TRUE);
+}
+
 static void crear_tooltips() {
     g_tip_drop_texto = L"Arrastra aquí imágenes, vídeos, carpetas o comprimidos desde el Explorador.";
     auto add = [&](HWND control, const wchar_t* texto) {
@@ -5593,6 +6016,7 @@ static void crear_tooltips() {
     add(g_check_zip, L"Crea además un ZIP con todos los archivos generados.");
     add(g_edit_zip, L"Nombre del ZIP que se creará en la carpeta de salida.");
     add(g_combo_formato, L"Formato de salida de imágenes: WebP o AVIF. Los vídeos se convierten a WebM.");
+    add(g_btn_video, L"Resolución, tasa de bits, CRF, audio, FPS, contenido y reducción de ruido para vídeos.");
     add(g_check_csv, L"Guarda un CSV con el peso original, final y el ahorro de cada archivo.");
     add(g_edit_patron, L"Patrón de nombre. Vacío conserva el original. Ej.: {nombre}_{ancho}x{alto}.");
     add(g_check_dry, L"Calcula el peso estimado sin escribir ningún archivo.");
@@ -6077,6 +6501,7 @@ static std::vector<BloqueAcerca> bloques_acerca() {
     li(L"Lado máximo: reduce a 2560, 1920, 1600, 1200, 800 o 512 px sin ampliar las pequeñas.");
     li(L"Peso máximo: ajusta la calidad automáticamente para no superar los KB indicados.");
     li(L"Formato de salida de imágenes: WebP o AVIF (AVIF suele pesar menos). Los vídeos se convierten a WebM.");
+    li(L"Vídeo: resolución, CRF o bitrate, audio Opus, FPS, contenido y reducción de ruido.");
     li(L"Informe CSV: deja en la carpeta de salida una tabla con peso original, final y ahorro.");
     li(L"Aviso sonoro al terminar: tono agudo si todo fue bien, grave si hubo errores.");
     li(L"Apagar al terminar: apaga el equipo tras una conversión correcta, con cuenta atrás cancelable.");
@@ -6543,7 +6968,7 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
 
             // Cabecera
             etiqueta(L"Conversor WebP", 16, 17, 300, 30, 1400, g_font_title);
-            etiqueta(L"v2.12.0", 200, 29, 120, 18, 1401, g_font_muted);
+            etiqueta(L"v2.13.0", 200, 29, 120, 18, 1401, g_font_muted);
             etiqueta(L"JPG · PNG · BMP · TIFF · GIF · ICO  →  WebP / AVIF", 560, 23, 390, 20,
                      1402, g_font_muted, SS_RIGHT);
             boton(L"", 958, 20, 26, 26, ID_TEMA, BS_OWNERDRAW);
@@ -6598,7 +7023,7 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             SendMessageW(g_combo_formato, CB_ADDSTRING, 0, (LPARAM)L"AVIF");
             SendMessageW(g_combo_formato, CB_SETCURSEL,
                          g_opt.formato == L"AVIF" ? 1 : 0, 0);
-            etiqueta(L"AVIF pesa menos · vídeos → WebM", 224, 465, 260, 18, 1104, g_font_muted);
+            g_btn_video = boton(L"Video: original · CRF auto", 224, 461, 260, 26, ID_VIDEO_OPTS);
             g_check_csv = check(L"Guardar informe CSV en la carpeta de salida", 28, 497, 430, 20,
                                 ID_CSV, g_opt.csv);
             etiqueta(L"Nombre de salida", 28, 524, 100, 20, 1103);
@@ -6706,6 +7131,7 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             ShowWindow(g_edit_log, SW_HIDE);
 
             cargar_config_a_controles();
+            actualizar_boton_video();
             refrescar_origenes();
             crear_tooltips();
             g_timer = SetTimer(hwnd, 1, 100, nullptr);
@@ -6798,6 +7224,7 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
                 case ID_MENU_WATCH: desc = L"Vigila una carpeta y convierte automaticamente las imagenes y videos nuevos."; break;
                 case ID_MENU_FFMPEG: desc = L"Abre la pagina de descarga de FFmpeg, necesario para convertir videos."; break;
                 case ID_MENU_PREVIEW: desc = L"Compara el original con el WebP resultante antes de convertir."; break;
+                case ID_VIDEO_OPTS: desc = L"Resolucion, bitrate, CRF, audio, FPS y reduccion de ruido para videos."; break;
                 case ID_HIST_CLEAR: desc = L"Borra la lista de los ultimos trabajos guardados."; break;
                 default:
                     if (id >= ID_HIST_BASE && id < ID_HIST_BASE + 10)
@@ -7245,6 +7672,9 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
                 case ID_MENU_PREVIEW:
                     abrir_vista_previa();
                     return 0;
+                case ID_VIDEO_OPTS:
+                    mostrar_dialogo_video(hwnd);
+                    return 0;
                 case ID_MENU_UPDATE:
                     if (g_corriendo) {
                         MessageBoxW(hwnd, L"Espera a que termine la conversion en curso.",
@@ -7681,6 +8111,14 @@ static int ejecutar_cli(const std::vector<std::wstring>& args) {
             wprintf(L"  --pattern PATRON  patron de nombre ({nombre} {ancho} {alto} {fecha} {hash})\n");
             wprintf(L"  --format FORMATO  webp (defecto) o avif para imagenes\n");
             wprintf(L"  --ffmpeg RUTA     ruta a ffmpeg.exe para convertir videos a WebM\n");
+            wprintf(L"  --video-height N  altura maxima del video (0 = original; 1080, 720...)\n");
+            wprintf(L"  --video-bitrate N tasa de bits de video en kbps (0 = CRF)\n");
+            wprintf(L"  --video-crf N     CRF manual 15-63 (0 = automatico segun -q)\n");
+            wprintf(L"  --video-fps N     FPS maximo del video (0 = original)\n");
+            wprintf(L"  --audio-bitrate N audio Opus en kbps (0 = sin audio)\n");
+            wprintf(L"  --video-tune M    default, screen o film\n");
+            wprintf(L"  --denoise         reducir ruido suave en video\n");
+            wprintf(L"  --video-mode M    crf (defecto) o vbr\n");
             wprintf(L"  Los videos (MP4, MOV, MKV, AVI, WebM...) se convierten siempre a WebM VP9/Opus.\n");
             wprintf(L"  --dry-run         analizar sin escribir archivos\n");
             wprintf(L"  --flat            aplanar transparencia\n");
@@ -7711,6 +8149,24 @@ static int ejecutar_cli(const std::vector<std::wstring>& args) {
             opt.formato = (_wcsicmp(v.c_str(), L"avif") == 0) ? L"AVIF" : L"WEBP";
         }
         else if (a == L"--ffmpeg") sig(opt.ffmpeg);
+        else if (a == L"--video-height") { std::wstring v; sig(v); opt.video_height = _wtoi(v.c_str()); }
+        else if (a == L"--video-bitrate") { std::wstring v; sig(v); opt.video_bitrate = _wtoi(v.c_str()); }
+        else if (a == L"--video-crf") { std::wstring v; sig(v); opt.video_crf = _wtoi(v.c_str()); }
+        else if (a == L"--video-fps") { std::wstring v; sig(v); opt.video_fps = _wtoi(v.c_str()); }
+        else if (a == L"--audio-bitrate") { std::wstring v; sig(v); opt.video_audio = _wtoi(v.c_str()); }
+        else if (a == L"--video-tune") {
+            std::wstring v;
+            sig(v);
+            opt.video_tune = (_wcsicmp(v.c_str(), L"screen") == 0)
+                                 ? L"screen"
+                                 : ((_wcsicmp(v.c_str(), L"film") == 0) ? L"film" : L"default");
+        }
+        else if (a == L"--denoise") opt.video_denoise = true;
+        else if (a == L"--video-mode") {
+            std::wstring v;
+            sig(v);
+            opt.video_mode = (_wcsicmp(v.c_str(), L"vbr") == 0) ? L"VBR" : L"CRF";
+        }
         else if (a == L"--dry-run") opt.dry_run = true;
         else if (a == L"--flat") opt.flatten = true;
         else if (a == L"--bg") {
@@ -7929,7 +8385,7 @@ int wmain(int argc, wchar_t** argv) {
     wc.hIconSm = icono_pequeno;
     RegisterClassExW(&wc);
 
-    g_hwnd = CreateWindowExW(0, wc.lpszClassName, L"Conversor WebP 2.12.0",
+    g_hwnd = CreateWindowExW(0, wc.lpszClassName, L"Conversor WebP 2.13.0",
                              WS_OVERLAPPEDWINDOW,
                              CW_USEDEFAULT, CW_USEDEFAULT, dpx(1016), dpx(900), nullptr, nullptr, inst, nullptr);
     if (!g_hwnd) return 1;
@@ -7954,6 +8410,7 @@ int wmain(int argc, wchar_t** argv) {
     AppendMenuW(herramientas, MF_SEPARATOR, 0, nullptr);
     AppendMenuW(herramientas, MF_STRING, ID_MENU_WATCH, L"Vigilar una carpeta");
     AppendMenuW(herramientas, MF_STRING, ID_MENU_PREVIEW, L"Vista previa del seleccionado\tCtrl+P");
+    AppendMenuW(herramientas, MF_STRING, ID_VIDEO_OPTS, L"Opciones de video...");
     AppendMenuW(herramientas, MF_STRING, ID_MENU_FFMPEG, L"Descargar FFmpeg para video...");
     AppendMenuW(herramientas, MF_SEPARATOR, 0, nullptr);
     AppendMenuW(herramientas, MF_STRING, ID_ORIGEN_UP, L"Subir origen\tCtrl+Arriba");

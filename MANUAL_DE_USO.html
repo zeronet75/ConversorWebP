@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Manual de uso · Conversor WebP 2.12.0</title>
+<title>Manual de uso · Conversor WebP 2.13.0</title>
 <style>
   :root{
     --azul:#1a73e8; --azul-osc:#1557b0; --texto:#1f2933; --gris:#5f6b7a;
@@ -67,7 +67,7 @@
 <div class="hoja">
 
 <header>
-  <h1>Conversor WebP 2.12.0</h1>
+  <h1>Conversor WebP 2.13.0</h1>
   <p class="sub">Manual de uso · Qué hace cada opción y cómo sacarle partido</p>
 </header>
 
@@ -94,7 +94,7 @@
 </div>
 
 <div class="nota">
-  <strong>Novedades de la versión 2.12.0:</strong> FFmpeg y ffprobe incluidos en el portable y el instalador; conversión de vídeos MP4, MOV, MKV, AVI, WebM y similares a <strong>WebM</strong> (VP9 + Opus), en lotes mixtos con imágenes; y DPI nítido del sistema en la edición C++ (texto y controles a resolución real, con opciones <code>auto</code>, <code>system</code> y <code>gdi</code>). Se mantienen la cola persistente con pausa, reanudación, reintento y reordenación; vista previa con calidad de prueba y peso estimado; WebP animado desde GIF/WebP; conservación opcional de metadatos EXIF/XMP y fecha original; CLI con salida JSON, modo silencioso, trabajos en paralelo y presets; actualizaciones con verificación Authenticode cuando el ejecutable esté firmado; configuración atómica en C++; aviso de espacio libre, tiempo restante e instancia única.
+  <strong>Novedades de la versión 2.13.0:</strong> opciones avanzadas de vídeo (resolución, CRF o bitrate VBR, audio, FPS, contenido y reducción de ruido) en el botón <strong>Vídeo: …</strong>; FFmpeg y ffprobe incluidos en el portable y el instalador; conversión de vídeos a <strong>WebM</strong> (VP9 + Opus) en lotes mixtos; y DPI nítido del sistema en la edición C++ (texto y controles a resolución real, con opciones <code>auto</code>, <code>system</code> y <code>gdi</code>). Se mantienen la cola persistente con pausa, reanudación, reintento y reordenación; vista previa con calidad de prueba y peso estimado; WebP animado desde GIF/WebP; conservación opcional de metadatos EXIF/XMP y fecha original; CLI con salida JSON, modo silencioso, trabajos en paralelo y presets; actualizaciones con verificación Authenticode cuando el ejecutable esté firmado; configuración atómica en C++; aviso de espacio libre, tiempo restante e instancia única.
   <br><br>
   <strong>Novedades de la versión 2.6.2:</strong> actualización automática desde la propia aplicación,
   edición C++ con paridad funcional, apagado opcional, tooltips, HEIC, carpeta vigilada, patrones,
@@ -343,6 +343,18 @@ OGV y otros formatos que entienda FFmpeg.</p>
   <li>El <strong>peso máximo en KB</strong> solo se aplica a imágenes.</li>
   <li>Un <code>.webm</code> de origen se omite salvo que actives <strong>Recodificar</strong>.</li>
 </ul>
+<p>El botón <strong>Vídeo: …</strong> abre las opciones avanzadas:</p>
+<table>
+  <tr><th>Parámetro</th><th>Valores</th><th>Uso</th></tr>
+  <tr><td>Resolución</td><td>Original, 2160p, 1440p, 1080p, 720p, 480p, 360p</td><td>Altura máxima sin ampliar; mantiene la proporción.</td></tr>
+  <tr><td>Calidad</td><td>CRF o VBR</td><td>CRF para calidad constante; VBR para una tasa de bits objetivo.</td></tr>
+  <tr><td>CRF</td><td>Automático o 15–50</td><td>Menos CRF = más calidad y peso.</td></tr>
+  <tr><td>Bitrate</td><td>250–200000 kbps</td><td>Tasa objetivo en VBR, con límite de picos.</td></tr>
+  <tr><td>Audio</td><td>Sin audio, 64, 96, 128, 192 kbps</td><td>Quitar el audio reduce mucho el peso.</td></tr>
+  <tr><td>FPS máximo</td><td>Original, 60, 30, 24, 15</td><td>Menos fotogramas = menos peso.</td></tr>
+  <tr><td>Contenido</td><td>Normal, Pantalla, Película</td><td>Optimiza VP9 para el tipo de vídeo.</td></tr>
+  <tr><td>Reducir ruido</td><td>Sí/No</td><td>Filtro suave para grabaciones con grano.</td></tr>
+</table>
 <p>El <strong>instalador</strong> y el <strong>portable</strong> incluyen <code>ffmpeg.exe</code> y
 <code>ffprobe.exe</code> en la misma carpeta. Si usas el ejecutable suelto o el código fuente, descarga
 FFmpeg en <a href="https://www.gyan.dev/ffmpeg/builds/">gyan.dev</a> y copia ambos junto a
@@ -453,6 +465,14 @@ instalados; el programa los busca solo en las rutas habituales de Windows.</p>
   <tr><td><code>--zip NOMBRE</code></td><td>Crea un ZIP con el resultado dentro de la carpeta de salida.</td></tr>
   <tr><td><code>--format webp|avif</code></td><td>Formato de salida de imágenes. Por defecto <code>webp</code>. Los vídeos van a WebM.</td></tr>
   <tr><td><code>--ffmpeg RUTA</code></td><td>Ruta a <code>ffmpeg.exe</code> para vídeo (opcional).</td></tr>
+  <tr><td><code>--video-height N</code></td><td>Altura máxima del vídeo (0 = original).</td></tr>
+  <tr><td><code>--video-mode crf|vbr</code></td><td>Modo de calidad de vídeo.</td></tr>
+  <tr><td><code>--video-crf N</code></td><td>CRF manual 15–50 (0 = automático según la calidad).</td></tr>
+  <tr><td><code>--video-bitrate N</code></td><td>Bitrate de vídeo en kbps para VBR.</td></tr>
+  <tr><td><code>--video-fps N</code></td><td>FPS máximo (0 = original).</td></tr>
+  <tr><td><code>--audio-bitrate N</code></td><td>Audio Opus en kbps (0 = sin audio).</td></tr>
+  <tr><td><code>--video-tune default|screen|film</code></td><td>Optimización de contenido.</td></tr>
+  <tr><td><code>--denoise</code></td><td>Reducción suave de ruido.</td></tr>
   <tr><td><code>--max-dim N</code></td><td>Redimensiona al lado máximo de N píxeles (no amplía).</td></tr>
   <tr><td><code>--max-kb N</code></td><td>Busca la calidad necesaria para no superar N KB por imagen.</td></tr>
   <tr><td><code>--csv</code></td><td>Genera el informe CSV en la carpeta de salida.</td></tr>
@@ -606,7 +626,7 @@ muestran un aviso en la barra de estado. <em>Ayuda → Buscar actualizaciones</e
 ofrece abrir la página de descarga.</p>
 
 <p class="pie">
-  Conversor WebP 2.12.0 · Programa local para Windows · Interfaz Tkinter, conversión con Pillow, arrastre con
+  Conversor WebP 2.13.0 · Programa local para Windows · Interfaz Tkinter, conversión con Pillow, arrastre con
   TkDND, extracción con 7-Zip/WinRAR.<br>
   Este manual se abre desde el programa en <strong>Ayuda → Manual de uso</strong> y también puede abrirse
   con doble clic en cualquier navegador.

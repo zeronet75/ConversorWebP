@@ -11,7 +11,7 @@
 </p>
 
 <p align="center">
-  <img alt="Versión" src="https://img.shields.io/badge/version-2.12.0-1a73e8">
+  <img alt="Versión" src="https://img.shields.io/badge/version-2.13.0-1a73e8">
   <img alt="Windows" src="https://img.shields.io/badge/Windows-10%20%7C%2011-0078D6">
   <img alt="Python" src="https://img.shields.io/badge/Python-3.12-3776AB">
   <img alt="Pillow" src="https://img.shields.io/badge/Pillow-13-11557C">
@@ -341,6 +341,24 @@ El programa busca FFmpeg en este orden: `--ffmpeg` o la clave `ffmpeg` de `confi
 La conversión de vídeo se hace **de uno en uno** (FFmpeg ya usa varios hilos); las imágenes del mismo
 lote siguen convirtiéndose en paralelo.
 
+### Parámetros de vídeo
+
+El botón **Vídeo: …** (junto a «Formato de salida») abre las opciones avanzadas:
+
+| Parámetro | Valores | Efecto |
+|---|---|---|
+| **Resolución** | Original, 2160p, 1440p, 1080p, 720p, 480p, 360p | Altura máxima sin ampliar; el ancho se calcula manteniendo proporción. |
+| **Calidad** | CRF (calidad constante) o VBR (tasa de bits) | CRF prioriza calidad; VBR busca un peso concreto. |
+| **CRF** | Automático (calidad global) o 15–50 | Más bajo = más calidad y peso. |
+| **Bitrate** | 250–200000 kbps | Tasa objetivo en modo VBR, con `maxrate` y `bufsize` para limitar picos. |
+| **Audio** | Sin audio, 64, 96, 128 o 192 kbps | Opus; quitar el audio reduce mucho el peso. |
+| **FPS máximo** | Original, 60, 30, 24 o 15 | Menos fotogramas = menos peso, útil para tutorials o pantallas. |
+| **Contenido** | Normal, Pantalla o Película | Optimización `-tune-content` de VP9. |
+| **Reducir ruido** | Sí/No | Filtro suave `hqdn3d`; ayuda en grabaciones con grano. |
+
+El escalado usa **Lanczos de alta calidad** y fuerza dimensiones pares para `yuv420p`. Si la resolución
+es **Original**, se sigue aplicando el «Lado máximo» de la sección de calidad cuando esté configurado.
+
 ---
 
 ## Tamaño y peso de las imágenes
@@ -488,6 +506,14 @@ ConversorWebP.exe <origen...> -o <carpeta_salida> [opciones]
 | `-m, --method` | Esfuerzo 0-6. Por defecto 6. |
 | `--format webp\|avif` | Formato de salida de imágenes. Por defecto WebP. Los vídeos van a WebM. |
 | `--ffmpeg RUTA` | Ruta a `ffmpeg.exe` (opcional; si no, se busca en PATH o junto al programa). |
+| `--video-height N` | Altura máxima del vídeo (0 = original). |
+| `--video-mode crf\|vbr` | Modo de calidad de vídeo. |
+| `--video-crf N` | CRF manual 15–50 (0 = automático según `--quality`). |
+| `--video-bitrate N` | Tasa de bits en kbps para VBR. |
+| `--video-fps N` | FPS máximo (0 = original). |
+| `--audio-bitrate N` | Audio Opus en kbps (0 = sin audio). |
+| `--video-tune default\|screen\|film` | Optimización de contenido. |
+| `--denoise` | Reducción suave de ruido. |
 | `--max-dim N` | Lado máximo en píxeles (no amplía). |
 | `--max-kb N` | Peso máximo por imagen en KB. |
 | `--zip NOMBRE` | Crea un ZIP con el resultado. |
@@ -644,6 +670,7 @@ ConversorWebP/
 
 Consulta [CHANGELOG.md](CHANGELOG.md). Resumen:
 
+- **2.13.0** — opciones avanzadas de vídeo: resolución, CRF/VBR, bitrate, audio, FPS, contenido y denoise.
 - **2.12.0** — FFmpeg y ffprobe incluidos en el portable y el instalador de Python y C++.
 - **2.11.0** — conversión de vídeo a WebM (VP9 + Opus) con FFmpeg, en lotes mixtos.
 - **2.10.0** — DPI nítido del sistema en C++, con opciones `auto`, `system` y `gdi`.

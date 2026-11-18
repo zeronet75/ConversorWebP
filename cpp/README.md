@@ -11,6 +11,7 @@ del proyecto principal.
 - **Vídeo:** conversión a WebM (VP9 + Opus) mediante FFmpeg. El instalador y el portable incluyen
   `ffmpeg.exe` y `ffprobe.exe`; también se detecta en `PATH`, junto al `.exe`, en `bin\`, `tools\`
   o con `--ffmpeg`. Acepta vídeos en lotes mixtos.
+- **Opciones de vídeo:** resolución, CRF o VBR, bitrate, audio Opus, FPS, `-tune-content` y denoise.
 - **Color:** lcms2 para validar/convertir perfiles; los perfiles RGB se incrustan en
   WebP (chunk ICCP) y AVIF.
 - **Portable:** el ejecutable no escribe en el registro; usa `config.ini` junto al

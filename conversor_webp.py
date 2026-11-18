@@ -78,7 +78,7 @@ except Exception:  # pragma: no cover - la app sigue funcionando sin arrastrar
 
 
 APP_NAME = "Conversor WebP"
-APP_VERSION = "2.12.0"
+APP_VERSION = "2.13.0"
 
 try:  # soporte HEIC/HEIF (iPhone) si pillow-heif esta instalado
     import pillow_heif
@@ -99,6 +99,19 @@ VIDEO_EXTS = {
     ".mpeg", ".mpg", ".mpe", ".m2v", ".ts", ".m2ts", ".mts", ".3gp",
     ".3g2", ".ogv", ".vob", ".asf", ".f4v", ".rm", ".rmvb",
 }
+VIDEO_RESOLUCIONES = [
+    ("Original", 0),
+    ("2160p (4K)", 2160),
+    ("1440p (2K)", 1440),
+    ("1080p", 1080),
+    ("720p", 720),
+    ("480p", 480),
+    ("360p", 360),
+]
+VIDEO_AUDIO = [("Sin audio", 0), ("64 kbps", 64), ("96 kbps", 96), ("128 kbps", 128), ("192 kbps", 192)]
+VIDEO_FPS = [("Original", 0), ("60 fps", 60), ("30 fps", 30), ("24 fps", 24), ("15 fps", 15)]
+VIDEO_TUNE = [("Normal", "default"), ("Pantalla", "screen"), ("Película", "film")]
+VIDEO_MODOS = [("CRF (calidad constante)", "CRF"), ("Tasa de bits (VBR)", "VBR")]
 ARCHIVE_EXTS = {".zip", ".rar", ".7z"}
 MAX_EXTRACCION_BYTES = 4 * 1024**3
 MAX_EXTRACCION_ARCHIVOS = 200_000
@@ -763,6 +776,14 @@ class Job:
     preservar_extra: bool = False  # conservar EXIF/XMP y fecha original
     jobs: int = 0               # 0 = automatico; >0 = maximo de hilos
     ffmpeg: str = ""            # ruta explicita a ffmpeg.exe (opcional)
+    video_height: int = 0       # altura maxima de salida (0 = original)
+    video_mode: str = "CRF"     # "CRF" o "VBR"
+    video_crf: int = 0          # 0 = automatico segun quality; 15-50 si se fija
+    video_bitrate_kbps: int = 0 # >0 = VBR a esa tasa
+    video_audio_kbps: int = 96  # 0 = sin audio
+    video_fps: int = 0          # 0 = original
+    video_tune: str = "default" # default, screen, film
+    video_denoise: bool = False # filtro hqdn3d suave
 
 
 @dataclass
@@ -1321,34 +1342,54 @@ def convert_video(
     except OSError:
         pass
 
-    crf = _vp9_crf(job.quality)
+    crf = job.video_crf if job.video_crf > 0 else _vp9_crf(job.quality)
+    crf = max(15, min(63, int(crf)))
     cpu = _vp9_cpu_used(job.method)
-    # yuv420p necesita dimensiones pares. Si hay lado máximo, se limita sin ampliar.
-    filtros = "scale=trunc(iw/2)*2:trunc(ih/2)*2"
-    if job.max_dimension:
+    partes: list[str] = []
+    if job.video_fps > 0:
+        partes.append(f"fps={max(1, min(240, int(job.video_fps)))}")
+    if job.video_height > 0:
+        alto = max(2, min(4320, int(job.video_height)))
+        partes.append(f"scale=w=-2:h='min(ih,{alto})'")
+    elif job.max_dimension:
         d = max(2, int(job.max_dimension))
-        filtros = (
+        partes.append(
             f"scale=w='min(iw,{d})':h='min(ih,{d})':"
-            "force_original_aspect_ratio=decrease," + filtros
+            "force_original_aspect_ratio=decrease"
         )
+    if job.video_denoise:
+        partes.append("hqdn3d=1.5:1.5:6:6")
+    # yuv420p necesita dimensiones pares; se aplica siempre al final.
+    partes.append("scale=trunc(iw/2)*2:trunc(ih/2)*2")
+    filtros = ",".join(partes)
+    bitrate = max(0, min(200000, int(job.video_bitrate_kbps)))
 
     args = [
         str(ffmpeg), "-nostdin", "-hide_banner", "-loglevel", "error", "-y",
         "-i", str(src),
         "-map", "0:v:0", "-map", "0:a?",
-        "-c:v", "libvpx-vp9", "-row-mt", "1", "-deadline", "good",
-        "-cpu-used", str(cpu),
+        "-c:v", "libvpx-vp9", "-row-mt", "1", "-tile-columns", "2",
+        "-deadline", "good", "-cpu-used", str(cpu),
     ]
+    if job.video_tune in ("screen", "film"):
+        args += ["-tune-content", job.video_tune]
     if job.lossless:
         args += ["-lossless", "1", "-b:v", "0"]
+    elif bitrate > 0:
+        args += [
+            "-b:v", f"{bitrate}k",
+            "-maxrate", f"{min(200000, int(bitrate * 1.5))}k",
+            "-bufsize", f"{min(400000, bitrate * 2)}k",
+        ]
     else:
         args += ["-crf", str(crf), "-b:v", "0"]
-    args += [
-        "-pix_fmt", "yuv420p", "-vf", filtros,
-        "-c:a", "libopus", "-b:a", "96k",
-        "-map_metadata", "0",
-        "-f", "webm", str(parcial),
-    ]
+    args += ["-pix_fmt", "yuv420p", "-vf", filtros]
+    if job.video_audio_kbps > 0:
+        audio = max(32, min(256, int(job.video_audio_kbps)))
+        args += ["-c:a", "libopus", "-b:a", f"{audio}k"]
+    else:
+        args += ["-an"]
+    args += ["-map_metadata", "0", "-f", "webm", str(parcial)]
 
     error_txt = ""
     codigo = 1
@@ -1387,7 +1428,20 @@ def convert_video(
 
     os.replace(parcial, dst)
     _aplicar_fecha(src, dst, job)
-    nota = "VP9 sin pérdida" if job.lossless else f"VP9 CRF {crf}"
+    if job.lossless:
+        nota = "VP9 sin pérdida"
+    elif bitrate > 0:
+        nota = f"VP9 {bitrate} kbps"
+    else:
+        nota = f"VP9 CRF {crf}"
+    if job.video_height > 0:
+        nota += f", {job.video_height}p"
+    if job.video_fps > 0:
+        nota += f", {job.video_fps} fps"
+    if job.video_audio_kbps <= 0:
+        nota += ", sin audio"
+    if job.video_denoise:
+        nota += ", denoise"
     if job.target_kb > 0:
         nota += "; el peso máximo no se aplica a vídeos"
     return src.stat().st_size, dst.stat().st_size, nota
@@ -2002,7 +2056,8 @@ class VentanaAcerca(tk.Toplevel):
             "Empaquetar el resultado en .zip: crea un ZIP con todos los archivos en la carpeta de salida.",
             "Lado maximo: reduce a 2560, 1920, 1600, 1200, 800 o 512 px sin ampliar las pequenas.",
             "Peso maximo: ajusta la calidad automaticamente para no superar los KB indicados.",
-            "Formato de salida de imágenes: WebP o AVIF (AVIF suele pesar menos). Los vídeos se convierten siempre a WebM.",            "Informe CSV: deja en la carpeta de salida una tabla con peso original, final y ahorro.",
+            "Formato de salida de imágenes: WebP o AVIF (AVIF suele pesar menos). Los vídeos se convierten siempre a WebM.",
+            "Vídeo: resolución, CRF o bitrate, audio Opus, FPS, contenido y reducción de ruido.",            "Informe CSV: deja en la carpeta de salida una tabla con peso original, final y ahorro.",
             "Aviso sonoro al terminar: tono agudo si todo fue bien, grave si hubo errores o se cancelo.",
         ):
             t.insert("end", "•  " + linea + "\n", "li")
@@ -2133,6 +2188,14 @@ class Vigilante(threading.Thread):
             name_pattern=b.name_pattern,
             dry_run=False,
             ffmpeg=b.ffmpeg,
+            video_height=b.video_height,
+            video_mode=b.video_mode,
+            video_crf=b.video_crf,
+            video_bitrate_kbps=b.video_bitrate_kbps,
+            video_audio_kbps=b.video_audio_kbps,
+            video_fps=b.video_fps,
+            video_tune=b.video_tune,
+            video_denoise=b.video_denoise,
         )
 
     def run(self) -> None:
@@ -2327,6 +2390,15 @@ class App(BaseTk):  # type: ignore[misc,valid-type]
         self.historial: list[dict] = []
         self._aplicando_preset = False
         self.formato = tk.StringVar(value="WebP")
+        self.video_height = tk.IntVar(value=0)
+        self.video_mode = tk.StringVar(value="CRF")
+        self.video_crf_auto = tk.BooleanVar(value=True)
+        self.video_crf = tk.IntVar(value=30)
+        self.video_bitrate = tk.IntVar(value=2500)
+        self.video_audio = tk.IntVar(value=96)
+        self.video_fps = tk.IntVar(value=0)
+        self.video_tune = tk.StringVar(value="default")
+        self.video_denoise = tk.BooleanVar(value=False)
         self.csv_report = tk.BooleanVar(value=False)
         self.html_report = tk.BooleanVar(value=False)
         self.usar_gpu = tk.BooleanVar(value=False)
@@ -2384,6 +2456,7 @@ class App(BaseTk):  # type: ignore[misc,valid-type]
         self._build_menu()
         self._load_config()
         self._restaurar_cola()
+        self._actualizar_boton_video()
         self._center()
 
         self.protocol("WM_DELETE_WINDOW", self._on_close)
@@ -2908,7 +2981,10 @@ class App(BaseTk):  # type: ignore[misc,valid-type]
         )
         self.cmb_formato.pack(side="left", padx=(6, 0))
         self.cmb_formato.bind("<<ComboboxSelected>>", self._on_formato)
-        ttk.Label(fila_fmt, text="AVIF pesa menos · vídeos → WebM", style="MutedCard.TLabel").pack(side="left", padx=(8, 0))
+        self.btn_video = ttk.Button(
+            fila_fmt, text="Opciones de vídeo…", command=self._dialogo_video
+        )
+        self.btn_video.pack(side="left", padx=(8, 0))
 
         fila_informes = ttk.Frame(card_out, style="Card.TFrame")
         fila_informes.pack(fill="x", pady=(6, 0))
@@ -3181,6 +3257,7 @@ class App(BaseTk):  # type: ignore[misc,valid-type]
             "chk_zip": "Crea además un ZIP con todos los archivos generados.",
             "entry_zip": "Nombre del ZIP que se creará en la carpeta de salida.",
             "cmb_formato": "Formato de salida de imágenes: WebP o AVIF. Los vídeos se convierten a WebM.",
+            "btn_video": "Resolución, tasa de bits, CRF, audio, FPS, contenido y reducción de ruido para vídeos.",
             "chk_csv": "Guarda un CSV con el peso original, final y el ahorro de cada archivo.",
             "chk_html": "Guarda un informe HTML con la tabla de resultados y el ahorro.",
             "chk_extra": "Conserva EXIF/XMP (incluida la ubicación GPS) y la fecha del archivo original.",
@@ -3844,6 +3921,14 @@ class App(BaseTk):  # type: ignore[misc,valid-type]
             name_pattern=self.name_pattern.get(),
             dry_run=analizar,
             preservar_extra=self.preservar_extra.get(),
+            video_height=int(self.video_height.get()),
+            video_mode=self.video_mode.get(),
+            video_crf=(0 if self.video_crf_auto.get() else int(self.video_crf.get())),
+            video_bitrate_kbps=(int(self.video_bitrate.get()) if self.video_mode.get() == "VBR" else 0),
+            video_audio_kbps=int(self.video_audio.get()),
+            video_fps=int(self.video_fps.get()),
+            video_tune=self.video_tune.get(),
+            video_denoise=bool(self.video_denoise.get()),
         )
 
     def _guardar_cola(self, job: Job) -> None:
@@ -3871,6 +3956,14 @@ class App(BaseTk):  # type: ignore[misc,valid-type]
                 "gpu_forzar": job.gpu_forzar,
                 "name_pattern": job.name_pattern,
                 "dry_run": job.dry_run,
+                "video_height": job.video_height,
+                "video_mode": job.video_mode,
+                "video_crf": job.video_crf,
+                "video_bitrate_kbps": job.video_bitrate_kbps,
+                "video_audio_kbps": job.video_audio_kbps,
+                "video_fps": job.video_fps,
+                "video_tune": job.video_tune,
+                "video_denoise": job.video_denoise,
                 "beep": bool(self.beep.get()),
                 "apagar_al_terminar": bool(self.apagar.get()),
                 "preservar_extra": job.preservar_extra,
@@ -3956,6 +4049,14 @@ class App(BaseTk):  # type: ignore[misc,valid-type]
                 "formato": ajustes.get("formato", "WEBP"),
                 "csv_report": ajustes.get("csv_report", False),
                 "html_report": ajustes.get("html_report", False),
+                "video_height": ajustes.get("video_height", 0),
+                "video_mode": ajustes.get("video_mode", "CRF"),
+                "video_crf": ajustes.get("video_crf", 0),
+                "video_bitrate_kbps": ajustes.get("video_bitrate_kbps", 0),
+                "video_audio_kbps": ajustes.get("video_audio_kbps", 96),
+                "video_fps": ajustes.get("video_fps", 0),
+                "video_tune": ajustes.get("video_tune", "default"),
+                "video_denoise": ajustes.get("video_denoise", False),
             }
         )
         self.usar_gpu.set(bool(ajustes.get("usar_gpu", False)))
@@ -4346,8 +4447,186 @@ class App(BaseTk):  # type: ignore[misc,valid-type]
     def _on_formato(self, _event=None) -> None:
         fmt = "AVIF" if self.formato.get().upper() == "AVIF" else "WebP"
         self.formato.set(fmt)
-        self.btn_start.configure(text=f"Convertir a {fmt}")
         self.chk_webp.configure(text="Recodificar tambien los .webp / .avif / .webm")
+
+    def _resumen_video(self) -> str:
+        resolucion = next(
+            (texto for texto, alto in VIDEO_RESOLUCIONES if alto == self.video_height.get()),
+            "Original",
+        )
+        if resolucion == "Original":
+            resolucion = "orig"
+        elif "(" in resolucion:
+            resolucion = resolucion.split()[0]
+        if self.video_mode.get() == "VBR":
+            calidad = f"{int(self.video_bitrate.get())}k"
+        elif self.video_crf_auto.get():
+            calidad = "CRF auto"
+        else:
+            calidad = f"CRF {int(self.video_crf.get())}"
+        audio = "sin audio" if self.video_audio.get() <= 0 else f"{int(self.video_audio.get())}k"
+        return f"{resolucion} · {calidad} · {audio}"
+
+    def _actualizar_boton_video(self) -> None:
+        if getattr(self, "btn_video", None) is None:
+            return
+        self.btn_video.configure(text="Vídeo: " + self._resumen_video())
+
+    def _dialogo_video(self) -> None:
+        ventana = tk.Toplevel(self)
+        ventana.title("Opciones de vídeo (WebM)")
+        ventana.transient(self)
+        ventana.resizable(False, False)
+        ventana.configure(bg=BG)
+
+        resolucion = tk.StringVar(
+            value=next(
+                (texto for texto, alto in VIDEO_RESOLUCIONES if alto == self.video_height.get()),
+                "Original",
+            )
+        )
+        modo = tk.StringVar(
+            value=next(
+                (texto for texto, valor in VIDEO_MODOS if valor == self.video_mode.get()),
+                VIDEO_MODOS[0][0],
+            )
+        )
+        audio = tk.StringVar(
+            value=next(
+                (texto for texto, valor in VIDEO_AUDIO if valor == self.video_audio.get()),
+                "96 kbps",
+            )
+        )
+        fps = tk.StringVar(
+            value=next(
+                (texto for texto, valor in VIDEO_FPS if valor == self.video_fps.get()),
+                "Original",
+            )
+        )
+        tune = tk.StringVar(
+            value=next(
+                (texto for texto, valor in VIDEO_TUNE if valor == self.video_tune.get()),
+                "Normal",
+            )
+        )
+        auto = tk.BooleanVar(value=self.video_crf_auto.get())
+        crf = tk.IntVar(value=max(15, min(63, self.video_crf.get() or 30)))
+        bitrate = tk.IntVar(value=max(250, int(self.video_bitrate.get() or 2500)))
+        denoise = tk.BooleanVar(value=self.video_denoise.get())
+
+        marco = ttk.Frame(ventana, padding=12)
+        marco.pack(fill="both", expand=True)
+        ttk.Label(
+            marco,
+            text="Resolución, tasa de bits, audio y FPS solo se aplican a vídeos. "
+            "El escalado usa Lanczos de alta calidad.",
+            style="Sub.TLabel",
+            wraplength=460,
+        ).grid(row=0, column=0, columnspan=4, sticky="w", pady=(0, 8))
+
+        ttk.Label(marco, text="Resolución").grid(row=1, column=0, sticky="w", pady=3)
+        cmb_res = ttk.Combobox(
+            marco, state="readonly", width=18, textvariable=resolucion,
+            values=[x[0] for x in VIDEO_RESOLUCIONES],
+        )
+        cmb_res.grid(row=1, column=1, sticky="w", padx=(6, 16), pady=3)
+
+        ttk.Label(marco, text="Calidad").grid(row=1, column=2, sticky="w", pady=3)
+        cmb_modo = ttk.Combobox(
+            marco, state="readonly", width=22, textvariable=modo,
+            values=[x[0] for x in VIDEO_MODOS],
+        )
+        cmb_modo.grid(row=1, column=3, sticky="w", padx=(6, 0), pady=3)
+
+        chk_auto = ttk.Checkbutton(marco, text="CRF automático (usa la calidad global)", variable=auto)
+        chk_auto.grid(row=2, column=0, columnspan=2, sticky="w", pady=3)
+        lbl_crf = ttk.Label(marco, text="CRF")
+        lbl_crf.grid(row=3, column=0, sticky="w", pady=3)
+        escala_crf = tk.Scale(
+            marco, from_=15, to=50, orient="horizontal", variable=crf,
+            showvalue=True, length=190, bg=CARD, troughcolor=BORDER,
+            activebackground=ACCENT_DARK, highlightthickness=0,
+        )
+        escala_crf.grid(row=3, column=1, sticky="w", padx=(6, 16), pady=3)
+
+        ttk.Label(marco, text="Bitrate (kbps)").grid(row=3, column=2, sticky="w", pady=3)
+        spin_bitrate = ttk.Spinbox(
+            marco, from_=250, to=200000, increment=250, width=10, textvariable=bitrate
+        )
+        spin_bitrate.grid(row=3, column=3, sticky="w", padx=(6, 0), pady=3)
+
+        ttk.Label(marco, text="Audio").grid(row=4, column=0, sticky="w", pady=3)
+        ttk.Combobox(
+            marco, state="readonly", width=12, textvariable=audio,
+            values=[x[0] for x in VIDEO_AUDIO],
+        ).grid(row=4, column=1, sticky="w", padx=(6, 16), pady=3)
+        ttk.Label(marco, text="FPS máximo").grid(row=4, column=2, sticky="w", pady=3)
+        ttk.Combobox(
+            marco, state="readonly", width=10, textvariable=fps,
+            values=[x[0] for x in VIDEO_FPS],
+        ).grid(row=4, column=3, sticky="w", padx=(6, 0), pady=3)
+
+        ttk.Label(marco, text="Contenido").grid(row=5, column=0, sticky="w", pady=3)
+        ttk.Combobox(
+            marco, state="readonly", width=12, textvariable=tune,
+            values=[x[0] for x in VIDEO_TUNE],
+        ).grid(row=5, column=1, sticky="w", padx=(6, 16), pady=3)
+        ttk.Checkbutton(
+            marco, text="Reducir ruido (hqdn3d)", variable=denoise
+        ).grid(row=5, column=2, columnspan=2, sticky="w", pady=3)
+
+        def actualizar_estado(*_args) -> None:
+            vbr = modo.get() == VIDEO_MODOS[1][0]
+            spin_bitrate.configure(state="normal" if vbr else "disabled")
+            auto_crf = auto.get() and not vbr
+            escala_crf.configure(state="disabled" if (vbr or auto_crf) else "normal")
+            chk_auto.configure(state="disabled" if vbr else "normal")
+
+        cmb_modo.bind("<<ComboboxSelected>>", actualizar_estado)
+        chk_auto.configure(command=actualizar_estado)
+        actualizar_estado()
+
+        pie = ttk.Frame(marco)
+        pie.grid(row=6, column=0, columnspan=4, sticky="e", pady=(12, 0))
+        ttk.Button(pie, text="Restablecer", command=lambda: (
+            resolucion.set("Original"), modo.set(VIDEO_MODOS[0][0]),
+            auto.set(True), crf.set(30), bitrate.set(2500), audio.set("96 kbps"),
+            fps.set("Original"), tune.set("Normal"), denoise.set(False),
+            actualizar_estado(),
+        )).pack(side="left", padx=(0, 8))
+
+        def aceptar() -> None:
+            self.video_height.set(
+                next((alto for texto, alto in VIDEO_RESOLUCIONES if texto == resolucion.get()), 0)
+            )
+            self.video_mode.set(
+                next((valor for texto, valor in VIDEO_MODOS if texto == modo.get()), "CRF")
+            )
+            self.video_crf_auto.set(bool(auto.get()))
+            self.video_crf.set(max(15, min(63, int(crf.get()))))
+            self.video_bitrate.set(max(0, int(bitrate.get())))
+            self.video_audio.set(
+                next((valor for texto, valor in VIDEO_AUDIO if texto == audio.get()), 96)
+            )
+            self.video_fps.set(
+                next((valor for texto, valor in VIDEO_FPS if texto == fps.get()), 0)
+            )
+            self.video_tune.set(
+                next((valor for texto, valor in VIDEO_TUNE if texto == tune.get()), "default")
+            )
+            self.video_denoise.set(bool(denoise.get()))
+            self._actualizar_boton_video()
+            self._save_config()
+            ventana.destroy()
+
+        ttk.Button(pie, text="Cancelar", command=ventana.destroy).pack(side="left")
+        ttk.Button(pie, text="Aceptar", command=aceptar).pack(side="left", padx=(8, 0))
+        ventana.bind("<Escape>", lambda _e: ventana.destroy())
+        ventana.grab_set()
+        ventana.update_idletasks()
+        x = self.winfo_rootx() + max(0, (self.winfo_width() - ventana.winfo_width()) // 2)
+        y = self.winfo_rooty() + max(0, (self.winfo_height() - ventana.winfo_height()) // 2)
+        ventana.geometry(f"+{x}+{y}")
 
     def _on_peso(self) -> None:
         self.entry_peso.configure(state="normal" if self.peso_activo.get() else "disabled")
@@ -4387,6 +4666,14 @@ class App(BaseTk):  # type: ignore[misc,valid-type]
             "reencode_webp": bool(self.reencode_webp.get()),
             "max_dimension": self._max_dimension(),
             "target_kb": self._target_kb(),
+            "video_height": int(self.video_height.get()),
+            "video_mode": self.video_mode.get(),
+            "video_crf": (0 if self.video_crf_auto.get() else int(self.video_crf.get())),
+            "video_bitrate_kbps": (int(self.video_bitrate.get()) if self.video_mode.get() == "VBR" else 0),
+            "video_audio_kbps": int(self.video_audio.get()),
+            "video_fps": int(self.video_fps.get()),
+            "video_tune": self.video_tune.get(),
+            "video_denoise": bool(self.video_denoise.get()),
         }
 
     def _ajustes_completos(self) -> dict:
@@ -4471,12 +4758,41 @@ class App(BaseTk):  # type: ignore[misc,valid-type]
             if kb > 0:
                 self.peso_kb.set(str(kb))
             self.peso_activo.set(kb > 0)
+
+            def entero_video(clave: str, defecto: int, minimo: int, maximo: int) -> int:
+                try:
+                    valor = int(datos.get(clave, defecto) or 0)
+                except (TypeError, ValueError):
+                    valor = defecto
+                return max(minimo, min(maximo, valor))
+
+            if any(
+                clave in datos
+                for clave in (
+                    "video_height", "video_mode", "video_crf", "video_bitrate_kbps",
+                    "video_audio_kbps", "video_fps", "video_tune", "video_denoise",
+                )
+            ):
+                self.video_height.set(entero_video("video_height", 0, 0, 4320))
+                self.video_mode.set(
+                    "VBR" if str(datos.get("video_mode", "CRF")).upper() == "VBR" else "CRF"
+                )
+                crf_video = entero_video("video_crf", 0, 0, 63)
+                self.video_crf_auto.set(crf_video == 0)
+                self.video_crf.set(crf_video if crf_video > 0 else 30)
+                self.video_bitrate.set(entero_video("video_bitrate_kbps", 0, 0, 200000))
+                self.video_audio.set(entero_video("video_audio_kbps", 96, 0, 256))
+                self.video_fps.set(entero_video("video_fps", 0, 0, 240))
+                tune = str(datos.get("video_tune", "default") or "default").lower()
+                self.video_tune.set(tune if tune in ("default", "screen", "film") else "default")
+                self.video_denoise.set(bool(datos.get("video_denoise", False)))
         finally:
             self._aplicando_preset = False
         self._on_quality()
         self._on_lossless()
         self._on_flatten()
         self._on_peso()
+        self._actualizar_boton_video()
 
     def _on_preset(self, _event=None) -> None:
         nombre = self.preset_sel.get()
@@ -5000,6 +5316,14 @@ class App(BaseTk):  # type: ignore[misc,valid-type]
             name_pattern=self.name_pattern.get(),
             dry_run=analizar,
             preservar_extra=self.preservar_extra.get(),
+            video_height=int(self.video_height.get()),
+            video_mode=self.video_mode.get(),
+            video_crf=(0 if self.video_crf_auto.get() else int(self.video_crf.get())),
+            video_bitrate_kbps=(int(self.video_bitrate.get()) if self.video_mode.get() == "VBR" else 0),
+            video_audio_kbps=int(self.video_audio.get()),
+            video_fps=int(self.video_fps.get()),
+            video_tune=self.video_tune.get(),
+            video_denoise=bool(self.video_denoise.get()),
         )
 
         self._set_running(True)
@@ -5509,6 +5833,17 @@ class App(BaseTk):  # type: ignore[misc,valid-type]
         self.name_pattern.set(str(data.get("name_pattern", "") or ""))
         self.dry_run.set(booleano("dry_run", False))
         self.preservar_extra.set(booleano("preservar_extra", False))
+        self.video_height.set(entero("video_height", 0, 0, 4320))
+        self.video_mode.set("VBR" if str(data.get("video_mode", "CRF")).upper() == "VBR" else "CRF")
+        crf_video = entero("video_crf", 0, 0, 63)
+        self.video_crf_auto.set(crf_video == 0)
+        self.video_crf.set(crf_video if crf_video > 0 else 30)
+        self.video_bitrate.set(entero("video_bitrate_kbps", 2500, 0, 200000) or 2500)
+        self.video_audio.set(entero("video_audio_kbps", 96, 0, 256))
+        self.video_fps.set(entero("video_fps", 0, 0, 240))
+        tune = str(data.get("video_tune", "default") or "default").lower()
+        self.video_tune.set(tune if tune in ("default", "screen", "film") else "default")
+        self.video_denoise.set(booleano("video_denoise", False))
         self.buscar_actualizaciones = booleano("buscar_actualizaciones", True)
         self.ultima_comprobacion = str(data.get("ultima_comprobacion", "") or "")
         self.apagar.set(booleano("apagar_al_terminar", False))
@@ -5585,6 +5920,14 @@ class App(BaseTk):  # type: ignore[misc,valid-type]
                     "name_pattern": self.name_pattern.get(),
                     "dry_run": self.dry_run.get(),
                     "preservar_extra": self.preservar_extra.get(),
+                    "video_height": int(self.video_height.get()),
+                    "video_mode": self.video_mode.get(),
+                    "video_crf": (0 if self.video_crf_auto.get() else int(self.video_crf.get())),
+                    "video_bitrate_kbps": (int(self.video_bitrate.get()) if self.video_mode.get() == "VBR" else 0),
+                    "video_audio_kbps": int(self.video_audio.get()),
+                    "video_fps": int(self.video_fps.get()),
+                    "video_tune": self.video_tune.get(),
+                    "video_denoise": bool(self.video_denoise.get()),
                     "buscar_actualizaciones": self.buscar_actualizaciones,
                     "ultima_comprobacion": self.ultima_comprobacion,
                     "apagar_al_terminar": self.apagar.get(),
@@ -5647,6 +5990,21 @@ def run_cli(argv: list[str]) -> int:
     parser.add_argument("--format", dest="formato", default="webp", type=str.lower,
                         choices=["webp", "avif"], help="Formato de salida de imágenes (webp o avif)")
     parser.add_argument("--ffmpeg", default="", help="Ruta a ffmpeg.exe (opcional; si no, se busca en PATH)")
+    parser.add_argument("--video-height", type=int, default=0,
+                        help="Altura máxima del vídeo (0 = original; 1080, 720, 480...)")
+    parser.add_argument("--video-bitrate", type=int, default=0,
+                        help="Tasa de bits de vídeo en kbps (0 = CRF)")
+    parser.add_argument("--video-crf", type=int, default=0,
+                        help="CRF manual 15-50 (0 = automático según --quality)")
+    parser.add_argument("--video-fps", type=int, default=0,
+                        help="FPS máximo del vídeo (0 = original)")
+    parser.add_argument("--audio-bitrate", type=int, default=96,
+                        help="Audio Opus en kbps (0 = sin audio)")
+    parser.add_argument("--video-tune", choices=["default", "screen", "film"], default="default",
+                        help="Optimización de contenido para VP9")
+    parser.add_argument("--denoise", action="store_true", help="Reducir ruido suave en vídeo (hqdn3d)")
+    parser.add_argument("--video-mode", choices=["crf", "vbr"], default="crf",
+                        help="Modo de calidad de vídeo: crf o vbr")
     parser.add_argument("--csv", action="store_true", help="Guardar informe CSV en la salida")
     parser.add_argument("--html", action="store_true", help="Guardar informe HTML en la salida")
     parser.add_argument("--json", action="store_true", help="Salida final en JSON")
@@ -5688,6 +6046,16 @@ def run_cli(argv: list[str]) -> int:
         preservar_extra=bool(args.keep_metadata),
         jobs=max(0, min(32, args.jobs)),
         ffmpeg=args.ffmpeg,
+        video_height=max(0, min(4320, args.video_height)),
+        video_mode="VBR" if args.video_mode == "vbr" else "CRF",
+        video_crf=(0 if args.video_crf <= 0 else max(15, min(63, args.video_crf))),
+        video_bitrate_kbps=(
+            max(0, min(200000, args.video_bitrate)) if args.video_mode == "vbr" else 0
+        ),
+        video_audio_kbps=max(0, min(256, args.audio_bitrate)),
+        video_fps=max(0, min(240, args.video_fps)),
+        video_tune=args.video_tune,
+        video_denoise=bool(args.denoise),
     )
     if args.preset:
         preset = PRESETS_BUILTIN.get(args.preset)

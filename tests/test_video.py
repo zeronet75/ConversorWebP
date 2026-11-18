@@ -98,6 +98,40 @@ class TestVideo(unittest.TestCase):
         self.assertEqual(res.skipped, 1)
         self.assertEqual((salida / "entrada.webm").read_bytes(), b"no es un webm real")
 
+    def test_parametros_video(self):
+        salida = self.tmp / "out"
+        res = self._run(
+            cw.Job(
+                sources=[self.video],
+                output_dir=salida,
+                video_height=60,
+                video_mode="VBR",
+                video_bitrate_kbps=300,
+                video_audio_kbps=0,
+                video_fps=5,
+                video_denoise=True,
+            )
+        )
+        self.assertEqual(res.converted, 1)
+        self.assertFalse(res.failed)
+        destino = salida / "entrada.webm"
+        proc = subprocess.run(
+            [
+                str(FFPROBE), "-v", "error", "-show_entries",
+                "stream=codec_type,width,height,avg_frame_rate",
+                "-of", "default=noprint_wrappers=1", str(destino),
+            ],
+            capture_output=True,
+            text=True,
+            timeout=60,
+            creationflags=FLAGS,
+        )
+        datos = proc.stdout.replace("\r", "")
+        self.assertIn("width=80", datos)
+        self.assertIn("height=60", datos)
+        self.assertIn("avg_frame_rate=5/1", datos)
+        self.assertNotIn("codec_type=audio", datos)
+
     def test_dry_run_no_escribe(self):
         salida = self.tmp / "out"
         res = self._run(
