@@ -2,7 +2,7 @@ param(
     [string]$Thumbprint = $env:CERT_THUMBPRINT,
     [string]$Pfx = $env:CERT_PFX,
     [string]$Password = $env:CERT_PASSWORD,
-    [string]$Version = "2.6.5",
+    [string]$Version = "2.7.0",
     [switch]$Check
 )
 

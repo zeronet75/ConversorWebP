@@ -79,7 +79,7 @@ using Microsoft::WRL::ComPtr;
 namespace fs = std::filesystem;
 
 static const wchar_t* APP_NAME = L"Conversor WebP";
-static const wchar_t* APP_VERSION = L"2.6.5";
+static const wchar_t* APP_VERSION = L"2.7.0";
 
 // ---------------------------------------------------------------------------
 //  Utilidades generales
@@ -1392,7 +1392,7 @@ struct Options {
     bool beep = true;
     bool csv = false;
     std::wstring salida;
-    std::wstring zip_nombre = L"imagenes_2.6.5-cpp.zip";
+    std::wstring zip_nombre = L"imagenes_2.7.0-cpp.zip";
     std::wstring patron;
     std::wstring formato = L"WEBP";
     bool dry_run = false;
@@ -1875,6 +1875,7 @@ static std::thread g_hilo;
 static std::atomic<bool> g_corriendo{false};
 static std::atomic<bool> g_cancelar{false};
 static std::atomic<bool> g_pausa{false};
+static ULONGLONG g_inicio_trabajo = 0;
 static std::mutex g_mutex_eventos;
 static std::deque<Evento> g_eventos;
 static std::atomic<bool> g_modo_cli{false};
@@ -5746,7 +5747,7 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
 
             // Cabecera
             etiqueta(L"Conversor WebP", 16, 17, 300, 30, 1400, g_font_title);
-            etiqueta(L"v2.6.5", 200, 29, 120, 18, 1401, g_font_muted);
+            etiqueta(L"v2.7.0", 200, 29, 120, 18, 1401, g_font_muted);
             etiqueta(L"JPG · PNG · BMP · TIFF · GIF · ICO  →  WebP / AVIF", 560, 23, 390, 20,
                      1402, g_font_muted, SS_RIGHT);
             boton(L"", 958, 20, 26, 26, ID_TEMA, BS_OWNERDRAW);
@@ -6354,6 +6355,17 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
                         GetTempPathW(MAX_PATH, temp);
                         g_opt.salida = (fs::path(temp) / L"conversor_webp_analisis").wstring();
                     }
+                    if (!g_opt.dry_run) {
+                        ULARGE_INTEGER libre{};
+                        if (GetDiskFreeSpaceExW(g_opt.salida.c_str(), &libre, nullptr, nullptr) &&
+                            libre.QuadPart < 100ull * 1024 * 1024) {
+                            if (MessageBoxW(hwnd,
+                                            L"Quedan menos de 100 MB libres en la carpeta de salida.\n\n"
+                                            L"¿Continuar?",
+                                            APP_NAME, MB_ICONWARNING | MB_YESNO) != IDYES)
+                                return 0;
+                        }
+                    }
 
                     guardar_config();
                     guardar_cola();
@@ -6362,6 +6374,7 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
                     EnableWindow(g_btn_pausa, TRUE);
                     g_cancelar = false;
                     g_pausa = false;
+                    g_inicio_trabajo = GetTickCount64();
                     SetWindowTextW(g_btn_pausa, L"Pausar");
                     g_corriendo = true;
                     {
@@ -6682,9 +6695,24 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
                         SendMessageW(g_progress, PBM_SETRANGE, 0, MAKELPARAM(0, std::max(1, e.b)));
                         SendMessageW(g_progress, PBM_SETPOS, e.a, 0);
                         if (!g_pausa) {
-                            wchar_t b[96];
-                            swprintf_s(b, g_opt.dry_run ? L"Analizando %d/%d" : L"Convirtiendo %d/%d",
-                                       e.a, e.b);
+                            wchar_t b[128];
+                            ULONGLONG transcurrido = g_inicio_trabajo
+                                                         ? GetTickCount64() - g_inicio_trabajo
+                                                         : 0;
+                            ULONGLONG restante = (e.a > 0 && e.b > e.a)
+                                                     ? transcurrido / (ULONGLONG)e.a *
+                                                           (ULONGLONG)(e.b - e.a) / 1000
+                                                     : 0;
+                            if (restante >= 60)
+                                swprintf_s(b, g_opt.dry_run
+                                                   ? L"Analizando %d/%d  ·  quedan ~%llu min"
+                                                   : L"Convirtiendo %d/%d  ·  quedan ~%llu min",
+                                           e.a, e.b, restante / 60);
+                            else
+                                swprintf_s(b, g_opt.dry_run
+                                                   ? L"Analizando %d/%d  ·  quedan ~%llu s"
+                                                   : L"Convirtiendo %d/%d  ·  quedan ~%llu s",
+                                           e.a, e.b, restante);
                             SetWindowTextW(g_status, b);
                         }
                     } else if (e.tipo == Evento::FILA) {
@@ -7062,6 +7090,14 @@ int wmain(int argc, wchar_t** argv) {
         return rc;
     }
 
+    HANDLE instancia = CreateMutexW(nullptr, FALSE, L"Local\\ConversorWebPC_GUI");
+    (void)instancia;
+    if (GetLastError() == ERROR_ALREADY_EXISTS) {
+        MessageBoxW(nullptr, L"Ya hay una instancia de Conversor WebP abierta.",
+                    L"Conversor WebP", MB_ICONINFORMATION);
+        return 0;
+    }
+
     cargar_config();
     aplicar_modo_global_cpp(g_oscuro);
     WNDCLASSEXW wc{};
@@ -7087,7 +7123,7 @@ int wmain(int argc, wchar_t** argv) {
     wc.hIconSm = icono_pequeno;
     RegisterClassExW(&wc);
 
-    g_hwnd = CreateWindowExW(0, wc.lpszClassName, L"Conversor WebP 2.6.5",
+    g_hwnd = CreateWindowExW(0, wc.lpszClassName, L"Conversor WebP 2.7.0",
                              WS_OVERLAPPEDWINDOW,
                              CW_USEDEFAULT, CW_USEDEFAULT, 1016, 900, nullptr, nullptr, inst, nullptr);
     if (!g_hwnd) return 1;

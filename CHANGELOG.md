@@ -6,6 +6,27 @@ Todos los cambios relevantes del proyecto. Formato basado en
 
 ---
 
+## [2.7.0] — 2026-11-18
+
+### Añadido
+
+- **Cola persistente** con pausa, reanudación, reintento de fallidos y reordenación de orígenes.
+- **Vista previa interactiva** con calidad de prueba y estimación de peso.
+- **WebP animado** desde GIF/WebP en Python y C++.
+- **Metadatos EXIF/XMP y fecha original** opcionales en Python; fecha original en C++.
+- **CLI** con `--json`, `--quiet`, `--jobs`, `--preset` y `--keep-metadata`.
+- Verificación Authenticode de las actualizaciones y script de firma para cuando exista certificado.
+- Configuración INI atómica en C++.
+- Aviso de espacio libre, tiempo restante estimado e instancia única.
+
+### Pendiente para próximas versiones
+
+- Certificado Authenticode real: el pipeline está listo, pero los binarios publicados siguen sin firmar.
+- Paridad completa de DPI, formatos de imagen y menú contextual moderno de Windows 11.
+- Traducción completa al inglés.
+
+---
+
 ## [2.6.5] — 2026-11-18
 
 ### Corregido
@@ -275,6 +296,7 @@ Todos los cambios relevantes del proyecto. Formato basado en
 - Conservación de transparencia, perfil ICC y orientación EXIF.
 - Modo consola básico.
 
+[2.7.0]: #270--2026-11-18
 [2.6.5]: #265--2026-11-18
 [2.6.4]: #264--2026-11-18
 [2.6.3]: #263--2026-11-18

@@ -10,7 +10,7 @@
 </p>
 
 <p align="center">
-  <img alt="Versión" src="https://img.shields.io/badge/version-2.6.5-1a73e8">
+  <img alt="Versión" src="https://img.shields.io/badge/version-2.7.0-1a73e8">
   <img alt="Windows" src="https://img.shields.io/badge/Windows-10%20%7C%2011-0078D6">
   <img alt="Python" src="https://img.shields.io/badge/Python-3.12-3776AB">
   <img alt="Pillow" src="https://img.shields.io/badge/Pillow-13-11557C">
@@ -514,7 +514,7 @@ nombre del ZIP. Para volver a la configuración de fábrica, cierra el programa 
 | Orientación EXIF | Se aplica; las fotos verticales no salen giradas. |
 | Transparencia | Se conserva (PNG, GIF, WebP, AVIF), salvo que se aplique «aplanar». |
 | Perfil ICC | Se mantiene si la imagen lo lleva. |
-| GIF animados | Se convierte el **primer fotograma**; el registro lo avisa. |
+| GIF animados | Se convierten a **WebP animado**; AVIF usa el primer fotograma. |
 | Metadatos EXIF/GPS | No se copian (archivos más ligeros y sin datos de ubicación). |
 | Archivos originales | Nunca se modifican ni se borran. |
 
@@ -522,7 +522,7 @@ nombre del ZIP. Para volver a la configuración de fábrica, cierra el programa 
 
 ## Limitaciones conocidas
 
-- **GIF animados**: se usa el primer fotograma; no se genera WebP/AVIF animado.
+- **GIF animados**: se genera WebP animado; en AVIF se usa el primer fotograma.
 - **JPEG en CMYK**: se convierte a RGB de forma estándar; en imágenes de imprenta con perfil CMYK los
   colores pueden variar ligeramente.
 - **RAR/7Z**: requieren 7-Zip o WinRAR instalados.
@@ -608,6 +608,7 @@ ConversorWebP/
 
 Consulta [CHANGELOG.md](CHANGELOG.md). Resumen:
 
+- **2.7.0** — cola persistente, vista previa interactiva, WebP animado, metadatos, CLI ampliado y mejoras de robustez.
 - **2.6.5** — correcciones de robustez en Python y C++, CSV, cierre seguro, vista previa y CLI.
 - **2.6.4** — corrige el solape del selector «Lado máximo» en la edición C++.
 - **2.6.3** — modo oscuro conmutable en las dos ediciones, con icono sol/luna y preferencia guardada.

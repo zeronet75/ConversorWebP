@@ -77,7 +77,7 @@ except Exception:  # pragma: no cover - la app sigue funcionando sin arrastrar
 
 
 APP_NAME = "Conversor WebP"
-APP_VERSION = "2.6.5"
+APP_VERSION = "2.7.0"
 
 try:  # soporte HEIC/HEIF (iPhone) si pillow-heif esta instalado
     import pillow_heif
@@ -2073,6 +2073,7 @@ class App(BaseTk):  # type: ignore[misc,valid-type]
         self._fallidos_ultimos: list[Path] = []
         self._sources_iniciales = bool(sources_iniciales)
         self._job_actual: Job | None = None
+        self._inicio_trabajo = 0.0
 
         self._dpi_setup()
         self._build_style()
@@ -4555,6 +4556,16 @@ class App(BaseTk):  # type: ignore[misc,valid-type]
                 messagebox.showerror(APP_NAME, f"Color de fondo no valido:\n{e}")
                 return
 
+        try:
+            libre = shutil.disk_usage(salida).free
+            if libre < 100 * 1024 * 1024 and not messagebox.askyesno(
+                APP_NAME,
+                "Quedan menos de 100 MB libres en la carpeta de salida.\n\n¿Continuar?",
+            ):
+                return
+        except OSError:
+            pass
+
         job = Job(
             sources=list(self.sources),
             output_dir=salida,
@@ -4604,6 +4615,7 @@ class App(BaseTk):  # type: ignore[misc,valid-type]
         self.lbl_status.configure(text="Preparando...")
         self.cancel_event.clear()
         self.pause_event.clear()
+        self._inicio_trabajo = time.time()
         self.btn_pause.configure(text="Pausar", state="normal")
 
         self.worker = threading.Thread(
@@ -4716,7 +4728,17 @@ class App(BaseTk):  # type: ignore[misc,valid-type]
                     hechas, total = dato
                     self.progress.configure(value=hechas, maximum=max(1, total))
                     pct = (hechas / total * 100) if total else 0
-                    self.lbl_status.configure(text=f"Convirtiendo {hechas}/{total}  ({pct:.0f}%)")
+                    restante = ""
+                    if hechas and self._inicio_trabajo:
+                        transcurrido = max(0.0, time.time() - self._inicio_trabajo)
+                        segundos = transcurrido / hechas * max(0, total - hechas)
+                        if segundos >= 60:
+                            restante = f"  ·  quedan ~{segundos / 60:.0f} min"
+                        elif segundos >= 1:
+                            restante = f"  ·  quedan ~{segundos:.0f} s"
+                    self.lbl_status.configure(
+                        text=f"Convirtiendo {hechas}/{total}  ({pct:.0f}%){restante}"
+                    )
                 elif tipo == "status":
                     self.lbl_status.configure(text=dato)
                 elif tipo == "log":
@@ -5367,6 +5389,27 @@ def write_diag(destino: str) -> int:
     return 0
 
 
+_MUTEX_GUI = None
+
+
+def _instancia_unica() -> bool:
+    """Evita dos instancias de la GUI escribiendo en la misma salida."""
+    global _MUTEX_GUI
+    if os.name != "nt":
+        return True
+    kernel32 = ctypes.windll.kernel32
+    _MUTEX_GUI = kernel32.CreateMutexW(None, False, "Local\\ConversorWebP_GUI")
+    if kernel32.GetLastError() == 183:  # ERROR_ALREADY_EXISTS
+        ctypes.windll.user32.MessageBoxW(
+            0,
+            "Ya hay una instancia de Conversor WebP abierta.",
+            APP_NAME,
+            0x00000040,  # MB_ICONINFORMATION
+        )
+        return False
+    return True
+
+
 def main() -> None:
     args = sys.argv[1:]
     if len(args) >= 2 and args[0] == "--diag":
@@ -5375,9 +5418,13 @@ def main() -> None:
         rutas = [Path(a) for a in args]
         if all(r.exists() for r in rutas):
             # Venimos de "Enviar a" / "Abrir con": abrimos la GUI ya cargada
+            if not _instancia_unica():
+                return
             App(sources_iniciales=rutas).mainloop()
             return
         sys.exit(run_cli(args))
+    if not _instancia_unica():
+        return
     App().mainloop()
 
 
