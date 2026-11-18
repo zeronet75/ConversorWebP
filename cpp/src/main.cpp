@@ -21,6 +21,8 @@
 #include <uxtheme.h>
 #include <vssym32.h>
 #include <dwmapi.h>
+#include <wintrust.h>
+#include <softpub.h>
 #include <wrl/client.h>
 #include <webp/encode.h>
 #include <webp/decode.h>
@@ -61,6 +63,7 @@
 #pragma comment(lib, "advapi32.lib")
 #pragma comment(lib, "uxtheme.lib")
 #pragma comment(lib, "dwmapi.lib")
+#pragma comment(lib, "wintrust.lib")
 #pragma comment(lib, "propsys.lib")
 #pragma comment(lib, "bcrypt.lib")
 #pragma comment(lib, "comdlg32.lib")
@@ -2336,6 +2339,26 @@ static bool sha256_archivo(const fs::path& ruta, std::wstring& hex, std::wstring
         hex += par;
     }
     return true;
+}
+
+static int verificar_firma_authenticode(const std::wstring& ruta) {
+    WINTRUST_FILE_INFO archivo{};
+    archivo.cbStruct = sizeof(archivo);
+    archivo.pcwszFilePath = ruta.c_str();
+    WINTRUST_DATA datos{};
+    datos.cbStruct = sizeof(datos);
+    datos.dwUIChoice = WTD_UI_NONE;
+    datos.fdwRevocationChecks = WTD_REVOKE_NONE;
+    datos.dwUnionChoice = WTD_CHOICE_FILE;
+    datos.pFile = &archivo;
+    datos.dwStateAction = WTD_STATEACTION_VERIFY;
+    GUID politica = WINTRUST_ACTION_GENERIC_VERIFY_V2;
+    LONG rc = WinVerifyTrust(nullptr, &politica, &datos);
+    datos.dwStateAction = WTD_STATEACTION_CLOSE;
+    WinVerifyTrust(nullptr, &politica, &datos);
+    if (rc == ERROR_SUCCESS) return 1;       // firmada y valida
+    if (rc == TRUST_E_NOSIGNATURE) return 0; // sin firmar
+    return -1;                                // firma invalida o manipulada
 }
 
 static std::wstring ps_cadena(const std::wstring& s) {
@@ -6664,7 +6687,14 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
                         }
                     } else if (e.tipo == Evento::DESCARGA_LISTA) {
                         std::wstring error;
-                        if (lanzar_actualizador(e.extra, e.modo, error)) {
+                        int firma = verificar_firma_authenticode(e.extra);
+                        bool lanzado = false;
+                        if (firma < 0) {
+                            error = L"La firma digital del archivo no es valida.";
+                        } else {
+                            lanzado = lanzar_actualizador(e.extra, e.modo, error);
+                        }
+                        if (lanzado) {
                             SetWindowTextW(g_status, L"Reiniciando para actualizar...");
                             PostMessageW(hwnd, WM_CLOSE, 0, 0);
                         } else {
