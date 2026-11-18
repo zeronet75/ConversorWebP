@@ -274,6 +274,9 @@ def nombre_seguro(nombre: str, defecto: str) -> tuple[str, bool]:
         limpio = defecto
     if limpio.split(".")[0].upper() in _RESERVADOS:
         limpio = "_" + limpio
+    if len(limpio) > 200:
+        sufijo = Path(limpio).suffix[:20]
+        limpio = limpio[: 200 - len(sufijo)] + sufijo
     return limpio, limpio != original
 
 
@@ -332,7 +335,11 @@ def aplicar_patron(patron: str, src: Path, rel: Path, job: Job, ext: str) -> Pat
     texto = patron
     if "{hash}" in texto:
         try:
-            tokens["hash"] = hashlib.sha1(src.read_bytes()).hexdigest()[:10]
+            h = hashlib.sha1()
+            with open(src, "rb") as fh:
+                for trozo in iter(lambda: fh.read(1024 * 1024), b""):
+                    h.update(trozo)
+            tokens["hash"] = h.hexdigest()[:10]
         except Exception:
             tokens["hash"] = ""
     for clave, valor in tokens.items():
@@ -354,6 +361,22 @@ def ruta_manual() -> Path | None:
             candidatos.append(Path(base) / "MANUAL_DE_USO.html")
     else:
         candidatos.append(Path(__file__).resolve().parent / "MANUAL_DE_USO.html")
+    for c in candidatos:
+        if c.is_file():
+            return c
+    return None
+
+
+def ruta_icono(nombre: str) -> Path | None:
+    """Localiza un icono junto al ejecutable o dentro del paquete."""
+    candidatos: list[Path] = []
+    if getattr(sys, "frozen", False):
+        candidatos.append(Path(sys.executable).parent / nombre)
+        base = getattr(sys, "_MEIPASS", None)
+        if base:
+            candidatos.append(Path(base) / nombre)
+    else:
+        candidatos.append(Path(__file__).resolve().parent / nombre)
     for c in candidatos:
         if c.is_file():
             return c
@@ -428,6 +451,7 @@ class EstadoGPU:
     memoria: str = ""
     activa: bool = False
     intentado: bool = False
+    hardware_listo: bool = False
     motivo: str = ""
     torch: str = ""
     torchvision: str = ""
@@ -498,8 +522,9 @@ def _leer_nvidia_smi() -> None:
 
 
 def detectar_hardware_gpu(refrescar: bool = False) -> EstadoGPU:
-    if _GPU.hardware and not refrescar:
+    if _GPU.hardware_listo and not refrescar:
         return _GPU
+    _GPU.hardware_listo = True
     _GPU.hardware = _leer_gpus_registro()
     _leer_nvidia_smi()
     return _GPU
@@ -805,7 +830,16 @@ def _codificar(
         return aviso, len(datos)
 
     dst.parent.mkdir(parents=True, exist_ok=True)
-    dst.write_bytes(datos)
+    temporal = dst.with_name(dst.name + ".tmp")
+    try:
+        temporal.write_bytes(datos)
+        os.replace(temporal, dst)
+    except Exception:
+        try:
+            temporal.unlink(missing_ok=True)
+        except OSError:
+            pass
+        raise
     return aviso, len(datos)
 
 
@@ -925,6 +959,20 @@ def run_job(job: Job, emit, cancel_event: threading.Event) -> None:
         if not job.reencode_webp:
             entradas = [e for e in entradas if e[0].suffix.lower() != ext]
 
+        # Quita duplicados aunque se hayan anadido carpeta y archivo a la vez
+        vistas: set[str] = set()
+        unicas: list[tuple[Path, Path]] = []
+        for src, rel in entradas:
+            try:
+                clave_src = str(src.resolve()).lower()
+            except OSError:
+                clave_src = str(src).lower()
+            if clave_src in vistas:
+                continue
+            vistas.add(clave_src)
+            unicas.append((src, rel))
+        entradas = unicas
+
         total = len(entradas)
         emit("plan", total)
         if total == 0:
@@ -942,13 +990,22 @@ def run_job(job: Job, emit, cancel_event: threading.Event) -> None:
             dst = job.output_dir / rel_salida
             clave = str(dst).lower()
             if clave in usados:
-                dst = dst.with_name(f"{dst.stem}_{src.suffix.lstrip('.').lower()}{ext}")
+                base = dst.with_name(f"{dst.stem}_{src.suffix.lstrip('.').lower()}{ext}")
+                dst = base
                 clave = str(dst).lower()
+                intento = 1
+                while clave in usados:
+                    intento += 1
+                    dst = base.with_name(f"{base.stem}_{intento}{ext}")
+                    clave = str(dst).lower()
             usados.add(clave)
 
             if not job.dry_run and dst.exists() and not job.overwrite:
                 res.skipped += 1
-                nombre = dst.relative_to(job.output_dir).as_posix()
+                try:
+                    nombre = dst.relative_to(job.output_dir).as_posix()
+                except ValueError:
+                    nombre = dst.name
                 filas.append((nombre, src.name, "", "", "", "omitida", "ya existia"))
                 emit("log", ("muted", f"OMITIDA  {nombre}  (ya existe)"))
                 emit(
@@ -1007,7 +1064,10 @@ def run_job(job: Job, emit, cancel_event: threading.Event) -> None:
             res.converted += 1
             res.bytes_in += tam_in
             res.bytes_out += tam_out
-            nombre = dst.relative_to(job.output_dir).as_posix()
+            try:
+                nombre = dst.relative_to(job.output_dir).as_posix()
+            except ValueError:
+                nombre = dst.name
             ahorro = (1 - tam_out / tam_in) * 100 if tam_in else 0
             estado = "analizada" if job.dry_run else "convertida"
             filas.append(
@@ -1105,11 +1165,12 @@ def run_job(job: Job, emit, cancel_event: threading.Event) -> None:
             if not nombre.lower().endswith(".zip"):
                 nombre += ".zip"
             ruta_zip = job.output_dir / nombre
-            with zipfile.ZipFile(
-                ruta_zip, "w", compression=zipfile.ZIP_DEFLATED, compresslevel=6
-            ) as z:
+            with zipfile.ZipFile(ruta_zip, "w", compression=zipfile.ZIP_STORED) as z:
                 for p in sorted(producidos):
-                    z.write(p, p.relative_to(job.output_dir).as_posix())
+                    try:
+                        z.write(p, p.relative_to(job.output_dir).as_posix())
+                    except Exception as e:  # noqa: BLE001
+                        emit("log", ("warn", f"No se pudo anadir al ZIP {p.name}: {e}"))
             res.zip_path = ruta_zip
             emit("log", ("info", f"ZIP creado: {ruta_zip}  ({len(producidos)} archivos)"))
 
@@ -1122,7 +1183,7 @@ def run_job(job: Job, emit, cancel_event: threading.Event) -> None:
                 escritor.writerow(
                     ["Archivo", "Origen", "KB original", "KB resultado", "Ahorro %", "Estado", "Nota"]
                 )
-                for fila in filas:
+                for fila in sorted(filas, key=lambda f: str(f[0]).lower()):
                     escritor.writerow(fila)
             res.csv_path = ruta_csv
             emit("log", ("info", f"Informe CSV: {ruta_csv}"))
@@ -1389,6 +1450,7 @@ class Vigilante(threading.Thread):
         self.emitir = emit
         self.stop_event = stop_event
         self.procesados: set[str] = set()
+        self._fallos: dict[str, int] = {}
 
     def _job_para(self, archivo: Path) -> Job:
         b = self.base
@@ -1442,6 +1504,7 @@ class Vigilante(threading.Thread):
 
                 self.emitir(f"Vigilante: convirtiendo {archivo.name} ...")
                 resultado = {}
+                correcto = False
                 try:
                     run_job(
                         self._job_para(archivo),
@@ -1454,9 +1517,19 @@ class Vigilante(threading.Thread):
                             f"Vigilante: {archivo.name} -> {res.converted} convertida(s), "
                             f"{len(res.failed)} fallo(s)"
                         )
+                        correcto = (
+                            res.converted > 0 and not res.failed and not res.cancelled
+                        )
                 except Exception as e:  # noqa: BLE001
                     self.emitir(f"Vigilante: error con {archivo.name}: {e}")
-                self.procesados.add(clave)
+                if correcto:
+                    self.procesados.add(clave)
+                    self._fallos.pop(clave, None)
+                else:
+                    intentos = self._fallos.get(clave, 0) + 1
+                    self._fallos[clave] = intentos
+                    if intentos >= 3:
+                        self.procesados.add(clave)
 
         self.emitir("Vigilante detenido.")
 
@@ -1476,13 +1549,17 @@ class ToolTip:
         widget.bind("<Enter>", self._entrar, add="+")
         widget.bind("<Leave>", self._salir, add="+")
         widget.bind("<ButtonPress>", self._salir, add="+")
-        widget.bind("<Destroy>", lambda _e: self._ocultar(), add="+")
+        widget.bind("<Destroy>", self._destruir, add="+")
 
     def _entrar(self, _evento=None) -> None:
         self._cancelar()
         self._id_after = self.widget.after(self.retardo, self._mostrar)
 
     def _salir(self, _evento=None) -> None:
+        self._cancelar()
+        self._ocultar()
+
+    def _destruir(self, _evento=None) -> None:
         self._cancelar()
         self._ocultar()
 
@@ -1497,12 +1574,20 @@ class ToolTip:
     def _mostrar(self) -> None:
         if self._ventana is not None or not self.texto:
             return
+        try:
+            if not self.widget.winfo_exists():
+                return
+        except tk.TclError:
+            return
         if ToolTip._activo is not None and ToolTip._activo is not self:
             ToolTip._activo._ocultar()
         ToolTip._activo = self
 
-        x = self.widget.winfo_rootx() + 12
-        y = self.widget.winfo_rooty() + self.widget.winfo_height() + 8
+        try:
+            x = self.widget.winfo_rootx() + 12
+            y = self.widget.winfo_rooty() + self.widget.winfo_height() + 8
+        except tk.TclError:
+            return
 
         ventana = tk.Toplevel(self.widget)
         ventana.wm_overrideredirect(True)
@@ -1559,6 +1644,7 @@ class App(BaseTk):  # type: ignore[misc,valid-type]
         self.geometry(f"{ancho}x{alto}")
         self.minsize(860, 620)
         self.configure(bg=BG)
+        self._aplicar_icono()
 
         self.sources: list[Path] = []
         self.output_dir = tk.StringVar()
@@ -1637,6 +1723,25 @@ class App(BaseTk):  # type: ignore[misc,valid-type]
             self.after(150, lambda: self._anadir(list(sources_iniciales)))
 
     # ---------------- infraestructura ---------------- #
+    def _aplicar_icono(self) -> None:
+        """Pone el icono de la app en la barra de titulo y en la barra de tareas."""
+        aplicado = False
+        ico = ruta_icono("icon.ico")
+        if ico is not None:
+            try:
+                self.iconbitmap(default=str(ico))
+                aplicado = True
+            except tk.TclError:
+                pass
+        if not aplicado:
+            png = ruta_icono("icon.png")
+            if png is not None:
+                try:
+                    self._icono_app = tk.PhotoImage(file=str(png))
+                    self.iconphoto(True, self._icono_app)
+                except tk.TclError:
+                    pass
+
     def _dpi_setup(self) -> None:
         try:
             ctypes.windll.shcore.SetProcessDpiAwareness(1)  # type: ignore[attr-defined]
@@ -1921,13 +2026,12 @@ class App(BaseTk):  # type: ignore[misc,valid-type]
             command=self._on_flatten,
         )
         self.chk_flatten.pack(side="left")
-        self.btn_color = tk.Button(
-            fila_alfa, width=3, relief="flat", bg=self.background.get(), bd=1,
-            activebackground=self.background.get(), command=self._pick_background, cursor="hand2",
+        self.btn_color = tk.Frame(
+            fila_alfa, width=26, height=18, bg=self.background.get(),
+            highlightthickness=1, highlightbackground="#8a94a3", bd=0, cursor="hand2",
         )
-        self.btn_color.pack(side="left", padx=(6, 0))
-        self.lbl_color = ttk.Label(fila_alfa, textvariable=self.background, style="MutedCard.TLabel")
-        self.lbl_color.pack(side="left", padx=(6, 0))
+        self.btn_color.pack(side="left", padx=(41, 0))
+        self.btn_color.bind("<Button-1>", lambda _e: self._pick_background())
 
         fila_dim = ttk.Frame(card_cal, style="Card.TFrame")
         fila_dim.pack(fill="x", pady=(6, 0))
@@ -2147,9 +2251,7 @@ class App(BaseTk):  # type: ignore[misc,valid-type]
             command=lambda: self._comprobar_actualizaciones(manual=True),
         )
         ayuda.add_command(label="Acerca de Conversor WebP", command=self._acerca_de)
-        barra.add_cascade(label="Ayuda", menu=ayuda)
         self.menu_hist = tk.Menu(barra, tearoff=0)
-        barra.add_cascade(label="Historial", menu=self.menu_hist)
         herr = tk.Menu(barra, tearoff=0)
         herr.add_command(
             label="Anadir a 'Enviar a' del Explorador", command=self._instalar_sendto
@@ -2173,6 +2275,8 @@ class App(BaseTk):  # type: ignore[misc,valid-type]
         herr.add_command(label="Carpeta vigilada...", command=self._dialogo_vigilante)
         herr.add_command(label="Vista previa de la primera imagen", command=self._vista_previa)
         barra.add_cascade(label="Herramientas", menu=herr)
+        barra.add_cascade(label="Historial", menu=self.menu_hist)
+        barra.add_cascade(label="Ayuda", menu=ayuda)
         self._menu_descripciones = {
             "Manual de uso": "Abre el manual completo en el navegador (F1).",
             "Buscar actualizaciones": "Comprueba si hay una versión nueva publicada en GitHub.",
@@ -2790,19 +2894,38 @@ class App(BaseTk):  # type: ignore[misc,valid-type]
     def _aplicar_ajustes(self, datos: dict) -> None:
         self._aplicando_preset = True
         try:
-            self.quality.set(int(datos.get("quality", 85)))
+            try:
+                calidad = int(datos.get("quality", 85))
+            except (TypeError, ValueError):
+                calidad = 85
+            self.quality.set(max(1, min(100, calidad)))
             self.scale_q.set(self.quality.get())
-            self.method.set(int(datos.get("method", 6)))
+            try:
+                metodo = int(datos.get("method", 6))
+            except (TypeError, ValueError):
+                metodo = 6
+            self.method.set(max(0, min(6, metodo)))
             self.lossless.set(bool(datos.get("lossless", False)))
             self.reencode_webp.set(bool(datos.get("reencode_webp", False)))
             self.flatten.set(bool(datos.get("flatten", False)))
-            self.background.set(datos.get("background", "#ffffff"))
-            self.btn_color.configure(
-                bg=self.background.get(), activebackground=self.background.get()
-            )
-            dim = int(datos.get("max_dimension", 0) or 0)
+            fondo = str(datos.get("background", "#ffffff") or "#ffffff")
+            try:
+                hex_to_rgb(fondo)
+            except ValueError:
+                fondo = "#ffffff"
+            self.background.set(fondo)
+            self.btn_color.configure(bg=fondo)
+            try:
+                dim = int(datos.get("max_dimension", 0) or 0)
+            except (TypeError, ValueError):
+                dim = 0
+            dim = max(0, min(100000, dim))
             self.max_dim.set(str(dim) if dim > 0 else "Sin cambio")
-            kb = int(datos.get("target_kb", 0) or 0)
+            try:
+                kb = int(datos.get("target_kb", 0) or 0)
+            except (TypeError, ValueError):
+                kb = 0
+            kb = max(0, min(1000000, kb))
             if kb > 0:
                 self.peso_kb.set(str(kb))
             self.peso_activo.set(kb > 0)
@@ -2922,14 +3045,15 @@ class App(BaseTk):  # type: ignore[misc,valid-type]
 
     def _on_flatten(self) -> None:
         activo = self.flatten.get()
-        self.btn_color.configure(state="normal" if activo else "disabled")
-        self.lbl_color.configure(foreground=TEXT if activo else MUTED)
+        self.btn_color.configure(cursor="hand2" if activo else "arrow")
 
     def _pick_background(self) -> None:
+        if not self.flatten.get():
+            return
         color = colorchooser.askcolor(color=self.background.get(), title="Color de fondo")
         if color and color[1]:
             self.background.set(color[1])
-            self.btn_color.configure(bg=color[1], activebackground=color[1])
+            self.btn_color.configure(bg=color[1])
 
     # ---------------- origen ---------------- #
     def _refrescar_origen(self) -> None:
@@ -3582,7 +3706,7 @@ class App(BaseTk):  # type: ignore[misc,valid-type]
             self.background.set(str(fondo))
         except ValueError:
             self.background.set("#ffffff")
-        self.btn_color.configure(bg=self.background.get(), activebackground=self.background.get())
+        self.btn_color.configure(bg=self.background.get())
 
         self.output_dir.set(str(data.get("output_dir", "") or ""))
         self.zip_name.set(str(data.get("zip_name", self.zip_name.get()) or self.zip_name.get()))

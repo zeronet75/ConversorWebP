@@ -41,7 +41,7 @@ for paquete in ("html", "http", "urllib", "email", "xml"):
 
 datos_tkdnd = collect_all("tkinterdnd2")
 datos_heif = collect_all("pillow_heif")
-datas = [("MANUAL_DE_USO.html", ".")] + datos_tkdnd[0] + datos_heif[0]
+datas = [("MANUAL_DE_USO.html", "."), ("icon.ico", "."), ("icon.png", ".")] + datos_tkdnd[0] + datos_heif[0]
 binaries = datos_tkdnd[1] + datos_heif[1]
 hiddenimports += datos_tkdnd[2] + datos_heif[2]
 
