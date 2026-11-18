@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Manual de uso · Conversor WebP 2.9.1</title>
+<title>Manual de uso · Conversor WebP 2.10.0</title>
 <style>
   :root{
     --azul:#1a73e8; --azul-osc:#1557b0; --texto:#1f2933; --gris:#5f6b7a;
@@ -67,7 +67,7 @@
 <div class="hoja">
 
 <header>
-  <h1>Conversor WebP 2.9.1</h1>
+  <h1>Conversor WebP 2.10.0</h1>
   <p class="sub">Manual de uso · Qué hace cada opción y cómo sacarle partido</p>
 </header>
 
@@ -86,6 +86,7 @@
     <li><a href="#conserva">Qué se conserva al convertir</a></li>
     <li><a href="#consola">Modo consola</a></li>
     <li><a href="#ajustes">Dónde se guardan los ajustes</a></li>
+  <li><a href="#dpi">Escala de interfaz (DPI)</a></li>
     <li><a href="#faq">Preguntas frecuentes</a></li>
     <li><a href="#problemas">Solución de problemas</a></li>
     <li><a href="#extras">Automatización, instalador y portable</a></li>
@@ -93,7 +94,7 @@
 </div>
 
 <div class="nota">
-  <strong>Novedades de la versión 2.9.1:</strong> cola persistente con pausa y reintento; vista previa con calidad de prueba y peso estimado; WebP animado; conservación opcional de fecha original; CLI con JSON, modo silencioso, trabajos en paralelo y presets; configuración atómica, espacio libre, tiempo restante e instancia única.
+  <strong>Novedades de la versión 2.10.0:</strong> DPI nítido del sistema en la edición C++: texto, controles y diálogos se dibujan a la resolución real, sin estirar la ventana. Se puede ajustar con la opción <code>dpi</code> (<code>auto</code>, <code>system</code>, <code>gdi</code> o un valor numérico). Se mantienen la cola persistente con pausa y reintento; vista previa con calidad de prueba y peso estimado; WebP animado; conservación opcional de fecha original; CLI con JSON, modo silencioso, trabajos en paralelo y presets; configuración atómica, espacio libre, tiempo restante e instancia única.
   <br><br>
   <strong>Novedades de la versión 2.6.2:</strong> actualización automática desde la aplicación: descarga el instalador o el portable según la instalación, verifica su SHA-256, lo aplica en el directorio actual y reinicia el programa; edición C++ nativa (Win32) con paridad funcional, icono de aplicación, selector de color visible, ventana maximizable, sin consola y correcciones de estabilidad; manual y «Acerca de» propios, apagado opcional al terminar, tooltips explicativos, HEIC, carpeta vigilada, patrones de nombre, solo analizar, tabla de resultados, vista previa, menú contextual, instalador y portable, presets de calidad, redimensionado, peso máximo por imagen,
   historial de trabajos, selección múltiple, atajos de teclado, conversión en paralelo, informe CSV,
@@ -434,9 +435,28 @@ ConversorWebP.exe "C:\logos\logo.png" -o "C:\logos" --lossless</code></pre>
 
 <h2 id="ajustes">12. Dónde se guardan los ajustes</h2>
 <p>La última carpeta de salida y todas las opciones (calidad, esfuerzo, casillas, nombre de ZIP…) se
-guardan en:</p>
-<pre><code>%APPDATA%\ConversorWebP\config.json</code></pre>
+guardan en <code>config.ini</code>, en la misma carpeta que <code>ConversorWebPC.exe</code>. Así la
+edición C++ funciona como portable y no depende de <code>%APPDATA%</code>.</p>
 <p>Si quieres volver a la configuración de fábrica, cierra el programa y borra ese archivo.</p>
+
+<h3 id="dpi">Escala de interfaz (DPI)</h3>
+<p>La edición C++ usa DPI nítido del sistema: no pide a Windows que estire la ventana, sino que crea
+fuentes y controles al tamaño real. En <code>config.ini</code> puedes ajustar el comportamiento con
+la clave <code>dpi</code> dentro de <code>[opciones]</code>:</p>
+<pre><code>[opciones]
+dpi=auto</code></pre>
+<ul>
+  <li><code>auto</code> (recomendado): usa el DPI del sistema y reduce la escala si la ventana no cabe
+  en el área de trabajo.</li>
+  <li><code>system</code>: usa exactamente el DPI del sistema, aunque la ventana no quepa.</li>
+  <li><code>gdi</code>: modo anterior, seguro, en el que Windows estira la interfaz. Puede verse más
+  borroso, pero es útil si algún monitor o control se comporta mal.</li>
+  <li>Un número (<code>120</code>, <code>144</code>, <code>192</code>…): fuerza esa escala. Es una
+  opción avanzada para pruebas o equipos con configuraciones especiales.</li>
+</ul>
+<p><strong>Importante:</strong> no es DPI por monitor. Si mueves la ventana a un monitor con otra
+escala, Windows puede interpolar la imagen hasta que reinicies el programa. Para volver al modo
+anterior, pon <code>dpi=gdi</code> y reinicia.</p>
 
 <h2 id="faq">13. Preguntas frecuentes</h2>
 
@@ -565,7 +585,7 @@ muestran un aviso en la barra de estado. <em>Ayuda → Buscar actualizaciones</e
 ofrece abrir la página de descarga.</p>
 
 <p class="pie">
-  Conversor WebP 2.9.1 · Programa local para Windows · Interfaz Win32, conversión con WIC + libwebp/libavif,
+  Conversor WebP 2.10.0 · Programa local para Windows · Interfaz Win32, conversión con WIC + libwebp/libavif,
   arrastre nativo y extracción con 7-Zip/WinRAR.<br>
   Este manual se abre desde el programa en <strong>Ayuda → Manual de uso</strong> y también puede abrirse
   con doble clic en cualquier navegador.

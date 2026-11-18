@@ -6,6 +6,29 @@ Todos los cambios relevantes del proyecto. Formato basado en
 
 ---
 
+## [2.10.0] — 2026-11-18
+
+### Añadido
+
+- **DPI nítido del sistema en C++:** la interfaz se dibuja a la resolución real del monitor, sin que Windows estire una imagen. Se escalan coordenadas, tamaños, fuentes, controles nativos, pestañas, sliders, checkboxes, diálogos, vista previa, ventana «Acerca de» y tooltips.
+- Opción `[opciones] dpi` en `config.ini`:
+  - `auto` (por defecto): usa el DPI del sistema y reduce la escala si la ventana no cabe en el área de trabajo.
+  - `system`: usa exactamente el DPI del sistema.
+  - `gdi`: conserva el modo anterior con `UNAWARE_GDISCALED`.
+  - Un valor numérico (`120`, `144`, `192`…) fuerza esa escala; es una opción avanzada.
+- La edición Python ya usaba DPI del sistema y fuentes escaladas; se mantiene sin cambios funcionales.
+
+### Limitaciones
+
+- **No es DPI por monitor:** al mover la ventana a un monitor con otra escala, Windows puede interpolar la imagen hasta reiniciar. El modo `permonitor` no se implementa.
+- Una escala numérica forzada puede hacer que la ventana no quepa en pantallas pequeñas.
+
+### Pendiente
+
+- Traducción completa al inglés.
+
+---
+
 ## [2.9.1] — 2026-11-18
 
 ### Añadido
@@ -343,6 +366,7 @@ Todos los cambios relevantes del proyecto. Formato basado en
 - Conservación de transparencia, perfil ICC y orientación EXIF.
 - Modo consola básico.
 
+[2.10.0]: #2100--2026-11-18
 [2.9.1]: #291--2026-11-18
 [2.9.0]: #290--2026-11-18
 [2.8.0]: #280--2026-11-18

@@ -1,9 +1,9 @@
 ; Instalador de Conversor WebP C++ (Inno Setup 6)
 ; Compilar con: ISCC.exe installer\ConversorWebPC.iss
-; Genera dist\ConversorWebPC-2.9.1-setup.exe
+; Genera dist\ConversorWebPC-2.10.0-setup.exe
 
 #define MiApp "Conversor WebP C++"
-#define MiVersion "2.9.1"
+#define MiVersion "2.10.0"
 #define MiExe "ConversorWebPC.exe"
 
 [Setup]

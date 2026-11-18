@@ -37,6 +37,7 @@
 #include <cmath>
 #include <cstdint>
 #include <cstdio>
+#include <cwctype>
 #include <deque>
 #include <filesystem>
 #include <fstream>
@@ -79,7 +80,7 @@ using Microsoft::WRL::ComPtr;
 namespace fs = std::filesystem;
 
 static const wchar_t* APP_NAME = L"Conversor WebP";
-static const wchar_t* APP_VERSION = L"2.9.1";
+static const wchar_t* APP_VERSION = L"2.10.0";
 
 // ---------------------------------------------------------------------------
 //  Utilidades generales
@@ -1742,7 +1743,7 @@ struct Options {
     bool beep = true;
     bool csv = false;
     std::wstring salida;
-    std::wstring zip_nombre = L"imagenes_2.9.1-cpp.zip";
+    std::wstring zip_nombre = L"imagenes_2.10.0-cpp.zip";
     std::wstring patron;
     std::wstring formato = L"WEBP";
     bool dry_run = false;
@@ -2050,6 +2051,20 @@ static void aplicar_modo_oscuro_nativo(HWND hwnd, bool oscuro) {
                  RDW_INVALIDATE | RDW_ALLCHILDREN | RDW_ERASE | RDW_UPDATENOW);
 }
 
+// ---------------------------------------------------------------------------
+//  Escalado de interfaz (DPI del sistema)
+// ---------------------------------------------------------------------------
+// La app es "system DPI aware": Windows no estira la ventana y nosotros
+// escalamos coordenadas, tamaños y fuentes una sola vez. El texto y los
+// controles nativos se dibujan a la resolucion real, sin interpolacion.
+static double g_dpi_escala = 1.0;
+static std::wstring g_dpi_config = L"auto";
+static std::wstring g_dpi_efectivo = L"gdi";
+
+static int dpx(int valor) {
+    return (int)lround((double)valor * g_dpi_escala);
+}
+
 static void dibujar_icono_tema(const DRAWITEMSTRUCT* di) {
     FillRect(di->hDC, &di->rcItem, g_brush_bg);
     RECT rc = di->rcItem;
@@ -2059,23 +2074,25 @@ static void dibujar_icono_tema(const DRAWITEMSTRUCT* di) {
         HBRUSH claro = CreateSolidBrush(RGB(226, 232, 240));
         HBRUSH fondo = CreateSolidBrush(g_pal.bg);
         HGDIOBJ viejo = SelectObject(di->hDC, claro);
-        Ellipse(di->hDC, cx - 9, cy - 9, cx + 9, cy + 9);
+        Ellipse(di->hDC, cx - dpx(9), cy - dpx(9), cx + dpx(9), cy + dpx(9));
         SelectObject(di->hDC, fondo);
-        Ellipse(di->hDC, cx - 2, cy - 12, cx + 15, cy + 5);
+        Ellipse(di->hDC, cx - dpx(2), cy - dpx(12), cx + dpx(15), cy + dpx(5));
         SelectObject(di->hDC, viejo);
         DeleteObject(claro);
         DeleteObject(fondo);
     } else {
         HBRUSH sol = CreateSolidBrush(RGB(246, 195, 67));
-        HPEN rayo = CreatePen(PS_SOLID, 2, RGB(246, 195, 67));
+        HPEN rayo = CreatePen(PS_SOLID, dpx(2), RGB(246, 195, 67));
         HGDIOBJ viejoB = SelectObject(di->hDC, sol);
         HGDIOBJ viejoP = SelectObject(di->hDC, rayo);
-        Ellipse(di->hDC, cx - 5, cy - 5, cx + 5, cy + 5);
+        Ellipse(di->hDC, cx - dpx(5), cy - dpx(5), cx + dpx(5), cy + dpx(5));
         const int puntos[8][4] = {
-            {cx, cy - 12, cx, cy - 8}, {cx, cy + 8, cx, cy + 12},
-            {cx - 12, cy, cx - 8, cy}, {cx + 8, cy, cx + 12, cy},
-            {cx - 9, cy - 9, cx - 6, cy - 6}, {cx + 6, cy + 6, cx + 9, cy + 9},
-            {cx + 9, cy - 9, cx + 6, cy - 6}, {cx - 6, cy + 6, cx - 9, cy + 9},
+            {cx, cy - dpx(12), cx, cy - dpx(8)}, {cx, cy + dpx(8), cx, cy + dpx(12)},
+            {cx - dpx(12), cy, cx - dpx(8), cy}, {cx + dpx(8), cy, cx + dpx(12), cy},
+            {cx - dpx(9), cy - dpx(9), cx - dpx(6), cy - dpx(6)},
+            {cx + dpx(6), cy + dpx(6), cx + dpx(9), cy + dpx(9)},
+            {cx + dpx(9), cy - dpx(9), cx + dpx(6), cy - dpx(6)},
+            {cx - dpx(6), cy + dpx(6), cx - dpx(9), cy + dpx(9)},
         };
         for (auto& p : puntos) {
             MoveToEx(di->hDC, p[0], p[1], nullptr);
@@ -2124,9 +2141,10 @@ static void dibujar_combo(const DRAWITEMSTRUCT* di) {
     DeleteObject(br);
     if (!abierto) {
         FrameRect(di->hDC, &di->rcItem, g_brush_border);
-        int cx = di->rcItem.right - 11;
+        int cx = di->rcItem.right - dpx(11);
         int cy = (di->rcItem.top + di->rcItem.bottom) / 2;
-        POINT flecha[3] = {{cx - 4, cy - 2}, {cx + 4, cy - 2}, {cx, cy + 3}};
+        POINT flecha[3] = {{cx - dpx(4), cy - dpx(2)}, {cx + dpx(4), cy - dpx(2)},
+                           {cx, cy + dpx(3)}};
         HBRUSH color = CreateSolidBrush(IsWindowEnabled(di->hwndItem) ? g_pal.muted
                                                                       : g_pal.border);
         HGDIOBJ viejo = SelectObject(di->hDC, color);
@@ -2135,8 +2153,8 @@ static void dibujar_combo(const DRAWITEMSTRUCT* di) {
         DeleteObject(color);
     }
     RECT zona = di->rcItem;
-    zona.left += 6;
-    zona.right -= abierto ? 6 : 20;
+    zona.left += dpx(6);
+    zona.right -= abierto ? dpx(6) : dpx(20);
     SetBkMode(di->hDC, TRANSPARENT);
     SetTextColor(di->hDC, IsWindowEnabled(di->hwndItem) ? g_pal.text : g_pal.muted);
     HFONT vieja = (HFONT)SelectObject(di->hDC, g_font);
@@ -2159,7 +2177,7 @@ static void dibujar_boton_tema(const DRAWITEMSTRUCT* di) {
     FillRect(di->hDC, &di->rcItem, fondo);
     DeleteObject(fondo);
     RECT r = di->rcItem;
-    InflateRect(&r, -1, -1);
+    InflateRect(&r, -dpx(1), -dpx(1));
     COLORREF relleno = (di->itemState & ODS_DISABLED)
                            ? g_pal.disabled
                            : ((di->itemState & ODS_SELECTED)
@@ -2169,7 +2187,7 @@ static void dibujar_boton_tema(const DRAWITEMSTRUCT* di) {
     HPEN pen = CreatePen(PS_SOLID, 1, g_pal.border);
     HGDIOBJ viejoB = SelectObject(di->hDC, br);
     HGDIOBJ viejoP = SelectObject(di->hDC, pen);
-    RoundRect(di->hDC, r.left, r.top, r.right, r.bottom, 8, 8);
+    RoundRect(di->hDC, r.left, r.top, r.right, r.bottom, dpx(8), dpx(8));
     SelectObject(di->hDC, viejoP);
     SelectObject(di->hDC, viejoB);
     DeleteObject(pen);
@@ -2270,6 +2288,74 @@ static std::wstring ruta_ejecutable() {
         }
         buf.resize(buf.size() * 2);
     }
+}
+
+// ---------------------------------------------------------------------------
+//  Configuracion del modo DPI
+// ---------------------------------------------------------------------------
+static std::wstring ruta_config_ini() {
+    std::wstring ruta = ruta_ejecutable();
+    fs::path p = ruta.empty() ? fs::current_path() : fs::path(ruta);
+    return (p.parent_path() / L"config.ini").wstring();
+}
+
+static void configurar_dpi() {
+    wchar_t valor[32] = L"auto";
+    GetPrivateProfileStringW(L"opciones", L"dpi", L"auto", valor, 32,
+                             ruta_config_ini().c_str());
+    g_dpi_config = valor;
+    std::wstring modo = g_dpi_config;
+    for (auto& c : modo)
+        c = (wchar_t)towlower(c);
+
+    int forzado = 0;
+    if (modo != L"auto" && modo != L"system" && modo != L"gdi") {
+        try {
+            int v = std::stoi(modo);
+            if (v >= 72 && v <= 480) forzado = v;
+        } catch (...) {
+        }
+    }
+    if (forzado == 0 && modo != L"auto" && modo != L"system" && modo != L"gdi")
+        modo = L"auto";
+
+    if (modo == L"gdi") {
+        SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_UNAWARE_GDISCALED);
+        g_dpi_escala = 1.0;
+        g_dpi_efectivo = L"gdi";
+        return;
+    }
+
+    if (!SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_SYSTEM_AWARE)) {
+        SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_UNAWARE_GDISCALED);
+        g_dpi_escala = 1.0;
+        g_dpi_efectivo = L"gdi";
+        return;
+    }
+
+    int dpi = forzado;
+    if (dpi == 0) {
+        HDC dc = GetDC(nullptr);
+        dpi = dc ? GetDeviceCaps(dc, LOGPIXELSX) : 96;
+        if (dc) ReleaseDC(nullptr, dc);
+    }
+    if (dpi < 72 || dpi > 480) dpi = 96;
+    g_dpi_escala = (double)dpi / 96.0;
+
+    // En modo auto, si la ventana minima no cabe en el area de trabajo, se
+    // reduce la escala lo justo. Asi el DPI alto nunca deja la app inaccesible.
+    if (modo == L"auto" && forzado == 0) {
+        RECT wa{};
+        if (SystemParametersInfoW(SPI_GETWORKAREA, 0, &wa, 0)) {
+            double max_alto = (double)(wa.bottom - wa.top - 48) / 900.0;
+            double max_ancho = (double)(wa.right - wa.left - 32) / 1016.0;
+            double maximo = std::min(max_alto, max_ancho);
+            if (maximo < 1.0) maximo = 1.0;
+            if (g_dpi_escala > maximo) g_dpi_escala = maximo;
+        }
+    }
+
+    g_dpi_efectivo = forzado ? std::to_wstring(dpi) : L"system";
 }
 
 static bool escribir_registro(HKEY raiz, const std::wstring& subclave,
@@ -3045,6 +3131,7 @@ static void guardar_config() {
     WritePrivateProfileStringW(L"opciones", L"apagar", g_opt.apagar ? L"1" : L"0", destino.c_str());
     WritePrivateProfileStringW(L"opciones", L"fecha", g_opt.preservar_fecha ? L"1" : L"0", destino.c_str());
     WritePrivateProfileStringW(L"opciones", L"tema", g_oscuro ? L"1" : L"0", destino.c_str());
+    WritePrivateProfileStringW(L"opciones", L"dpi", g_dpi_config.c_str(), destino.c_str());
     WritePrivateProfileStringW(L"opciones", L"salida", g_opt.salida.c_str(), destino.c_str());
     WritePrivateProfileStringW(L"opciones", L"zipnombre", g_opt.zip_nombre.c_str(), destino.c_str());
     WritePrivateProfileStringW(L"opciones", L"patron", g_opt.patron.c_str(), destino.c_str());
@@ -3096,7 +3183,8 @@ static void guardar_config() {
 // ---------------------------------------------------------------------------
 static HWND crear(const wchar_t* clase, const wchar_t* texto, DWORD estilo, int x, int y,
                   int w, int h, int id, DWORD ex = 0) {
-    HWND hwnd = CreateWindowExW(ex, clase, texto, WS_CHILD | WS_VISIBLE | estilo, x, y, w, h,
+    HWND hwnd = CreateWindowExW(ex, clase, texto, WS_CHILD | WS_VISIBLE | estilo,
+                                dpx(x), dpx(y), dpx(w), dpx(h),
                                 g_hwnd, (HMENU)(INT_PTR)id, GetModuleHandleW(nullptr), nullptr);
     if (hwnd && g_font) SendMessageW(hwnd, WM_SETFONT, (WPARAM)g_font, TRUE);
     return hwnd;
@@ -3124,8 +3212,8 @@ static HWND combo(int x, int y, int w, int h, int id) {
                              WS_VSCROLL | WS_TABSTOP,
                          x, y, w, h, id);
     if (control) {
-        SendMessageW(control, CB_SETITEMHEIGHT, (WPARAM)-1, 22);
-        SendMessageW(control, CB_SETITEMHEIGHT, 0, 22);
+        SendMessageW(control, CB_SETITEMHEIGHT, (WPARAM)-1, dpx(22));
+        SendMessageW(control, CB_SETITEMHEIGHT, 0, dpx(22));
     }
     return control;
 }
@@ -4264,18 +4352,23 @@ static HWND g_input_edit = nullptr;
 static LRESULT CALLBACK InputWndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
     switch (msg) {
         case WM_CREATE: {
-            CreateWindowExW(0, L"STATIC", L"Nombre:", WS_CHILD | WS_VISIBLE, 16, 18, 340, 18,
-                            hwnd, nullptr, nullptr, nullptr);
+            HWND etiqueta_nombre = CreateWindowExW(0, L"STATIC", L"Nombre:", WS_CHILD | WS_VISIBLE,
+                                                   dpx(16), dpx(18), dpx(340), dpx(18),
+                                                   hwnd, nullptr, nullptr, nullptr);
+            SendMessageW(etiqueta_nombre, WM_SETFONT, (WPARAM)g_font, TRUE);
             g_input_edit = CreateWindowExW(WS_EX_CLIENTEDGE, L"EDIT", g_input_texto.c_str(),
                                            WS_CHILD | WS_VISIBLE | WS_TABSTOP | ES_AUTOHSCROLL,
-                                           16, 42, 340, 24, hwnd, (HMENU)100, nullptr, nullptr);
+                                           dpx(16), dpx(42), dpx(340), dpx(24), hwnd,
+                                           (HMENU)100, nullptr, nullptr);
             SendMessageW(g_input_edit, WM_SETFONT, (WPARAM)g_font, TRUE);
             HWND ok = CreateWindowExW(0, L"BUTTON", L"Aceptar",
                                       WS_CHILD | WS_VISIBLE | WS_TABSTOP | BS_OWNERDRAW,
-                                      190, 78, 80, 26, hwnd, (HMENU)IDOK, nullptr, nullptr);
+                                      dpx(190), dpx(78), dpx(80), dpx(26), hwnd,
+                                      (HMENU)IDOK, nullptr, nullptr);
             HWND cancel = CreateWindowExW(0, L"BUTTON", L"Cancelar",
                                           WS_CHILD | WS_VISIBLE | WS_TABSTOP | BS_OWNERDRAW,
-                                          276, 78, 80, 26, hwnd, (HMENU)IDCANCEL, nullptr, nullptr);
+                                          dpx(276), dpx(78), dpx(80), dpx(26), hwnd,
+                                          (HMENU)IDCANCEL, nullptr, nullptr);
             SendMessageW(ok, WM_SETFONT, (WPARAM)g_font, TRUE);
             SendMessageW(cancel, WM_SETFONT, (WPARAM)g_font, TRUE);
             SetFocus(g_input_edit);
@@ -4337,7 +4430,7 @@ static std::wstring pedir_texto(HWND parent, const wchar_t* titulo, const std::w
     g_input_ok = false;
     RECT pr{};
     GetWindowRect(parent, &pr);
-    int ancho = 380, alto = 150;
+    int ancho = dpx(380), alto = dpx(150);
     int x = pr.left + ((pr.right - pr.left) - ancho) / 2;
     int y = pr.top + ((pr.bottom - pr.top) - alto) / 2;
     HWND w = CreateWindowExW(WS_EX_DLGMODALFRAME, L"ConversorInputWnd", titulo,
@@ -4525,17 +4618,22 @@ static LRESULT CALLBACK ApagadoWndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp
         case WM_CREATE: {
             g_apagado_hwnd = hwnd;
             g_apagado_restante = 30;
-            CreateWindowExW(0, L"STATIC", L"Conversion completada", WS_CHILD | WS_VISIBLE,
-                            18, 14, 320, 24, hwnd, nullptr, nullptr, nullptr);
+            HWND titulo = CreateWindowExW(0, L"STATIC", L"Conversion completada",
+                                          WS_CHILD | WS_VISIBLE, dpx(18), dpx(14),
+                                          dpx(320), dpx(24), hwnd, nullptr, nullptr, nullptr);
+            SendMessageW(titulo, WM_SETFONT, (WPARAM)g_font_bold, TRUE);
             g_apagado_label = CreateWindowExW(0, L"STATIC", L"", WS_CHILD | WS_VISIBLE,
-                                              18, 44, 320, 24, hwnd, (HMENU)200, nullptr, nullptr);
+                                              dpx(18), dpx(44), dpx(320), dpx(24), hwnd,
+                                              (HMENU)200, nullptr, nullptr);
             SendMessageW(g_apagado_label, WM_SETFONT, (WPARAM)g_font_bold, TRUE);
             HWND cancel = CreateWindowExW(0, L"BUTTON", L"Cancelar apagado",
                                           WS_CHILD | WS_VISIBLE | WS_TABSTOP | BS_OWNERDRAW,
-                                          60, 80, 130, 28, hwnd, (HMENU)IDCANCEL, nullptr, nullptr);
+                                          dpx(60), dpx(80), dpx(130), dpx(28), hwnd,
+                                          (HMENU)IDCANCEL, nullptr, nullptr);
             HWND ahora = CreateWindowExW(0, L"BUTTON", L"Apagar ahora",
                                          WS_CHILD | WS_VISIBLE | WS_TABSTOP | BS_OWNERDRAW,
-                                         198, 80, 110, 28, hwnd, (HMENU)IDOK, nullptr, nullptr);
+                                         dpx(198), dpx(80), dpx(110), dpx(28), hwnd,
+                                         (HMENU)IDOK, nullptr, nullptr);
             SendMessageW(cancel, WM_SETFONT, (WPARAM)g_font, TRUE);
             SendMessageW(ahora, WM_SETFONT, (WPARAM)g_font, TRUE);
             SetWindowTextW(g_apagado_label, L"El equipo se apagara en 30 s");
@@ -4608,7 +4706,7 @@ static void mostrar_apagado() {
     if (g_apagado_hwnd) return;
     RECT pr{};
     GetWindowRect(g_hwnd, &pr);
-    int ancho = 380, alto = 160;
+    int ancho = dpx(380), alto = dpx(160);
     int x = pr.left + ((pr.right - pr.left) - ancho) / 2;
     int y = pr.top + ((pr.bottom - pr.top) - alto) / 2;
     g_apagado_hwnd = CreateWindowExW(WS_EX_TOPMOST, L"ConversorApagadoWnd",
@@ -4736,16 +4834,22 @@ static LRESULT CALLBACK PreviewWndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp
     switch (msg) {
         case WM_CREATE:
             g_prev_hwnd = hwnd;
-            CreateWindowExW(0, L"STATIC", L"Calidad de prueba", WS_CHILD | WS_VISIBLE,
-                            20, 631, 100, 20, hwnd, nullptr, nullptr, nullptr);
+            {
+                HWND lbl = CreateWindowExW(0, L"STATIC", L"Calidad de prueba",
+                                           WS_CHILD | WS_VISIBLE, dpx(20), dpx(631),
+                                           dpx(100), dpx(20), hwnd, nullptr, nullptr, nullptr);
+                SendMessageW(lbl, WM_SETFONT, (WPARAM)g_font, TRUE);
+            }
             g_prev_quality = CreateWindowExW(
                 0, TRACKBAR_CLASSW, L"", WS_CHILD | WS_VISIBLE | TBS_HORZ | TBS_AUTOTICKS,
-                120, 626, 360, 32, hwnd, (HMENU)ID_PREV_CALIDAD, nullptr, nullptr);
+                dpx(120), dpx(626), dpx(360), dpx(32), hwnd, (HMENU)ID_PREV_CALIDAD,
+                nullptr, nullptr);
             SendMessageW(g_prev_quality, TBM_SETRANGE, TRUE, MAKELPARAM(1, 100));
             SendMessageW(g_prev_quality, TBM_SETPOS, TRUE, g_prev_calidad);
             g_prev_quality_lbl = CreateWindowExW(
-                0, L"STATIC", L"", WS_CHILD | WS_VISIBLE, 492, 631, 80, 20, hwnd,
-                nullptr, nullptr, nullptr);
+                0, L"STATIC", L"", WS_CHILD | WS_VISIBLE, dpx(492), dpx(631),
+                dpx(80), dpx(20), hwnd, nullptr, nullptr, nullptr);
+            SendMessageW(g_prev_quality_lbl, WM_SETFONT, (WPARAM)g_font_bold, TRUE);
             {
                 wchar_t q[8];
                 swprintf_s(q, L"%d", g_prev_calidad);
@@ -4784,13 +4888,13 @@ static LRESULT CALLBACK PreviewWndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp
             SetTextColor(dc, g_pal.text);
             SelectObject(dc, g_font_bold);
 
-            RECT r1{20, 12, 470, 30};
-            RECT r2{490, 12, 940, 30};
+            RECT r1{dpx(20), dpx(12), dpx(470), dpx(30)};
+            RECT r2{dpx(490), dpx(12), dpx(940), dpx(30)};
             DrawTextW(dc, L"Original", -1, &r1, DT_LEFT | DT_SINGLELINE);
             DrawTextW(dc, g_prev_etiqueta_der.c_str(), -1, &r2, DT_LEFT | DT_SINGLELINE);
 
-            RECT p1{20, 36, 470, 540};
-            RECT p2{490, 36, 940, 540};
+            RECT p1{dpx(20), dpx(36), dpx(470), dpx(540)};
+            RECT p2{dpx(490), dpx(36), dpx(940), dpx(540)};
             HBRUSH blanco = CreateSolidBrush(g_pal.input);
             FillRect(dc, &p1, blanco);
             FillRect(dc, &p2, blanco);
@@ -4801,8 +4905,8 @@ static LRESULT CALLBACK PreviewWndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp
             dibujar_bitmap_escalado(dc, g_prev_webp, p2);
 
             SelectObject(dc, g_font);
-            RECT i1{20, 550, 470, 620};
-            RECT i2{490, 550, 940, 620};
+            RECT i1{dpx(20), dpx(550), dpx(470), dpx(620)};
+            RECT i2{dpx(490), dpx(550), dpx(940), dpx(620)};
             DrawTextW(dc, g_prev_info_orig.c_str(), -1, &i1,
                       DT_LEFT | DT_WORDBREAK);
             DrawTextW(dc, g_prev_info_webp.c_str(), -1, &i2,
@@ -4949,7 +5053,7 @@ static void abrir_vista_previa() {
     if (g_prev_hwnd) DestroyWindow(g_prev_hwnd);
     RECT pr{};
     GetWindowRect(g_hwnd, &pr);
-    int ancho = 980, alto = 720;
+    int ancho = dpx(980), alto = dpx(720);
     int x = pr.left + ((pr.right - pr.left) - ancho) / 2;
     int y = pr.top + ((pr.bottom - pr.top) - alto) / 2;
     g_prev_hwnd = CreateWindowExW(WS_EX_TOOLWINDOW, L"ConversorPreviewWnd",
@@ -5038,7 +5142,7 @@ static LRESULT CALLBACK TipWndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             SetBkMode(dc, TRANSPARENT);
             SetTextColor(dc, RGB(248, 250, 252));
             HFONT vieja = (HFONT)SelectObject(dc, g_font_tip);
-            RECT texto{9, 6, rc.right - 9, rc.bottom - 6};
+            RECT texto{dpx(9), dpx(6), rc.right - dpx(9), rc.bottom - dpx(6)};
             DrawTextW(dc, g_tip_texto_actual.c_str(), -1, &texto,
                       DT_LEFT | DT_WORDBREAK | DT_NOPREFIX);
             SelectObject(dc, vieja);
@@ -5066,19 +5170,19 @@ static void mostrar_tooltip_rect(RECT rc, const std::wstring& texto) {
     g_tip_texto_actual = texto;
     HDC dc = GetDC(g_tip_hwnd);
     HFONT vieja = (HFONT)SelectObject(dc, g_font_tip);
-    RECT medida{0, 0, 360, 0};
+    RECT medida{0, 0, dpx(360), 0};
     DrawTextW(dc, texto.c_str(), -1, &medida,
               DT_CALCRECT | DT_WORDBREAK | DT_NOPREFIX);
     SelectObject(dc, vieja);
     ReleaseDC(g_tip_hwnd, dc);
-    int ancho = std::min(360, (int)medida.right) + 18;
-    int alto = (int)medida.bottom + 12;
-    int x = rc.left + 8;
-    int y = rc.bottom + 10;
+    int ancho = std::min(dpx(360), (int)medida.right) + dpx(18);
+    int alto = (int)medida.bottom + dpx(12);
+    int x = rc.left + dpx(8);
+    int y = rc.bottom + dpx(10);
     int sw = GetSystemMetrics(SM_CXSCREEN);
     int sh = GetSystemMetrics(SM_CYSCREEN);
-    if (x + ancho > sw - 12) x = std::max(6, sw - ancho - 12);
-    if (y + alto > sh - 12) y = std::max(6, (int)rc.top - alto - 8);
+    if (x + ancho > sw - dpx(12)) x = std::max(dpx(6), sw - ancho - dpx(12));
+    if (y + alto > sh - dpx(12)) y = std::max(dpx(6), (int)rc.top - alto - dpx(8));
     SetWindowPos(g_tip_hwnd, HWND_TOPMOST, x, y, ancho, alto,
                  SWP_NOACTIVATE | SWP_SHOWWINDOW);
     InvalidateRect(g_tip_hwnd, nullptr, TRUE);
@@ -5198,14 +5302,14 @@ static void crear_tooltips() {
 static void dibujar_cards(HDC dc, RECT rc) {
     FillRect(dc, &rc, g_brush_bg);
     if (g_oscuro) {
-        RECT barra{0, 0, rc.right, 18};
+        RECT barra{0, 0, rc.right, dpx(18)};
         FillRect(dc, &barra, g_brush_bg);
         SetBkMode(dc, TRANSPARENT);
         SetTextColor(dc, g_pal.text);
         HFONT vieja = (HFONT)SelectObject(dc, g_font);
-        RECT r1{16, 0, 110, 18};
-        RECT r2{118, 0, 180, 18};
-        RECT r3{188, 0, 240, 18};
+        RECT r1{dpx(16), 0, dpx(110), dpx(18)};
+        RECT r2{dpx(118), 0, dpx(180), dpx(18)};
+        RECT r3{dpx(188), 0, dpx(240), dpx(18)};
         RECT zonas[3] = {r1, r2, r3};
         if (g_menu_hot >= 0 && g_menu_hot < 3) {
             HBRUSH resalte = CreateSolidBrush(g_pal.hover);
@@ -5218,8 +5322,8 @@ static void dibujar_cards(HDC dc, RECT rc) {
         SelectObject(dc, vieja);
 
         // Pestanas propias (la nativa no admite modo oscuro fiable)
-        RECT rtab1{16, 728, 122, 751};
-        RECT rtab2{126, 728, 208, 751};
+        RECT rtab1{dpx(16), dpx(728), dpx(122), dpx(751)};
+        RECT rtab2{dpx(126), dpx(728), dpx(208), dpx(751)};
         RECT rtab_zonas[2] = {rtab1, rtab2};
         const wchar_t* nombres[2] = {L"Resultados", L"Registro"};
         for (int i = 0; i < 2; i++) {
@@ -5233,34 +5337,35 @@ static void dibujar_cards(HDC dc, RECT rc) {
                       DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
             SelectObject(dc, fuente);
         }
-        RECT linea{16, 750, rc.right - 16, 752};
+        RECT linea{dpx(16), dpx(750), rc.right - dpx(16), dpx(752)};
         FillRect(dc, &linea, g_brush_border);
         if (g_tab_sel >= 0 && g_tab_sel < 2) {
             RECT sub = rtab_zonas[g_tab_sel];
-            sub.left += 10;
-            sub.right -= 10;
-            sub.top = 749;
-            sub.bottom = 752;
+            sub.left += dpx(10);
+            sub.right -= dpx(10);
+            sub.top = dpx(749);
+            sub.bottom = dpx(752);
             HBRUSH acento = CreateSolidBrush(g_pal.accent);
             FillRect(dc, &sub, acento);
             DeleteObject(acento);
         }
     }
-    int leftR = 492 + (rc.right - 1000) / 2;
-    RECT cards[] = {{16, 60, rc.right - 16, 285},
-                    {16, 294, leftR, 618},
-                    {leftR + 8, 294, rc.right - 16, 618}};
+    int leftR = dpx(492) + (rc.right - dpx(1000)) / 2;
+    RECT cards[] = {{dpx(16), dpx(60), rc.right - dpx(16), dpx(285)},
+                    {dpx(16), dpx(294), leftR, dpx(618)},
+                    {leftR + dpx(8), dpx(294), rc.right - dpx(16), dpx(618)}};
     for (auto& r : cards) {
         FillRect(dc, &r, g_brush_card);
     }
     // Zona de arrastre
-    RECT zona_drop{28, 98, rc.right - 28, 161};
+    RECT zona_drop{dpx(28), dpx(98), rc.right - dpx(28), dpx(161)};
     HBRUSH relleno_drop =
         CreateSolidBrush(g_drop_hot ? g_pal.drop_hot : g_pal.drop);
     FillRect(dc, &zona_drop, relleno_drop);
     DeleteObject(relleno_drop);
     LOGBRUSH lb{BS_SOLID, g_drop_hot ? g_pal.accent : g_pal.border, 0};
-    HPEN pen = ExtCreatePen(PS_GEOMETRIC | PS_DASH, g_drop_hot ? 2 : 1, &lb, 0, nullptr);
+    HPEN pen = ExtCreatePen(PS_GEOMETRIC | PS_DASH, g_drop_hot ? dpx(2) : dpx(1),
+                            &lb, 0, nullptr);
     HGDIOBJ old = SelectObject(dc, pen);
     HGDIOBJ oldBrush = SelectObject(dc, GetStockObject(NULL_BRUSH));
     Rectangle(dc, zona_drop.left, zona_drop.top, zona_drop.right, zona_drop.bottom);
@@ -5269,8 +5374,8 @@ static void dibujar_cards(HDC dc, RECT rc) {
     DeleteObject(pen);
     SetBkMode(dc, TRANSPARENT);
     SetTextColor(dc, g_drop_hot ? g_pal.text : g_pal.muted);
-    RECT r1{zona_drop.left, 108, zona_drop.right, 132};
-    RECT r2{zona_drop.left, 132, zona_drop.right, 152};
+    RECT r1{zona_drop.left, dpx(108), zona_drop.right, dpx(132)};
+    RECT r2{zona_drop.left, dpx(132), zona_drop.right, dpx(152)};
     HFONT fuente_vieja =
         (HFONT)SelectObject(dc, g_drop_hot ? g_font_drop_hot : g_font_drop);
     DrawTextW(dc, L"Arrastra aqui tus imagenes, carpetas o comprimidos .zip / .rar", -1,
@@ -5294,16 +5399,16 @@ static LRESULT CALLBACK SliderWndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
             HBRUSH fondo = CreateSolidBrush(g_pal.card);
             FillRect(dc, &rc, fondo);
             DeleteObject(fondo);
-            int x0 = 8, x1 = rc.right - 8;
+            int x0 = dpx(8), x1 = rc.right - dpx(8);
             int y = rc.bottom / 2;
-            RECT canal{x0, y - 2, x1, y + 3};
+            RECT canal{x0, y - dpx(2), x1, y + dpx(3)};
             HBRUSH gris = CreateSolidBrush(g_pal.border);
             FillRect(dc, &canal, gris);
             DeleteObject(gris);
             double t = (double)(g_slider_val - g_slider_min) /
                        std::max(1, g_slider_max - g_slider_min);
             int x = x0 + (int)lround(t * (x1 - x0));
-            RECT pulgar{x - 6, y - 10, x + 6, y + 11};
+            RECT pulgar{x - dpx(6), y - dpx(10), x + dpx(6), y + dpx(11)};
             HBRUSH pulgar_brush = CreateSolidBrush(g_pal.input);
             FillRect(dc, &pulgar, pulgar_brush);
             DeleteObject(pulgar_brush);
@@ -5319,7 +5424,7 @@ static LRESULT CALLBACK SliderWndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
             SetCapture(hwnd);
             RECT rc;
             GetClientRect(hwnd, &rc);
-            int x0 = 8, x1 = rc.right - 8;
+            int x0 = dpx(8), x1 = rc.right - dpx(8);
             int x = std::clamp((int)GET_X_LPARAM(lp), x0, x1);
             int nuevo = g_slider_min + (int)lround((double)(x - x0) / std::max(1, x1 - x0) *
                                                    (g_slider_max - g_slider_min));
@@ -5335,7 +5440,7 @@ static LRESULT CALLBACK SliderWndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
             if (GetCapture() == hwnd) {
                 RECT rc;
                 GetClientRect(hwnd, &rc);
-                int x0 = 8, x1 = rc.right - 8;
+                int x0 = dpx(8), x1 = rc.right - dpx(8);
                 int x = std::clamp((int)GET_X_LPARAM(lp), x0, x1);
                 int nuevo = g_slider_min + (int)lround((double)(x - x0) /
                                                        std::max(1, x1 - x0) *
@@ -5405,11 +5510,11 @@ static LRESULT CALLBACK ScrollWndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
         DeleteObject(fondo);
         int w = rc.right;
         int alto = rc.bottom;
-        int lado = std::min(16, alto / 3);
+        int lado = std::min(dpx(16), alto / 3);
         HBRUSH gris = CreateSolidBrush(g_pal.muted);
-        POINT arriba[3] = {{w / 4, lado - 5}, {3 * w / 4, lado - 5}, {w / 2, 5}};
-        POINT abajo[3] = {{w / 4, alto - lado + 5}, {3 * w / 4, alto - lado + 5},
-                          {w / 2, alto - 5}};
+        POINT arriba[3] = {{w / 4, lado - dpx(5)}, {3 * w / 4, lado - dpx(5)}, {w / 2, dpx(5)}};
+        POINT abajo[3] = {{w / 4, alto - lado + dpx(5)}, {3 * w / 4, alto - lado + dpx(5)},
+                          {w / 2, alto - dpx(5)}};
         HGDIOBJ viejo = SelectObject(dc, gris);
         Polygon(dc, arriba, 3);
         Polygon(dc, abajo, 3);
@@ -5422,11 +5527,11 @@ static LRESULT CALLBACK ScrollWndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
         GetScrollInfo(hwnd, SB_CTL, &si);
         int rango = std::max(1, si.nMax - si.nMin + 1);
         int pista = std::max(1, alto - lado * 2);
-        int tam = std::max(18, (int)((double)pista * si.nPage / rango));
+        int tam = std::max(dpx(18), (int)((double)pista * si.nPage / rango));
         if (tam > pista) tam = pista;
         double t = (double)(si.nPos - si.nMin) / std::max(1.0, (double)(rango - si.nPage));
         int y = lado + (int)lround(t * std::max(0, pista - tam));
-        RECT pulgar{2, y, w - 2, y + tam};
+        RECT pulgar{dpx(2), y, w - dpx(2), y + tam};
         HBRUSH pulgar_brush = CreateSolidBrush(g_pal.hover);
         FillRect(dc, &pulgar, pulgar_brush);
         DeleteObject(pulgar_brush);
@@ -5443,7 +5548,7 @@ static LRESULT CALLBACK ScrollWndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
             RECT rc;
             GetClientRect(hwnd, &rc);
             int alto = rc.bottom;
-            int lado = std::min(16, alto / 3);
+            int lado = std::min(dpx(16), alto / 3);
             int y = GET_Y_LPARAM(lp);
             if (y < lado)
                 SendMessageW(GetParent(hwnd), WM_VSCROLL, SB_LINEUP, (LPARAM)hwnd);
@@ -5456,7 +5561,7 @@ static LRESULT CALLBACK ScrollWndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
                 GetScrollInfo(hwnd, SB_CTL, &si);
                 int rango = std::max(1, si.nMax - si.nMin + 1);
                 int pista = std::max(1, alto - lado * 2);
-                int tam = std::max(18, (int)((double)pista * si.nPage / rango));
+                int tam = std::max(dpx(18), (int)((double)pista * si.nPage / rango));
                 if (tam > pista) tam = pista;
                 double t = (double)(si.nPos - si.nMin) / std::max(1.0, (double)(rango - si.nPage));
                 int pos_pulgar = lado + (int)lround(t * std::max(0, pista - tam));
@@ -5474,8 +5579,8 @@ static LRESULT CALLBACK ScrollWndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
 static void dibujar_check_plano(const DRAWITEMSTRUCT* di, bool marcado) {
     FillRect(di->hDC, &di->rcItem, g_brush_bg);
     int alto = di->rcItem.bottom - di->rcItem.top;
-    RECT caja{di->rcItem.left + 2, di->rcItem.top + 2,
-              di->rcItem.left + 18, di->rcItem.bottom - 2};
+    RECT caja{di->rcItem.left + dpx(2), di->rcItem.top + dpx(2),
+              di->rcItem.left + dpx(18), di->rcItem.bottom - dpx(2)};
     int estado = marcado ? CBS_CHECKEDNORMAL : CBS_UNCHECKEDNORMAL;
     if (di->itemState & ODS_DISABLED)
         estado = marcado ? CBS_CHECKEDDISABLED : CBS_UNCHECKEDDISABLED;
@@ -5487,8 +5592,8 @@ static void dibujar_check_plano(const DRAWITEMSTRUCT* di, bool marcado) {
         SIZE tam{};
         if (SUCCEEDED(GetThemePartSize(tema, di->hDC, BP_CHECKBOX, estado, nullptr,
                                        TS_TRUE, &tam)) && tam.cx > 0) {
-            int lado = std::min((int)tam.cx, alto - 4);
-            caja.left = di->rcItem.left + 2;
+            int lado = std::min((int)tam.cx, alto - dpx(4));
+            caja.left = di->rcItem.left + dpx(2);
             caja.top = di->rcItem.top + (alto - lado) / 2;
             caja.right = caja.left + lado;
             caja.bottom = caja.top + lado;
@@ -5509,21 +5614,23 @@ static void dibujar_check_plano(const DRAWITEMSTRUCT* di, bool marcado) {
     wchar_t texto[128]{};
     GetWindowTextW(di->hwndItem, texto, 128);
     RECT zona = di->rcItem;
-    zona.left = caja.right + 6;
+    zona.left = caja.right + dpx(6);
     DrawTextW(di->hDC, texto, -1, &zona,
               DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
     SelectObject(di->hDC, vieja);
 }
 
 static RECT zona_drop_actual() {
-    RECT rc{1000, 841, 0, 0};
+    RECT rc{dpx(1000), dpx(841), 0, 0};
     if (g_hwnd) GetClientRect(g_hwnd, &rc);
-    if (rc.right < 1000) rc.right = 1000;
-    return RECT{28, 98, rc.right - 28, 161};
+    if (rc.right < dpx(1000)) rc.right = dpx(1000);
+    return RECT{dpx(28), dpx(98), rc.right - dpx(28), dpx(161)};
 }
 
 static void reubicar_controles(int cw, int ch) {
     if (!g_ui_lista) return;
+    cw = (int)lround((double)cw / g_dpi_escala);
+    ch = (int)lround((double)ch / g_dpi_escala);
     if (cw < 1000) cw = 1000;
     if (ch < 841) ch = 841;
     int dx = cw - 1000;
@@ -5532,7 +5639,7 @@ static void reubicar_controles(int cw, int ch) {
     int cardR = 984 + dx;
     auto ctl = [](int c) { return GetDlgItem(g_hwnd, c); };
     auto mover = [](HWND h, int x, int y, int w, int hh) {
-        if (h) MoveWindow(h, x, y, w, hh, TRUE);
+        if (h) MoveWindow(h, dpx(x), dpx(y), dpx(w), dpx(hh), TRUE);
     };
 
     // Cabecera
@@ -5546,7 +5653,7 @@ static void reubicar_controles(int cw, int ch) {
     mover(ctl(ID_REMOVE), 778 + dx, 68, 60, 28);
     mover(ctl(ID_CLEAR), 846 + dx, 68, 106, 28);
     mover(g_lista_origen, 28, 164, cw - 76, 72);
-    if (g_lista_origen) ListView_SetColumnWidth(g_lista_origen, 0, cw - 90);
+    if (g_lista_origen) ListView_SetColumnWidth(g_lista_origen, 0, dpx(cw - 90));
     mover(g_scroll_origen, cw - 48, 164, 16, 72);
     mover(ctl(ID_LBL_EXTRACTOR), cw - 300, 244, 268, 18);
 
@@ -5593,7 +5700,7 @@ static void reubicar_controles(int cw, int ch) {
     mover(g_lista_resultados, 24, 752, cw - 48, ch - 759);
     mover(g_edit_log, 24, 752, cw - 48, ch - 759);
     if (g_lista_resultados)
-        ListView_SetColumnWidth(g_lista_resultados, 0, 556 + dx);
+        ListView_SetColumnWidth(g_lista_resultados, 0, dpx(556 + dx));
 
     InvalidateRect(g_hwnd, nullptr, TRUE);
 }
@@ -5683,6 +5790,11 @@ static std::vector<BloqueAcerca> bloques_acerca() {
     h2(L"Entorno de este equipo");
     li(L"Backend: WIC + libwebp + libavif + lcms2.");
     li(L"Arrastrar y soltar: disponible (Win32).");
+    if (g_dpi_efectivo == L"gdi")
+        li(L"Escala de interfaz: modo GDI (Windows estira la ventana).");
+    else
+        li(L"Escala de interfaz: " + std::to_wstring((int)lround(g_dpi_escala * 100)) +
+           L" % (DPI nítido del sistema).");
     std::wstring extractor = buscar_extractor();
     li(extractor.empty() ? L"Extractor de comprimidos: ninguno (solo .zip)."
                          : L"Extractor de comprimidos: " +
@@ -5701,6 +5813,7 @@ static std::vector<BloqueAcerca> bloques_acerca() {
 }
 
 static void rellenar_acerca(HWND rich) {
+    auto tw = [](int v) { return (LONG)lround((double)v * g_dpi_escala); };
     auto bloques = bloques_acerca();
     std::wstring completo;
     std::vector<std::pair<CHARRANGE, EstiloAcerca>> rangos;
@@ -5714,7 +5827,7 @@ static void rellenar_acerca(HWND rich) {
     SendMessageW(rich, WM_SETTEXT, 0, (LPARAM)completo.c_str());
     SendMessageW(rich, EM_SETBKGNDCOLOR, 0, (LPARAM)g_pal.card);
     SendMessageW(rich, EM_SETMARGINS, EC_LEFTMARGIN | EC_RIGHTMARGIN,
-                 MAKELPARAM(16, 12));
+                 MAKELPARAM(dpx(16), dpx(12)));
 
     for (auto& par : rangos) {
         CHARRANGE cr = par.first;
@@ -5725,15 +5838,15 @@ static void rellenar_acerca(HWND rich) {
         cf.cbSize = sizeof(cf);
         cf.dwMask = CFM_FACE | CFM_SIZE | CFM_COLOR | CFM_BOLD | CFM_BACKCOLOR;
         wcscpy_s(cf.szFaceName, L"Segoe UI");
-        cf.yHeight = 180;
+        cf.yHeight = tw(180);
         cf.crTextColor = g_pal.text;
         cf.dwEffects = 0;
         cf.crBackColor = g_pal.card;
         if (estilo == EstiloAcerca::H1) {
-            cf.yHeight = 260;
+            cf.yHeight = tw(260);
             cf.dwEffects = CFE_BOLD;
         } else if (estilo == EstiloAcerca::H2) {
-            cf.yHeight = 200;
+            cf.yHeight = tw(200);
             cf.dwEffects = CFE_BOLD;
             cf.crTextColor = g_pal.accent_dark;
         } else if (estilo == EstiloAcerca::CODE) {
@@ -5741,7 +5854,7 @@ static void rellenar_acerca(HWND rich) {
             cf.crTextColor = g_pal.text;
             cf.crBackColor = g_pal.input;
         } else if (estilo == EstiloAcerca::MUTED) {
-            cf.yHeight = 160;
+            cf.yHeight = tw(160);
             cf.crTextColor = g_pal.muted;
         }
         SendMessageW(rich, EM_SETCHARFORMAT, SCF_SELECTION, (LPARAM)&cf);
@@ -5752,16 +5865,16 @@ static void rellenar_acerca(HWND rich) {
         pf.dxStartIndent = 0;
         pf.dxOffset = 0;
         pf.dySpaceBefore = 0;
-        pf.dySpaceAfter = 40;
+        pf.dySpaceAfter = tw(40);
         if (estilo == EstiloAcerca::H1) {
-            pf.dySpaceBefore = 260;
-            pf.dySpaceAfter = 60;
+            pf.dySpaceBefore = tw(260);
+            pf.dySpaceAfter = tw(60);
         } else if (estilo == EstiloAcerca::H2) {
-            pf.dySpaceBefore = 240;
-            pf.dySpaceAfter = 50;
+            pf.dySpaceBefore = tw(240);
+            pf.dySpaceAfter = tw(50);
         } else if (estilo == EstiloAcerca::LI) {
-            pf.dxStartIndent = 280;
-            pf.dxOffset = -280;
+            pf.dxStartIndent = tw(280);
+            pf.dxOffset = -tw(280);
         }
         SendMessageW(rich, EM_SETPARAFORMAT, 0, (LPARAM)&pf);
     }
@@ -5775,14 +5888,16 @@ static void layout_acerca(HWND h) {
     GetClientRect(h, &rc);
     int cw = rc.right;
     int ch = rc.bottom;
-    int arriba = 80;
-    int abajo = ch - 64;
-    MoveWindow(g_acerca_titulo, 18, 14, 500, 30, TRUE);
-    MoveWindow(g_acerca_sub, 18, 48, cw - 36, 18, TRUE);
-    MoveWindow(g_acerca_rich, 19, arriba + 1, cw - 38, abajo - arriba - 2, TRUE);
-    int y = ch - 46;
-    MoveWindow(g_acerca_btn_cerrar, cw - 18 - 88, y, 88, 28, TRUE);
-    MoveWindow(g_acerca_btn_manual, cw - 18 - 88 - 8 - 150, y, 150, 28, TRUE);
+    int arriba = dpx(80);
+    int abajo = ch - dpx(64);
+    MoveWindow(g_acerca_titulo, dpx(18), dpx(14), dpx(500), dpx(30), TRUE);
+    MoveWindow(g_acerca_sub, dpx(18), dpx(48), cw - dpx(36), dpx(18), TRUE);
+    MoveWindow(g_acerca_rich, dpx(19), arriba + dpx(1), cw - dpx(38),
+               abajo - arriba - dpx(2), TRUE);
+    int y = ch - dpx(46);
+    MoveWindow(g_acerca_btn_cerrar, cw - dpx(18) - dpx(88), y, dpx(88), dpx(28), TRUE);
+    MoveWindow(g_acerca_btn_manual, cw - dpx(18) - dpx(88) - dpx(8) - dpx(150), y,
+               dpx(150), dpx(28), TRUE);
 }
 
 static LRESULT CALLBACK AcercaRichProc(HWND h, UINT m, WPARAM w, LPARAM l,
@@ -5799,31 +5914,32 @@ static LRESULT CALLBACK AcercaWndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
         case WM_CREATE: {
             HINSTANCE inst = GetModuleHandleW(nullptr);
             g_acerca_titulo = CreateWindowExW(0, L"STATIC", APP_NAME,
-                                              WS_CHILD | WS_VISIBLE, 18, 14, 500, 30,
-                                              hwnd, nullptr, inst, nullptr);
+                                              WS_CHILD | WS_VISIBLE, dpx(18), dpx(14),
+                                              dpx(500), dpx(30), hwnd, nullptr, inst, nullptr);
             SendMessageW(g_acerca_titulo, WM_SETFONT, (WPARAM)g_font_title, TRUE);
             std::wstring sub = L"Versión " + std::wstring(APP_VERSION) +
                                L"  ·  Conversión local de imágenes a WebP  ·  Windows";
             g_acerca_sub = CreateWindowExW(0, L"STATIC", sub.c_str(),
-                                           WS_CHILD | WS_VISIBLE, 18, 48, 500, 18,
-                                           hwnd, nullptr, inst, nullptr);
+                                           WS_CHILD | WS_VISIBLE, dpx(18), dpx(48),
+                                           dpx(500), dpx(18), hwnd, nullptr, inst, nullptr);
             SendMessageW(g_acerca_sub, WM_SETFONT, (WPARAM)g_font_muted, TRUE);
 
             LoadLibraryW(L"Msftedit.dll");
             g_acerca_rich = CreateWindowExW(0, MSFTEDIT_CLASS, L"",
                                             WS_CHILD | WS_VISIBLE | WS_VSCROLL | ES_MULTILINE |
                                                 ES_READONLY | ES_NOHIDESEL,
-                                            19, 81, 700, 500, hwnd, nullptr, inst, nullptr);
+                                            dpx(19), dpx(81), dpx(700), dpx(500), hwnd,
+                                            nullptr, inst, nullptr);
             SendMessageW(g_acerca_rich, WM_SETFONT, (WPARAM)g_font, TRUE);
             SetWindowSubclass(g_acerca_rich, AcercaRichProc, 1, 0);
 
             g_acerca_btn_manual = CreateWindowExW(0, L"BUTTON", L"Abrir manual de uso",
                                                   WS_CHILD | WS_VISIBLE | WS_TABSTOP | BS_OWNERDRAW,
-                                                  500, 620, 150, 28, hwnd,
+                                                  dpx(500), dpx(620), dpx(150), dpx(28), hwnd,
                                                   (HMENU)(INT_PTR)ID_ACERCA_MANUAL, inst, nullptr);
             g_acerca_btn_cerrar = CreateWindowExW(0, L"BUTTON", L"Cerrar",
                                                   WS_CHILD | WS_VISIBLE | WS_TABSTOP | BS_OWNERDRAW,
-                                                  660, 620, 88, 28, hwnd,
+                                                  dpx(660), dpx(620), dpx(88), dpx(28), hwnd,
                                                   (HMENU)(INT_PTR)ID_ACERCA_CERRAR, inst, nullptr);
             SendMessageW(g_acerca_btn_manual, WM_SETFONT, (WPARAM)g_font, TRUE);
             SendMessageW(g_acerca_btn_cerrar, WM_SETFONT, (WPARAM)g_font, TRUE);
@@ -5837,7 +5953,7 @@ static LRESULT CALLBACK AcercaWndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
             return 0;
         case WM_GETMINMAXINFO: {
             MINMAXINFO* mm = (MINMAXINFO*)lp;
-            RECT r{0, 0, 660, 480};
+            RECT r{0, 0, dpx(660), dpx(480)};
             AdjustWindowRectEx(&r, WS_OVERLAPPEDWINDOW, FALSE, 0);
             mm->ptMinTrackSize.x = r.right - r.left;
             mm->ptMinTrackSize.y = r.bottom - r.top;
@@ -5851,7 +5967,7 @@ static LRESULT CALLBACK AcercaWndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
             RECT rc{};
             GetClientRect(hwnd, &rc);
             FillRect(dc, &rc, g_brush_bg);
-            RECT caja{18, 80, rc.right - 18, rc.bottom - 64};
+            RECT caja{dpx(18), dpx(80), rc.right - dpx(18), rc.bottom - dpx(64)};
             FillRect(dc, &caja, g_brush_card);
             FrameRect(dc, &caja, g_brush_border);
             EndPaint(hwnd, &ps);
@@ -5916,7 +6032,7 @@ static void mostrar_acerca(HWND padre) {
         RegisterClassExW(&wc);
         registrada = true;
     }
-    RECT marco{0, 0, 780, 680};
+    RECT marco{0, 0, dpx(780), dpx(680)};
     AdjustWindowRectEx(&marco, WS_OVERLAPPEDWINDOW, FALSE, 0);
     g_acerca = CreateWindowExW(0, L"ConversorAcerca", L"Acerca de Conversor WebP",
                                WS_OVERLAPPEDWINDOW, CW_USEDEFAULT, CW_USEDEFAULT,
@@ -5945,7 +6061,7 @@ static LRESULT dibujar_header_resultados(NMCUSTOMDRAW* cd) {
         SetTextColor(cd->hdc, g_pal.text);
         HFONT vieja = (HFONT)SelectObject(cd->hdc, g_font);
         RECT r = cd->rc;
-        r.left += 6;
+        r.left += dpx(6);
         UINT formato = DT_SINGLELINE | DT_VCENTER | DT_LEFT;
         if (item.fmt & HDF_CENTER) formato = DT_SINGLELINE | DT_VCENTER | DT_CENTER;
         else if (item.fmt & HDF_RIGHT) formato = DT_SINGLELINE | DT_VCENTER | DT_RIGHT;
@@ -5996,17 +6112,17 @@ static LRESULT CALLBACK ProgressSubclass(HWND hwnd, UINT msg, WPARAM wp, LPARAM 
 }
 
 static int zona_menu_custom(POINT p) {
-    if (!g_oscuro || p.y < 0 || p.y >= 18) return -1;
-    if (p.x >= 12 && p.x < 114) return 0;
-    if (p.x >= 114 && p.x < 184) return 1;
-    if (p.x >= 184 && p.x < 244) return 2;
+    if (!g_oscuro || p.y < 0 || p.y >= dpx(18)) return -1;
+    if (p.x >= dpx(12) && p.x < dpx(114)) return 0;
+    if (p.x >= dpx(114) && p.x < dpx(184)) return 1;
+    if (p.x >= dpx(184) && p.x < dpx(244)) return 2;
     return -1;
 }
 
 static int zona_tab_custom(POINT p) {
-    if (!g_oscuro || p.y < 726 || p.y >= 754) return -1;
-    if (p.x >= 16 && p.x < 122) return 0;
-    if (p.x >= 126 && p.x < 208) return 1;
+    if (!g_oscuro || p.y < dpx(726) || p.y >= dpx(754)) return -1;
+    if (p.x >= dpx(16) && p.x < dpx(122)) return 0;
+    if (p.x >= dpx(126) && p.x < dpx(208)) return 1;
     return -1;
 }
 
@@ -6064,40 +6180,40 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             RegisterClassExW(&wc_tip);
             DragAcceptFiles(hwnd, TRUE);
 
-            g_font = CreateFontW(-12, 0, 0, 0, FW_NORMAL, 0, 0, 0, DEFAULT_CHARSET,
+            g_font = CreateFontW(-dpx(12), 0, 0, 0, FW_NORMAL, 0, 0, 0, DEFAULT_CHARSET,
                                  OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY,
                                  DEFAULT_PITCH | FF_DONTCARE, L"Segoe UI");
-            g_font_bold = CreateFontW(-12, 0, 0, 0, FW_SEMIBOLD, 0, 0, 0, DEFAULT_CHARSET,
+            g_font_bold = CreateFontW(-dpx(12), 0, 0, 0, FW_SEMIBOLD, 0, 0, 0, DEFAULT_CHARSET,
                                       OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY,
                                       DEFAULT_PITCH | FF_DONTCARE, L"Segoe UI");
-            g_font_title = CreateFontW(-21, 0, 0, 0, FW_SEMIBOLD, 0, 0, 0, DEFAULT_CHARSET,
+            g_font_title = CreateFontW(-dpx(21), 0, 0, 0, FW_SEMIBOLD, 0, 0, 0, DEFAULT_CHARSET,
                                        OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY,
                                        DEFAULT_PITCH | FF_DONTCARE, L"Segoe UI");
-            g_font_section = CreateFontW(-13, 0, 0, 0, FW_SEMIBOLD, 0, 0, 0, DEFAULT_CHARSET,
+            g_font_section = CreateFontW(-dpx(13), 0, 0, 0, FW_SEMIBOLD, 0, 0, 0, DEFAULT_CHARSET,
                                          OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY,
                                          DEFAULT_PITCH | FF_DONTCARE, L"Segoe UI");
-            g_font_muted = CreateFontW(-11, 0, 0, 0, FW_NORMAL, 0, 0, 0, DEFAULT_CHARSET,
+            g_font_muted = CreateFontW(-dpx(11), 0, 0, 0, FW_NORMAL, 0, 0, 0, DEFAULT_CHARSET,
                                        OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY,
                                        DEFAULT_PITCH | FF_DONTCARE, L"Segoe UI");
-            g_font_start = CreateFontW(-14, 0, 0, 0, FW_SEMIBOLD, 0, 0, 0, DEFAULT_CHARSET,
+            g_font_start = CreateFontW(-dpx(14), 0, 0, 0, FW_SEMIBOLD, 0, 0, 0, DEFAULT_CHARSET,
                                        OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY,
                                        DEFAULT_PITCH | FF_DONTCARE, L"Segoe UI");
-            g_font_tip = CreateFontW(-11, 0, 0, 0, FW_NORMAL, 0, 0, 0, DEFAULT_CHARSET,
+            g_font_tip = CreateFontW(-dpx(11), 0, 0, 0, FW_NORMAL, 0, 0, 0, DEFAULT_CHARSET,
                                      OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY,
                                      DEFAULT_PITCH | FF_DONTCARE, L"Segoe UI");
-            g_font_drop = CreateFontW(-12, 0, 0, 0, FW_SEMIBOLD, 0, 0, 0, DEFAULT_CHARSET,
+            g_font_drop = CreateFontW(-dpx(12), 0, 0, 0, FW_SEMIBOLD, 0, 0, 0, DEFAULT_CHARSET,
                                       OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY,
                                       DEFAULT_PITCH | FF_DONTCARE, L"Segoe UI");
-            g_font_drop_hot = CreateFontW(-13, 0, 0, 0, FW_SEMIBOLD, 0, 0, 0, DEFAULT_CHARSET,
+            g_font_drop_hot = CreateFontW(-dpx(13), 0, 0, 0, FW_SEMIBOLD, 0, 0, 0, DEFAULT_CHARSET,
                                           OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY,
                                           DEFAULT_PITCH | FF_DONTCARE, L"Segoe UI");
-            g_font_mono = CreateFontW(-12, 0, 0, 0, FW_NORMAL, 0, 0, 0, DEFAULT_CHARSET,
+            g_font_mono = CreateFontW(-dpx(12), 0, 0, 0, FW_NORMAL, 0, 0, 0, DEFAULT_CHARSET,
                                       OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY,
                                       FIXED_PITCH | FF_MODERN, L"Consolas");
 
             // Cabecera
             etiqueta(L"Conversor WebP", 16, 17, 300, 30, 1400, g_font_title);
-            etiqueta(L"v2.9.1", 200, 29, 120, 18, 1401, g_font_muted);
+            etiqueta(L"v2.10.0", 200, 29, 120, 18, 1401, g_font_muted);
             etiqueta(L"JPG · PNG · BMP · TIFF · GIF · ICO  →  WebP / AVIF", 560, 23, 390, 20,
                      1402, g_font_muted, SS_RIGHT);
             boton(L"", 958, 20, 26, 26, ID_TEMA, BS_OWNERDRAW);
@@ -6130,7 +6246,7 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             LVCOLUMNW col{};
             col.mask = LVCF_TEXT | LVCF_WIDTH;
             col.pszText = const_cast<wchar_t*>(L"Origen");
-            col.cx = 910;
+            col.cx = dpx(910);
             ListView_InsertColumn(g_lista_origen, 0, &col);
             SetWindowLongW(g_lista_origen, GWL_STYLE,
                            GetWindowLongW(g_lista_origen, GWL_STYLE) | LVS_NOCOLUMNHEADER);
@@ -6227,6 +6343,7 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
 
             // Pestañas
             g_tab = crear(WC_TABCONTROLW, L"", WS_TABSTOP, 16, 728, 968, 112, ID_TAB);
+            SendMessageW(g_tab, WM_SETFONT, (WPARAM)g_font, TRUE);
             TCITEMW tci{};
             tci.mask = TCIF_TEXT;
             tci.pszText = const_cast<wchar_t*>(L"Resultados");
@@ -6236,8 +6353,9 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
 
             g_lista_resultados = listview(24, 752, 952, 82, ID_RESULTS);
             SetWindowSubclass(g_lista_resultados, ResultadosSubclass, 1, 0);
+            SendMessageW(g_lista_resultados, WM_SETFONT, (WPARAM)g_font, TRUE);
             const wchar_t* cols[] = {L"Archivo", L"Original (KB)", L"Final (KB)", L"Ahorro %", L"Estado"};
-            int anchos[] = {556, 100, 90, 72, 114};
+            int anchos[] = {dpx(556), dpx(100), dpx(90), dpx(72), dpx(114)};
             for (int i = 0; i < 5; i++) {
                 LVCOLUMNW c{};
                 c.mask = LVCF_TEXT | LVCF_WIDTH;
@@ -6362,7 +6480,7 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
         case WM_MEASUREITEM: {
             MEASUREITEMSTRUCT* mi = (MEASUREITEMSTRUCT*)lp;
             if (mi && mi->CtlType == ODT_COMBOBOX) {
-                mi->itemHeight = 22;
+                mi->itemHeight = dpx(22);
                 return TRUE;
             }
             break;
@@ -6954,7 +7072,7 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             int zona = zona_menu_custom(p);
             if (zona != g_menu_hot) {
                 g_menu_hot = zona;
-                RECT barra{0, 0, 260, 18};
+                RECT barra{0, 0, dpx(260), dpx(18)};
                 InvalidateRect(hwnd, &barra, FALSE);
             }
             RECT zona_drop = zona_drop_actual();
@@ -6974,7 +7092,7 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
         case WM_MOUSELEAVE:
             if (g_menu_hot != -1) {
                 g_menu_hot = -1;
-                RECT barra{0, 0, 260, 18};
+                RECT barra{0, 0, dpx(260), dpx(18)};
                 InvalidateRect(hwnd, &barra, FALSE);
             }
             if (g_drop_hot) {
@@ -7169,8 +7287,8 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
 
         case WM_GETMINMAXINFO: {
             MINMAXINFO* mmi = (MINMAXINFO*)lp;
-            mmi->ptMinTrackSize.x = 1016;
-            mmi->ptMinTrackSize.y = 900;
+            mmi->ptMinTrackSize.x = dpx(1016);
+            mmi->ptMinTrackSize.y = dpx(900);
             return 0;
         }
 
@@ -7384,7 +7502,7 @@ static int ejecutar_cli(const std::vector<std::wstring>& args) {
 //  WinMain
 // ---------------------------------------------------------------------------
 int wmain(int argc, wchar_t** argv) {
-    SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_UNAWARE_GDISCALED);
+    configurar_dpi();
     CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
     INITCOMMONCONTROLSEX icc{sizeof(icc), ICC_LISTVIEW_CLASSES | ICC_BAR_CLASSES |
                                                ICC_PROGRESS_CLASS | ICC_TAB_CLASSES |
@@ -7473,9 +7591,9 @@ int wmain(int argc, wchar_t** argv) {
     wc.hIconSm = icono_pequeno;
     RegisterClassExW(&wc);
 
-    g_hwnd = CreateWindowExW(0, wc.lpszClassName, L"Conversor WebP 2.9.1",
+    g_hwnd = CreateWindowExW(0, wc.lpszClassName, L"Conversor WebP 2.10.0",
                              WS_OVERLAPPEDWINDOW,
-                             CW_USEDEFAULT, CW_USEDEFAULT, 1016, 900, nullptr, nullptr, inst, nullptr);
+                             CW_USEDEFAULT, CW_USEDEFAULT, dpx(1016), dpx(900), nullptr, nullptr, inst, nullptr);
     if (!g_hwnd) return 1;
 
     aplicar_modo_oscuro_nativo(g_hwnd, g_oscuro);

@@ -78,7 +78,7 @@ except Exception:  # pragma: no cover - la app sigue funcionando sin arrastrar
 
 
 APP_NAME = "Conversor WebP"
-APP_VERSION = "2.9.1"
+APP_VERSION = "2.10.0"
 
 try:  # soporte HEIC/HEIF (iPhone) si pillow-heif esta instalado
     import pillow_heif

@@ -13,6 +13,8 @@ del proyecto principal.
 - **Portable:** el ejecutable no escribe en el registro; usa `config.ini` junto al
   `.exe`. La integración con el Explorador es opcional y se instala en HKCU.
 - **Modo oscuro:** conmutable con el icono sol/luna de la cabecera y recordado en `config.ini`.
+- **DPI nítido del sistema:** fuentes y controles se crean al tamaño real del monitor. Se ajusta con
+  `dpi=auto|system|gdi` o un valor numérico en `config.ini`.
 
 ## Resultado de la comparación con Python
 
@@ -50,6 +52,8 @@ slider, scrollbar y pestañas.
 - [`docs/gui_comparacion.png`](docs/gui_comparacion.png)
 - [`docs/gui_comparacion_oscura.png`](docs/gui_comparacion_oscura.png)
 - [`docs/gui_tooltip_cpp.png`](docs/gui_tooltip_cpp.png)
+- [`docs/gui_dpi144.png`](docs/gui_dpi144.png) — DPI nítido al 150 % (escala forzada para la captura)
+- [`docs/gui_dpi144_dark.png`](docs/gui_dpi144_dark.png) — la misma vista en modo oscuro
 
 ## Qué incluye
 
