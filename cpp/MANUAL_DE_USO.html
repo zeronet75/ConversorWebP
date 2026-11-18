@@ -1,0 +1,574 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Manual de uso · Conversor WebP 2.6.0</title>
+<style>
+  :root{
+    --azul:#1a73e8; --azul-osc:#1557b0; --texto:#1f2933; --gris:#5f6b7a;
+    --linea:#e3e8ef; --fondo:#f6f8fb; --caja:#eef4fd; --ok:#137333; --aviso:#b45309;
+  }
+  *{box-sizing:border-box}
+  body{
+    margin:0; background:var(--fondo); color:var(--texto);
+    font-family:"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+    font-size:16px; line-height:1.6;
+  }
+  .hoja{
+    max-width:900px; margin:32px auto; background:#fff; padding:48px 56px 64px;
+    border-radius:14px; box-shadow:0 10px 40px rgba(15,23,42,.08);
+  }
+  header{border-bottom:3px solid var(--azul); padding-bottom:18px; margin-bottom:8px}
+  h1{font-size:34px; margin:0 0 6px; letter-spacing:-.5px}
+  .sub{color:var(--gris); font-size:15px; margin:0}
+  h2{
+    font-size:23px; margin:44px 0 10px; padding-top:10px;
+    border-top:1px solid var(--linea);
+  }
+  h3{font-size:17px; margin:24px 0 6px; color:var(--azul-osc)}
+  p{margin:8px 0}
+  ul,ol{margin:8px 0 8px 22px; padding:0}
+  li{margin:4px 0}
+  code,kbd{
+    background:#eef1f6; border:1px solid #dfe5ee; border-radius:5px;
+    padding:1px 6px; font-family:Consolas,"Cascadia Mono",monospace; font-size:14px;
+  }
+  kbd{background:#fff; box-shadow:0 1px 0 #c9d2df; padding:1px 7px}
+  pre{
+    background:#0f172a; color:#e2e8f0; padding:16px 18px; border-radius:10px;
+    overflow-x:auto; font-family:Consolas,monospace; font-size:14px; line-height:1.5;
+  }
+  pre code{background:none; border:0; color:inherit; padding:0}
+  table{border-collapse:collapse; width:100%; margin:12px 0; font-size:15px}
+  th,td{border:1px solid var(--linea); padding:9px 12px; text-align:left; vertical-align:top}
+  th{background:#f1f5fb; font-weight:600}
+  tr:nth-child(even) td{background:#fafcff}
+  .nota,.tip,.aviso{
+    border-left:5px solid var(--azul); background:var(--caja);
+    padding:12px 16px; border-radius:0 8px 8px 0; margin:14px 0;
+  }
+  .tip{border-color:var(--ok); background:#eefaf1}
+  .aviso{border-color:var(--aviso); background:#fdf6ea}
+  .indice{background:#fbfcfe; border:1px solid var(--linea); border-radius:10px; padding:14px 22px; margin:22px 0}
+  .indice ol{margin:6px 0 0 18px}
+  .indice a{color:var(--azul-osc); text-decoration:none}
+  .indice a:hover{text-decoration:underline}
+  .pie{margin-top:48px; padding-top:16px; border-top:1px solid var(--linea); color:var(--gris); font-size:13px}
+  @media print{
+    body{background:#fff}
+    .hoja{box-shadow:none; margin:0; max-width:none; padding:0 12mm}
+    h2{page-break-after:avoid}
+    table,pre,.nota,.tip,.aviso{page-break-inside:avoid}
+  }
+</style>
+</head>
+<body>
+<div class="hoja">
+
+<header>
+  <h1>Conversor WebP 2.6.0</h1>
+  <p class="sub">Manual de uso · Qué hace cada opción y cómo sacarle partido</p>
+</header>
+
+<div class="indice">
+  <strong>Contenido</strong>
+  <ol>
+    <li><a href="#que-es">Qué es y qué hace</a></li>
+    <li><a href="#primeros">Primeros pasos en 5 minutos</a></li>
+    <li><a href="#origen">Sección 1 · Origen</a></li>
+    <li><a href="#salida">Sección 2 · Carpeta de salida</a></li>
+    <li><a href="#calidad">Sección 3 · Calidad y opciones</a></li>
+    <li><a href="#acciones">Botones de acción, progreso y registro</a></li>
+    <li><a href="#arrastrar">Arrastrar y soltar</a></li>
+    <li><a href="#comprimidos">Comprimidos .zip, .rar y .7z</a></li>
+    <li><a href="#nombres">Nombres de archivo y duplicados</a></li>
+    <li><a href="#conserva">Qué se conserva al convertir</a></li>
+    <li><a href="#consola">Modo consola</a></li>
+    <li><a href="#ajustes">Dónde se guardan los ajustes</a></li>
+    <li><a href="#faq">Preguntas frecuentes</a></li>
+    <li><a href="#problemas">Solución de problemas</a></li>
+    <li><a href="#extras">Automatización, instalador y portable</a></li>
+  </ol>
+</div>
+
+<div class="nota">
+  <strong>Novedades de la versión 2.6.0:</strong> apagado opcional al terminar, tooltips explicativos, HEIC, carpeta vigilada, patrones de nombre, solo analizar, tabla de resultados, vista previa, menú contextual, instalador y portable, presets de calidad, redimensionado, peso máximo por imagen,
+  historial de trabajos, selección múltiple, atajos de teclado, conversión en paralelo, informe CSV,
+  formato AVIF y acceso directo en <strong>Enviar a</strong> del Explorador.
+</div>
+
+<h2 id="que-es">1. Qué es y qué hace</h2>
+<p>
+  <strong>Conversor WebP</strong> es una aplicación de escritorio para Windows que transforma imágenes
+  <strong>JPG, PNG, BMP, TIFF, GIF, ICO, TGA, PCX, DDS y PPM/PGM/PBM</strong> al formato
+  <strong>WebP</strong>, el formato de imagen moderno que pesa entre un 25 % y un 85 % menos que JPG o PNG
+  con una calidad visual equivalente.
+</p>
+<p>Todo el trabajo se hace <strong>en tu equipo</strong>: el programa no envía archivos a internet, no pide
+cuenta y no modifica ni borra los originales.</p>
+<p>Opcionalmente puede generar <strong>AVIF</strong>, un formato aún más eficiente, y un
+<strong>informe CSV</strong> con el peso de cada archivo antes y después.</p>
+<p>Puede trabajar con <strong>imágenes sueltas, carpetas enteras o archivos comprimidos</strong>
+(<code>.zip</code>, <code>.rar</code>, <code>.7z</code>), guardar el resultado en la carpeta que elijas y,
+si quieres, entregarlo todo empaquetado en un <strong>ZIP</strong>.</p>
+
+<h2 id="primeros">2. Primeros pasos en 5 minutos</h2>
+<ol>
+  <li>Abre <code>ConversorWebP.exe</code> (no hace falta instalar Python ni nada más).</li>
+  <li>Arrastra tus imágenes, una carpeta o un <code>.rar</code> desde el Explorador de Windows
+      y suéltalas sobre la ventana. También puedes usar los botones.</li>
+  <li>Pulsa <strong>Examinar…</strong> y elige la carpeta donde quieres los <code>.webp</code>.</li>
+  <li>Deja la calidad en <strong>85</strong> (buen equilibrio) y, si quieres el resultado en un solo
+      archivo, marca <strong>Empaquetar el resultado en .zip</strong>.</li>
+  <li>Pulsa <strong>Convertir a WebP</strong>. Al terminar verás el resumen y podrás abrir la carpeta
+      con <strong>Abrir carpeta de salida</strong>.</li>
+</ol>
+
+<h2 id="origen">3. Sección 1 · Origen</h2>
+<p>Es la lista de lo que se va a convertir. Puedes mezclar libremente imágenes, carpetas y comprimidos.</p>
+
+<table>
+  <tr><th>Elemento</th><th>Qué hace</th></tr>
+  <tr>
+    <td><strong>Archivos…</strong></td>
+    <td>Abre el explorador para elegir <strong>una o varias imágenes</strong> (mantén <kbd>Ctrl</kbd>
+        para seleccionar sueltas o <kbd>Shift</kbd> para un rango).</td>
+  </tr>
+  <tr>
+    <td><strong>Carpeta…</strong></td>
+    <td>Añade una carpeta completa. <strong>Incluye automáticamente todas las subcarpetas</strong> y
+        solo toma archivos de imagen.</td>
+  </tr>
+  <tr>
+    <td><strong>.zip / .rar…</strong></td>
+    <td>Añade uno o varios comprimidos. El programa los abre en una carpeta temporal, convierte lo que
+        hay dentro y luego borra esa carpeta temporal.</td>
+  </tr>
+  <tr>
+    <td><strong>Quitar todo</strong></td>
+    <td>Vacía la lista de origen sin tocar ningún archivo del disco.</td>
+  </tr>
+  <tr>
+    <td><strong>Quitar</strong></td>
+    <td>Elimina de la lista solo las entradas seleccionadas. Puedes seleccionar varias con
+        <kbd>Ctrl</kbd> o <kbd>Shift</kbd> y borrarlas también con la tecla <kbd>Supr</kbd>.</td>
+  </tr>
+  <tr>
+    <td><strong>Zona punteada</strong></td>
+    <td>Zona de arrastre: suelta ahí lo que quieras convertir. Hacer clic en ella equivale a
+        <strong>Archivos…</strong>.</td>
+  </tr>
+  <tr>
+    <td><strong>Lista central</strong></td>
+    <td>Muestra cada origen añadido con la etiqueta <code>[carpeta]</code> o <code>[comprimido]</code>.</td>
+  </tr>
+  <tr>
+    <td><strong>Contador</strong></td>
+    <td>Resume cuántas carpetas, comprimidos e imágenes has añadido (p. ej. «Origen: 2 carpeta(s),
+        1 comprimido(s), 5 imagen(es)»).</td>
+  </tr>
+  <tr>
+    <td><strong>Extractor</strong></td>
+    <td>Indica qué herramienta se usará para abrir <code>.rar</code>/<code>.7z</code>
+        (p. ej. «Extractor: 7z.exe»). Si dice «Sin 7-Zip/WinRAR: solo .zip», los ZIP siguen
+        funcionando pero los RAR no.</td>
+  </tr>
+</table>
+
+<div class="tip">
+  <strong>Truco:</strong> si eliges primero la carpeta de salida, el programa la recuerda para la próxima
+  vez. Si no la eliges, propone una automáticamente (<code>nombre_webp</code> junto al origen).
+</div>
+
+<h2 id="salida">4. Sección 2 · Carpeta de salida</h2>
+<p>Es la carpeta donde se escribirán los <code>.webp</code>. Debe existir o se creará sola; antes de
+empezar, el programa comprueba que realmente se puede escribir en ella y avisa si no.</p>
+
+<table>
+  <tr><th>Opción</th><th>Qué significa</th></tr>
+  <tr>
+    <td><strong>Examinar…</strong></td>
+    <td>Elige la carpeta de destino con el diálogo de Windows.</td>
+  </tr>
+  <tr>
+    <td><strong>Arrastrar una carpeta sobre el campo</strong></td>
+    <td>Si sueltas una única carpeta encima del campo de texto, se toma como carpeta de salida.</td>
+  </tr>
+  <tr>
+    <td><strong>Mantener subcarpetas del origen</strong><br><em>(activado por defecto)</em></td>
+    <td><strong>Activado:</strong> reproduce la estructura de carpetas original
+        (<code>fotos/viaje/playa.jpg</code> → <code>salida/viaje/playa.webp</code>).<br>
+        <strong>Desactivado:</strong> todos los WebP quedan sueltos en la carpeta de salida
+        (útil para tener una galería plana).</td>
+  </tr>
+  <tr>
+    <td><strong>Sobrescribir archivos existentes</strong><br><em>(activado por defecto)</em></td>
+    <td><strong>Activado:</strong> si ya existe un archivo con ese nombre en el formato elegido, se reemplaza.<br>
+        <strong>Desactivado:</strong> si ya existe, se omite y se cuenta como «omitida». Ideal para
+        reanudar una conversión larga sin repetir trabajo.</td>
+  </tr>
+  <tr>
+    <td><strong>Formato de salida</strong></td>
+    <td><strong>WebP</strong> (por defecto) o <strong>AVIF</strong>. AVIF es más moderno y suele pesar
+        entre un 20 % y un 30 % menos con calidad similar, a cambio de tardar algo más en convertirse.
+        El botón principal y la extensión de los archivos se adaptan al formato elegido.</td>
+  </tr>
+  <tr>
+    <td><strong>Guardar informe CSV</strong></td>
+    <td>Escribe en la carpeta de salida un archivo <code>informe_AAAAMMDD_HHMMSS.csv</code> con una fila
+        por imagen: archivo generado, nombre original, KB de entrada, KB de salida, ahorro, estado y nota.
+        Se abre directamente en Excel (separador «;» y codificación UTF-8).</td>
+  </tr>
+  <tr>
+    <td><strong>Empaquetar el resultado en .zip</strong><br><em>(activado por defecto)</em></td>
+    <td>Crea además un ZIP con <strong>todos los WebP generados</strong> dentro de la misma carpeta de
+        salida. Los archivos sueltos también quedan ahí: el ZIP es una copia empaquetada, no un
+        reemplazo.</td>
+  </tr>
+  <tr>
+    <td><strong>Nombre del ZIP</strong></td>
+    <td>Campo de texto a la derecha de la casilla. Si no pones extensión, se añade <code>.zip</code>
+        automáticamente. Por defecto se propone <code>webp_AAAAMMDD_HHMM.zip</code>.</td>
+  </tr>
+</table>
+
+<div class="nota">
+  El ZIP conserva las subcarpetas tal y como quedaron en la carpeta de salida, así que al descomprimirlo
+  mantiene el mismo orden.
+</div>
+
+<h2 id="calidad">5. Sección 3 · Calidad y opciones</h2>
+
+<h3>Preset</h3>
+<p>Un preset es una combinación guardada de opciones que se aplica de golpe. El desplegable trae cuatro
+incluidos:</p>
+<table>
+  <tr><th>Preset</th><th>Qué aplica</th></tr>
+  <tr><td><strong>Web (85 · 1920 px)</strong></td><td>Calidad 85, esfuerzo 6, lado máximo 1920 px. El equilibrio típico para publicar.</td></tr>
+  <tr><td><strong>Catálogo (80 · 1200 px)</strong></td><td>Calidad 80 y 1200 px. Listados y fichas de producto.</td></tr>
+  <tr><td><strong>Iconos sin pérdida</strong></td><td>Modo lossless sin redimensionar. Logos, iconos y capturas.</td></tr>
+  <tr><td><strong>Máxima calidad (95)</strong></td><td>Calidad 95 sin redimensionar ni límite de peso.</td></tr>
+</table>
+<p>Si tocas cualquier control después de aplicar un preset, el desplegable vuelve a
+<strong>Personalizado</strong>, que refleja la configuración actual.</p>
+<p><strong>Guardar:</strong> pide un nombre y almacena las opciones actuales como preset propio, disponible
+para siempre. <strong>Borrar:</strong> elimina el preset propio seleccionado (los cuatro incluidos no se
+pueden borrar).</p>
+
+<h3>Calidad (1 – 100)</h3>
+<p>Controla cuánto detalle se conserva. Más calidad = mejor aspecto y más peso. La barra muestra el valor
+numérico a la derecha. Referencias prácticas:</p>
+<table>
+  <tr><th>Valor</th><th>Uso recomendado</th><th>Resultado típico</th></tr>
+  <tr><td><strong>95 – 100</strong></td><td>Archivo fotográfico, impresión, originales que se van a seguir editando</td><td>Máxima fidelidad, peso alto</td></tr>
+  <tr><td><strong>85 – 92</strong></td><td>Fotos para web, catálogos, blogs</td><td>Indistinguible del original en pantalla</td></tr>
+  <tr><td><strong>75 – 84</strong></td><td>Miniaturas, listados, correo</td><td>Muy buen equilibrio peso/calidad</td></tr>
+  <tr><td><strong>50 – 74</strong></td><td>Vistas previas, cargas rápidas en móvil</td><td>Peso mínimo, se notan artefactos al ampliar</td></tr>
+</table>
+<p>El valor por defecto, <strong>85</strong>, es el que suele recomendarse para publicar en web.</p>
+
+<h3>Esfuerzo (0 – 6)</h3>
+<p>Cuánto trabaja el compresor para conseguir el mismo peso. Con <strong>6</strong> (por defecto) los
+archivos salen algo más pequeños, a costa de tardar más. Con <strong>0</strong> convierte muy rápido pero
+pesa más. Para un lote grande de una sola vez, 6 merece la pena; para pruebas rápidas, 4.</p>
+
+<h3>Sin pérdida (lossless)</h3>
+<p>Comprime sin descartar ningún píxel: la imagen es idéntica al original. El archivo resultante suele ser
+<strong>más grande que un JPG</strong>, así que solo tiene sentido para capturas de pantalla, gráficos,
+logos o imágenes con texto. Al activarlo, el control de calidad y el de esfuerzo se deshabilitan porque
+no intervienen.</p>
+
+<h3>Recodificar también los .webp</h3>
+<p>Por defecto los archivos que ya son <code>.webp</code> se ignoran (no tiene mucho sentido volver a
+comprimirlos). Si lo activas, se vuelven a procesar con los ajustes actuales: útil para bajar la calidad
+de una carpeta ya convertida o para cambiar de con pérdida a sin pérdida.</p>
+
+<h3>Aplanar transparencia sobre…</h3>
+<p>Los PNG con fondo transparente se guardan como WebP con canal alfa (la transparencia se conserva).
+Si activas esta casilla, la transparencia se «rellena» con un color sólido, que eliges con el cuadro de
+color de al lado (blanco por defecto). Sirve para:</p>
+<ul>
+  <li>Evitar bordes raros en visores o programas antiguos que no entienden el alfa.</li>
+  <li>Publicar en sitios que no admiten PNG transparentes.</li>
+  <li>Reducir aún más el peso cuando el fondo da igual.</li>
+</ul>
+
+<h3>Lado máximo</h3>
+<p>Reduce la imagen para que su lado más largo no supere el valor elegido (2560, 1920, 1600, 1200, 800 o
+512 px). <strong>Nunca amplía</strong>: una foto de 300 px se queda en 300 px. Es la forma más eficaz de
+bajar peso en fotos de móvil o cámara, porque la resolución sobrante no aporta nada en pantalla.</p>
+
+<h3>Peso máximo (KB)</h3>
+<p>Al activarlo, el programa busca automáticamente la calidad más alta que deje cada imagen por debajo del
+peso indicado. La calidad del deslizador actúa como <strong>tope superior</strong>: nunca usará una calidad
+mayor que esa. Si ni con calidad 1 se consigue el objetivo, guarda la imagen igualmente y lo avisa en el
+registro (en ese caso conviene bajar el «Lado máximo»). El modo sin pérdida no admite peso máximo, porque
+no se puede ajustar la calidad sin perder fidelidad.</p>
+<div class="nota">
+  El peso máximo es aproximado y por imagen: se comprueba el archivo real generado, así que el resultado
+  siempre queda en o por debajo del límite (salvo el caso imposible citado).
+</div>
+
+<h2 id="acciones">6. Botones de acción, progreso y registro</h2>
+<table>
+  <tr><th>Elemento</th><th>Qué hace</th></tr>
+  <tr><td><strong>Convertir a WebP</strong></td><td>Comprueba los datos, crea la carpeta de salida si falta y arranca la conversión.</td></tr>
+  <tr><td><strong>Cancelar</strong></td><td>Detiene el proceso después del archivo en curso. Lo ya convertido se conserva.</td></tr>
+  <tr><td><strong>Abrir carpeta de salida</strong></td><td>Abre el Explorador de Windows en la carpeta de destino.</td></tr>
+  <tr><td><strong>Aviso sonoro al terminar</strong></td><td>Pitido al finalizar: dos tonos agudos si todo salió bien y dos graves si hubo errores o cancelaste. Se puede desactivar con la casilla que está a la derecha de los botones.</td></tr>
+  <tr><td><strong>Apagar al terminar</strong></td><td>Apaga el equipo tras una conversión correcta. Muestra una ventana con cuenta atrás de 30 segundos y botones «Cancelar apagado» y «Apagar ahora». Desactivado por defecto; al activarlo pide confirmación.</td></tr>
+  <tr><td><strong>Barra de progreso</strong></td><td>Archivos procesados sobre el total y porcentaje. Si hay comprimidos, primero indica «Extrayendo…».</td></tr>
+  <tr><td><strong>Registro</strong></td><td>Detalle línea a línea. Colores: <span style="color:#137333"><strong>verde</strong></span> = convertida,
+      <span style="color:#c5221f"><strong>rojo</strong></span> = error, <span style="color:#b45309"><strong>ámbar</strong></span> = aviso,
+      <span style="color:#5f6b7a"><strong>gris</strong></span> = omitida/informativa.</td></tr>
+</table>
+<p>Cada línea muestra el nombre final, el tamaño original y el obtenido, por ejemplo:
+<code>OK  viaje/playa.webp  1.204,3 KB -&gt; 386,1 KB</code>.</p>
+
+<div class="nota">
+  Los lotes de 4 o más imágenes se convierten en paralelo usando varios núcleos del procesador, así que
+  un pack grande termina antes. El orden del registro puede variar por eso; el resultado es el mismo.
+</div>
+
+<h3>Atajos de teclado</h3>
+<table>
+  <tr><th>Atajo</th><th>Acción</th></tr>
+  <tr><td><kbd>Ctrl</kbd> + <kbd>O</kbd></td><td>Añadir archivos</td></tr>
+  <tr><td><kbd>Ctrl</kbd> + <kbd>Mayús</kbd> + <kbd>O</kbd></td><td>Añadir una carpeta</td></tr>
+  <tr><td><kbd>Ctrl</kbd> + <kbd>Enter</kbd> o <kbd>F5</kbd></td><td>Iniciar la conversión</td></tr>
+  <tr><td><kbd>Supr</kbd></td><td>Quitar las entradas seleccionadas de la lista</td></tr>
+  <tr><td><kbd>F1</kbd></td><td>Abrir este manual</td></tr>
+</table>
+
+<h3>Menú Historial</h3>
+<p>Guarda los <strong>últimos 10 trabajos</strong> (origen, carpeta de salida y ajustes). Al elegir una
+entrada se recupera todo y solo hay que pulsar <strong>Convertir</strong>. Si un origen ya no existe, se
+avisa y se cargan los que queden. Desde el mismo menú puedes vaciar el historial.</p>
+
+<h2 id="arrastrar">7. Arrastrar y soltar</h2>
+<p>Puedes soltar contenido <strong>en cualquier punto de la ventana</strong>, no solo en la zona punteada:</p>
+<ul>
+  <li><strong>Imágenes sueltas</strong> o <strong>varias seleccionadas</strong> desde una carpeta.</li>
+  <li><strong>Carpetas completas</strong> (se recorren todas las subcarpetas).</li>
+  <li><strong>Archivos comprimidos</strong> <code>.zip</code>, <code>.rar</code> y <code>.7z</code>.</li>
+  <li><strong>Mezclas</strong> de todo lo anterior en un mismo gesto.</li>
+</ul>
+<p>Mientras arrastras, la zona punteada se ilumina en azul y el cursor indica que se puede soltar. Si
+sueltas algo que no es imagen ni comprimido (un PDF, un vídeo…), el programa lo ignora y te avisa de
+cuántos descartó.</p>
+
+<h3>Enviar a del Explorador de Windows</h3>
+<p>En <strong>Herramientas → Añadir a «Enviar a» del Explorador</strong> se crea un acceso directo en el
+menú contextual de Windows. Después puedes seleccionar fotos o un comprimido, hacer clic derecho →
+<strong>Enviar a → Conversor WebP</strong> y la aplicación se abre con esos archivos ya cargados, lista para
+elegir destino y convertir. Con <strong>Quitar de «Enviar a»</strong> se elimina el acceso.</p>
+
+<h2 id="comprimidos">8. Comprimidos .zip, .rar y .7z</h2>
+<p>Los <code>.zip</code> se abren con un lector interno, sin depender de nada instalado. Para
+<code>.rar</code> y <code>.7z</code> se usa <strong>7-Zip</strong> o <strong>WinRAR</strong> si están
+instalados; el programa los busca solo en las rutas habituales de Windows.</p>
+<ul>
+  <li>El contenido se extrae a una carpeta temporal y <strong>se borra al terminar</strong>.</li>
+  <li>Se respeta la estructura interna del comprimido.</li>
+  <li>Si añades <strong>varios comprimidos</strong>, cada uno se guarda dentro de una subcarpeta con su
+      nombre para que no se mezclen los contenidos.</li>
+  <li>Si un comprimido está protegido con contraseña, el programa mostrará un error en el registro.</li>
+  <li>Los comprimidos dentro de otro comprimido no se abren: extrae primero el exterior.</li>
+</ul>
+<div class="aviso">
+  <strong>Sin 7-Zip ni WinRAR</strong> los <code>.rar</code> no se pueden abrir. Instala 7-Zip (gratuito,
+  <code>https://www.7-zip.org</code>) y la aplicación lo detectará automáticamente en el siguiente arranque.
+</div>
+
+<h2 id="nombres">9. Nombres de archivo y duplicados</h2>
+<ul>
+  <li>Se conserva el nombre original y solo cambia la extensión: <code>foto.jpg</code> →
+      <code>foto.webp</code>.</li>
+  <li>Los nombres con espacios, acentos o <code>ñ</code> se mantienen tal cual.</li>
+  <li>Si dos originales generarían el mismo nombre (por ejemplo <code>foto.jpg</code> y
+      <code>foto.png</code>), el segundo recibe un sufijo con su extensión original:
+      <code>foto.webp</code> y <code>foto_png.webp</code>. Nunca se pisa un archivo distinto.</li>
+  <li>Si dos comprimidos contienen el mismo nombre de archivo, se aplica la misma regla.</li>
+</ul>
+
+<h2 id="conserva">10. Qué se conserva al convertir</h2>
+<table>
+  <tr><th>Aspecto</th><th>Comportamiento</th></tr>
+  <tr><td><strong>Orientación de la foto</strong></td><td>Se aplica la etiqueta EXIF: las fotos hechas con el móvil en vertical no salen giradas.</td></tr>
+  <tr><td><strong>Transparencia</strong></td><td>Se conserva el canal alfa de PNG, GIF y WebP (salvo que se active «aplanar»).</td></tr>
+  <tr><td><strong>Perfil de color</strong></td><td>Si la imagen lleva perfil ICC incrustado, se mantiene.</td></tr>
+  <tr><td><strong>GIF animados</strong></td><td>Se convierte el <strong>primer fotograma</strong> (WebP animado no se genera); el registro lo avisa.</td></tr>
+  <tr><td><strong>Metadatos EXIF</strong></td><td>No se copian (permite archivos más ligeros y evita publicar datos como la ubicación GPS).</td></tr>
+  <tr><td><strong>Originales</strong></td><td>Nunca se modifican ni se borran.</td></tr>
+</table>
+
+<h2 id="consola">11. Modo consola</h2>
+<p>El mismo ejecutable puede usarse sin ventana, por ejemplo en un script o una tarea programada:</p>
+<pre><code>ConversorWebP.exe &lt;origen...&gt; -o &lt;carpeta_salida&gt; [opciones]</code></pre>
+<table>
+  <tr><th>Opción</th><th>Significado</th></tr>
+  <tr><td><code>-o, --output</code></td><td>Carpeta de salida (obligatoria).</td></tr>
+  <tr><td><code>-q, --quality</code></td><td>Calidad 1–100. Por defecto 85.</td></tr>
+  <tr><td><code>-m, --method</code></td><td>Esfuerzo 0–6. Por defecto 6.</td></tr>
+  <tr><td><code>--zip NOMBRE</code></td><td>Crea un ZIP con el resultado dentro de la carpeta de salida.</td></tr>
+  <tr><td><code>--format webp|avif</code></td><td>Formato de salida. Por defecto <code>webp</code>.</td></tr>
+  <tr><td><code>--max-dim N</code></td><td>Redimensiona al lado máximo de N píxeles (no amplía).</td></tr>
+  <tr><td><code>--max-kb N</code></td><td>Busca la calidad necesaria para no superar N KB por imagen.</td></tr>
+  <tr><td><code>--csv</code></td><td>Genera el informe CSV en la carpeta de salida.</td></tr>
+  <tr><td><code>--shutdown</code></td><td>Apaga el equipo al terminar correctamente.</td></tr>
+  <tr><td><code>--shutdown-delay N</code></td><td>Segundos antes de apagar (mínimo 10; 60 por defecto).</td></tr>
+  <tr><td><code>--lossless</code></td><td>Modo sin pérdida.</td></tr>
+  <tr><td><code>--flat --bg "#ffffff"</code></td><td>Aplana la transparencia sobre ese color.</td></tr>
+  <tr><td><code>--no-recursive</code></td><td>No mantiene subcarpetas (todo plano).</td></tr>
+  <tr><td><code>--no-overwrite</code></td><td>Omite los WebP que ya existan.</td></tr>
+  <tr><td><code>--webp</code></td><td>Recodifica también los <code>.webp</code> existentes.</td></tr>
+</table>
+<p>Ejemplos:</p>
+<pre><code>ConversorWebP.exe "C:\fotos\vacaciones.rar" -o "C:\fotos\webp" --zip vacaciones.zip
+ConversorWebP.exe "C:\capturas" -o "C:\capturas\webp" -q 95 --webp
+ConversorWebP.exe "C:\logos\logo.png" -o "C:\logos" --lossless</code></pre>
+<p>Sin argumentos, el ejecutable abre siempre la interfaz gráfica.</p>
+
+<h2 id="ajustes">12. Dónde se guardan los ajustes</h2>
+<p>La última carpeta de salida y todas las opciones (calidad, esfuerzo, casillas, nombre de ZIP…) se
+guardan en:</p>
+<pre><code>%APPDATA%\ConversorWebP\config.json</code></pre>
+<p>Si quieres volver a la configuración de fábrica, cierra el programa y borra ese archivo.</p>
+
+<h2 id="faq">13. Preguntas frecuentes</h2>
+
+<h3>¿Pierdo calidad al convertir?</h3>
+<p>Con calidad 85 la pérdida es imperceptible en pantalla y el archivo pesa mucho menos. Si necesitas
+fidelidad absoluta, activa <strong>Sin pérdida</strong>.</p>
+
+<h3>¿Puedo convertir cientos de archivos a la vez?</h3>
+<p>Sí. Una carpeta entera o un comprimido con miles de imágenes funcionan igual. Verás el progreso y
+podrás cancelar en cualquier momento; lo ya convertido se conserva.</p>
+
+<h3>¿Se borran los JPG originales?</h3>
+<p>No, nunca. El programa solo escribe archivos nuevos <code>.webp</code> en la carpeta de salida.</p>
+
+<h3>¿Funciona sin internet?</h3>
+<p>Sí, todo el proceso es local. No se descarga nada ni se envía nada a ningún servidor.</p>
+
+<h3>¿Por qué el ZIP del resultado pesa casi lo mismo que los WebP?</h3>
+<p>WebP ya está comprimido; el ZIP aporta todo en un solo archivo y un pequeño ahorro adicional, pero no
+puede comprimir mucho más.</p>
+
+<h3>¿Qué pasa si la misma imagen está en dos comprimidos?</h3>
+<p>Se convierten las dos y la segunda recibe un sufijo para no pisar la primera.</p>
+
+<h3>¿WebP o AVIF?</h3>
+<p>WebP tiene soporte universal y es la opción segura. AVIF comprime mejor (20-30 % menos peso con la misma
+calidad), pero tarda más en convertirse y algunos programas antiguos no lo abren. Para web moderna, AVIF
+es una buena elección; para máxima compatibilidad, WebP.</p>
+
+<h3>¿Por qué una imagen no baja del peso máximo que puse?</h3>
+<p>Porque ni con la calidad mínima se consigue. En ese caso reduce el «Lado máximo» (por ejemplo a
+1600 px) y vuelve a intentarlo; el propio registro indica el mínimo alcanzado.</p>
+
+<h3>¿El informe CSV se puede abrir en Excel?</h3>
+<p>Sí. Se guarda con separador «;» y UTF-8 con BOM, así que Excel en español lo abre en columnas y respeta
+acentos y eñes.</p>
+
+<h3>¿Puedo usar rutas de red o unidades externas?</h3>
+<p>Sí, siempre que Windows pueda leer y escribir en ellas. Si la unidad se desconecta durante el proceso
+verás un error en el registro.</p>
+
+<h2 id="problemas">14. Solución de problemas</h2>
+<table>
+  <tr><th>Síntoma</th><th>Causa y solución</th></tr>
+  <tr>
+    <td>«Sin 7-Zip/WinRAR: solo .zip»</td>
+    <td>No se encontró ningún extractor. Instala 7-Zip y vuelve a abrir la aplicación.</td>
+  </tr>
+  <tr>
+    <td>«No se puede escribir en la carpeta de salida»</td>
+    <td>La ruta es de solo lectura, está en uso o no tienes permisos. Elige otra carpeta.</td>
+  </tr>
+  <tr>
+    <td>Windows muestra un aviso al abrir el .exe</td>
+    <td>Es habitual en programas nuevos sin firma digital. Pulsa «Más información → Ejecutar de todas
+        formas». El ejecutable es autocontenido y funciona sin instalación.</td>
+  </tr>
+  <tr>
+    <td>Arrastrar y soltar no responde</td>
+    <td>Usa los botones; si persiste, cierra y vuelve a abrir. La ventana avisa si el módulo de arrastre
+        no está disponible.</td>
+  </tr>
+  <tr>
+    <td>Un archivo aparece como «FALLO»</td>
+    <td>Está dañado o es un formato no soportado. El registro indica el motivo concreto.</td>
+  </tr>
+  <tr>
+    <td>El antivirus bloquea el .exe</td>
+    <td>Los ejecutables generados con PyInstaller a veces dan falsos positivos. Añade una exclusión o
+        usa el código fuente con Python.</td>
+  </tr>
+</table>
+
+
+<h2 id="extras">15. Automatización, extras y distribución</h2>
+
+<h3>Carpeta vigilada</h3>
+<p><em>Herramientas → Carpeta vigilada…</em> permite elegir una carpeta de entrada y otra de salida. Cada
+3 segundos se revisan las imágenes y comprimidos nuevos y se convierten con los ajustes actuales, sin
+sobrescribir lo que ya exista. Se detiene desde el mismo menú o al cerrar el programa.</p>
+
+<h3>Patrón de nombres</h3>
+<p>El campo <strong>Nombre de salida</strong> acepta marcadores: <code>{nombre}</code>, <code>{ancho}</code>,
+<code>{alto}</code>, <code>{hash}</code>, <code>{fecha}</code>, <code>{formato}</code> y
+<code>{calidad}</code>. Vacío conserva el nombre original. Ejemplo: <code>{nombre}_{ancho}x{alto}</code>.</p>
+
+<h3>Solo analizar</h3>
+<p>Calcula el peso estimado de todo el lote sin crear imágenes. Con el informe CSV se guarda un
+<code>analisis_*.csv</code> con los tamaños estimados.</p>
+
+<h3>Vista previa</h3>
+<p><em>Herramientas → Vista previa de la primera imagen</em> muestra el original y el resultado lado a lado,
+con dimensiones, peso y porcentaje de ahorro.</p>
+
+<h3>Menú contextual de Windows</h3>
+<p>Se puede añadir «Convertir a WebP con Conversor WebP» al clic derecho de imágenes, carpetas y
+comprimidos. Se instala en HKCU (sin administrador) y se quita desde Herramientas.</p>
+
+<h3>HEIC/HEIF</h3>
+<p>Las fotos de iPhone en <code>.heic</code>/<code>.heif</code> se abren y convierten como cualquier otra
+imagen (requiere pillow-heif, incluido en el ejecutable).</p>
+
+
+
+<h3>Apagado automático al terminar</h3>
+<p>La casilla <strong>Apagar al terminar</strong> (barra inferior) permite apagar el equipo cuando la
+conversión acaba correctamente. Al activarla se pide confirmación. Al finalizar aparece una ventana con
+cuenta atrás de 30 segundos y dos botones: <em>Cancelar apagado</em> y <em>Apagar ahora</em>. No se apaga
+si hubo errores, si se canceló el trabajo o si era un análisis. En consola: <code>--shutdown</code> y
+<code>--shutdown-delay</code>.</p>
+
+<h3>Ayuda emergente (tooltips)</h3>
+<p>Al dejar el ratón unos instantes sobre cualquier botón, casilla, campo o desplegable aparece un globo
+con una explicación breve de para qué sirve. Al recorrer los menús, la barra de estado inferior muestra la
+descripción de la opción resaltada.</p>
+
+<h3>Instalador y versión portable</h3>
+<p>El instalador crea accesos directos y desinstalador, instala en
+<code>%LOCALAPPDATA%\Programs\ConversorWebP</code> (sin pedir administrador) y guarda la configuración en
+<code>%APPDATA%</code>. La versión portable se descomprime y usa un <code>config.json</code> junto al
+<code>.exe</code>, sin tocar el registro ni el perfil del usuario.</p>
+
+<h3>Actualizaciones</h3>
+<p>Ambas ediciones comprueban la última release de GitHub al arrancar (como máximo una vez al día) y
+muestran un aviso en la barra de estado. <em>Ayuda → Buscar actualizaciones</em> fuerza la comprobación y
+ofrece abrir la página de descarga.</p>
+
+<p class="pie">
+  Conversor WebP 2.6.0 · Programa local para Windows · Interfaz Tkinter, conversión con Pillow, arrastre con
+  TkDND, extracción con 7-Zip/WinRAR.<br>
+  Este manual se abre desde el programa en <strong>Ayuda → Manual de uso</strong> y también puede abrirse
+  con doble clic en cualquier navegador.
+</p>
+
+</div>
+</body>
+</html>

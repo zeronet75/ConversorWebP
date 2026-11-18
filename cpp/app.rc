@@ -1,0 +1,2 @@
+// Recursos del ejecutable: icono embebido (Explorador, barra de tareas y Alt+Tab)
+101 ICON "..\\icon.ico"

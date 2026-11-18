@@ -1,0 +1,17 @@
+# Artefactos de compilación de la versión C++
+bin/
+obj/
+dist/
+portable/
+third_party/
+
+# Binarios y paquetes generados
+*.exe
+*.zip
+*.res
+*.pdb
+*.ilk
+*.obj
+
+# Configuración local generada junto al ejecutable
+config.ini
