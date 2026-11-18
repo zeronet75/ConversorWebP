@@ -76,7 +76,7 @@ using Microsoft::WRL::ComPtr;
 namespace fs = std::filesystem;
 
 static const wchar_t* APP_NAME = L"Conversor WebP";
-static const wchar_t* APP_VERSION = L"2.6.3";
+static const wchar_t* APP_VERSION = L"2.6.4";
 
 // ---------------------------------------------------------------------------
 //  Utilidades generales
@@ -1226,7 +1226,7 @@ struct Options {
     bool beep = true;
     bool csv = false;
     std::wstring salida;
-    std::wstring zip_nombre = L"imagenes_2.6.3-cpp.zip";
+    std::wstring zip_nombre = L"imagenes_2.6.4-cpp.zip";
     std::wstring patron;
     std::wstring formato = L"WEBP";
     bool dry_run = false;
@@ -4712,14 +4712,14 @@ static void reubicar_controles(int cw, int ch) {
     mover(g_combo_metodo, cardR - 66, 370, 52, 200);
     mover(g_check_lossless, cardL + 13, 390, 300, 20);
     mover(g_check_reencode, cardL + 13, 413, 300, 20);
-    mover(g_check_flatten, cardL + 13, 434, 190, 20);
-    mover(g_btn_color, cardL + 213, 434, 28, 20);
-    mover(ctl(1203), cardL + 13, 462, 80, 20);
-    mover(g_combo_dim, cardL + 84, 460, 85, 200);
-    mover(ctl(1204), cardL + 177, 464, 160, 18);
-    mover(ctl(ID_TARGET), cardL + 13, 489, 100, 20);
-    mover(g_edit_objetivo, cardL + 114, 487, 51, 24);
-    mover(ctl(1205), cardL + 159, 491, 120, 18);
+    mover(g_check_flatten, cardL + 13, 434, 220, 20);
+    mover(g_btn_color, cardL + 240, 434, 28, 20);
+    mover(ctl(1203), cardL + 13, 462, 100, 20);
+    mover(g_combo_dim, cardL + 119, 460, 118, 200);
+    mover(ctl(1204), cardL + 243, 464, 160, 18);
+    mover(ctl(ID_TARGET), cardL + 13, 489, 110, 20);
+    mover(g_edit_objetivo, cardL + 126, 487, 51, 24);
+    mover(ctl(1205), cardL + 184, 491, 120, 18);
 
     // Acciones
     int openX = cw - 146;
@@ -5240,7 +5240,7 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
 
             // Cabecera
             etiqueta(L"Conversor WebP", 16, 17, 300, 30, 1400, g_font_title);
-            etiqueta(L"v2.6.3", 200, 29, 120, 18, 1401, g_font_muted);
+            etiqueta(L"v2.6.4", 200, 29, 120, 18, 1401, g_font_muted);
             etiqueta(L"JPG · PNG · BMP · TIFF · GIF · ICO  →  WebP / AVIF", 560, 23, 390, 20,
                      1402, g_font_muted, SS_RIGHT);
             boton(L"", 958, 20, 26, 26, ID_TEMA, BS_OWNERDRAW);
@@ -5328,21 +5328,21 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
                                      ID_LOSSLESS, g_opt.sin_perdida);
             g_check_reencode = check(L"Recodificar tambien los .webp / .avif", 513, 413, 300, 20,
                                      ID_REENCODE, g_opt.reencode);
-            g_check_flatten = check(L"Aplanar transparencia sobre", 513, 434, 190, 20,
+            g_check_flatten = check(L"Aplanar transparencia sobre", 513, 434, 220, 20,
                                     ID_FLATTEN, g_opt.flatten);
-            g_btn_color = boton(L"", 726, 434, 28, 20, ID_COLOR, BS_OWNERDRAW);
-            etiqueta(L"Lado maximo", 513, 462, 80, 20, 1203);
-            g_combo_dim = combo(597, 460, 85, 200, ID_DIM);
+            g_btn_color = boton(L"", 740, 434, 28, 20, ID_COLOR, BS_OWNERDRAW);
+            etiqueta(L"Lado maximo", 513, 462, 100, 20, 1203);
+            g_combo_dim = combo(619, 460, 118, 200, ID_DIM);
             for (auto t : {L"Sin cambio", L"2560", L"1920", L"1600", L"1200", L"800", L"512"})
                 SendMessageW(g_combo_dim, CB_ADDSTRING, 0, (LPARAM)t);
             SendMessageW(g_combo_dim, CB_SETCURSEL, 0, 0);
-            etiqueta(L"px  ·  nunca amplia", 690, 464, 160, 18, 1204, g_font_muted);
-            check(L"Peso maximo", 513, 489, 100, 20, ID_TARGET, g_opt.objetivo_kb > 0);
-            g_edit_objetivo = edit(614, 487, 51, 24, ID_TARGET_EDIT);
+            etiqueta(L"px  ·  nunca amplia", 743, 464, 160, 18, 1204, g_font_muted);
+            check(L"Peso maximo", 513, 489, 110, 20, ID_TARGET, g_opt.objetivo_kb > 0);
+            g_edit_objetivo = edit(626, 487, 51, 24, ID_TARGET_EDIT);
             wchar_t kb[16];
             swprintf_s(kb, L"%d", g_opt.objetivo_kb > 0 ? g_opt.objetivo_kb : 150);
             SetWindowTextW(g_edit_objetivo, kb);
-            etiqueta(L"KB por imagen", 672, 491, 120, 18, 1205, g_font_muted);
+            etiqueta(L"KB por imagen", 684, 491, 120, 18, 1205, g_font_muted);
 
             // Acciones
             g_btn_convertir = boton(L"Convertir a WebP", 16, 630, 160, 42, ID_START, BS_OWNERDRAW);
@@ -6443,7 +6443,7 @@ int wmain(int argc, wchar_t** argv) {
     wc.hIconSm = icono_pequeno;
     RegisterClassExW(&wc);
 
-    g_hwnd = CreateWindowExW(0, wc.lpszClassName, L"Conversor WebP 2.6.3",
+    g_hwnd = CreateWindowExW(0, wc.lpszClassName, L"Conversor WebP 2.6.4",
                              WS_OVERLAPPEDWINDOW,
                              CW_USEDEFAULT, CW_USEDEFAULT, 1016, 900, nullptr, nullptr, inst, nullptr);
     if (!g_hwnd) return 1;

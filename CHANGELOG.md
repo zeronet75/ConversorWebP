@@ -6,6 +6,15 @@ Todos los cambios relevantes del proyecto. Formato basado en
 
 ---
 
+## [2.6.4] — 2026-11-18
+
+### Corregido
+
+- En la edición C++, la etiqueta **Lado máximo** se solapaba con su desplegable y el texto
+  «Sin cambio» aparecía recortado. Ahora la fila tiene más espacio y se lee completa.
+
+---
+
 ## [2.6.3] — 2026-11-18
 
 ### Añadido
@@ -249,6 +258,7 @@ Todos los cambios relevantes del proyecto. Formato basado en
 - Conservación de transparencia, perfil ICC y orientación EXIF.
 - Modo consola básico.
 
+[2.6.4]: #264--2026-11-18
 [2.6.3]: #263--2026-11-18
 [2.6.2]: #262--2026-11-18
 [2.6.1]: #261--2026-11-18
