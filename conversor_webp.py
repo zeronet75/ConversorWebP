@@ -142,6 +142,11 @@ def _ruta_config() -> Path:
 
 CONFIG_FILE = _ruta_config()
 
+
+def ruta_cola() -> Path:
+    """Archivo de cola pendiente, junto a la configuracion."""
+    return CONFIG_FILE.with_name("queue.json")
+
 # Paleta
 BG = "#eef1f6"
 CARD = "#ffffff"
@@ -1150,7 +1155,12 @@ def convert_one(src: Path, dst: Path, job: Job) -> tuple[int, int, str]:
     return src.stat().st_size, tam_out, aviso
 
 
-def run_job(job: Job, emit, cancel_event: threading.Event) -> None:
+def run_job(
+    job: Job,
+    emit,
+    cancel_event: threading.Event,
+    pause_event: threading.Event | None = None,
+) -> None:
     """Ejecuta el trabajo completo. emit(tipo, datos) notifica a la interfaz."""
     temp_root: Path | None = None
     res = Result()
@@ -1356,11 +1366,26 @@ def run_job(job: Job, emit, cancel_event: threading.Event) -> None:
         trabajadores = min(8, max(2, os.cpu_count() or 4))
         paralelo = len(tareas) >= 4 and trabajadores > 1
 
+        def esperar_pausa() -> bool:
+            """Devuelve False si se cancelo mientras estaba en pausa."""
+            if pause_event is None:
+                return not cancel_event.is_set()
+            while pause_event.is_set():
+                if cancel_event.is_set():
+                    return False
+                time.sleep(0.1)
+            return not cancel_event.is_set()
+
+        def convertir_con_pausa(src: Path, dst: Path):
+            if not esperar_pausa():
+                return None
+            return convert_one(src, dst, job)
+
         if paralelo:
             emit("status", f"Convirtiendo {len(tareas)} imagenes ({trabajadores} en paralelo)...")
             with ThreadPoolExecutor(max_workers=trabajadores) as pool:
                 futuros = {
-                    pool.submit(convert_one, src, dst, job): (src, dst)
+                    pool.submit(convertir_con_pausa, src, dst): (src, dst)
                     for src, _rel, dst in tareas
                 }
                 for futuro in as_completed(futuros):
@@ -1372,7 +1397,10 @@ def run_job(job: Job, emit, cancel_event: threading.Event) -> None:
                             f.cancel()
                         break
                     try:
-                        tam_in, tam_out, aviso = futuro.result()
+                        resultado = futuro.result()
+                        if resultado is None:
+                            continue
+                        tam_in, tam_out, aviso = resultado
                         exito(src, dst, tam_in, tam_out, aviso)
                     except Exception as e:  # noqa: BLE001
                         fallo(src, dst, e)
@@ -1380,7 +1408,7 @@ def run_job(job: Job, emit, cancel_event: threading.Event) -> None:
                     emit("progress", (hechas, total))
         else:
             for src, _rel, dst in tareas:
-                if cancel_event.is_set():
+                if not esperar_pausa():
                     res.cancelled = True
                     emit("log", ("warn", "Cancelado por el usuario."))
                     break
@@ -1940,6 +1968,10 @@ class App(BaseTk):  # type: ignore[misc,valid-type]
         self._preview_win: tk.Toplevel | None = None
         self._preview_temp: Path | None = None
         self._preview_generando = False
+        self.pause_event = threading.Event()
+        self._fallidos_ultimos: list[Path] = []
+        self._sources_iniciales = bool(sources_iniciales)
+        self._job_actual: Job | None = None
 
         self._dpi_setup()
         self._build_style()
@@ -1954,6 +1986,7 @@ class App(BaseTk):  # type: ignore[misc,valid-type]
             var.trace_add("write", self._marcar_personalizado)
         self._build_menu()
         self._load_config()
+        self._restaurar_cola()
         self._center()
 
         self.protocol("WM_DELETE_WINDOW", self._on_close)
@@ -2635,6 +2668,8 @@ class App(BaseTk):  # type: ignore[misc,valid-type]
         self.btn_start.pack(side="left")
         self.btn_cancel = ttk.Button(accion, text="Cancelar", command=self._cancel, state="disabled")
         self.btn_cancel.pack(side="left", padx=(8, 0))
+        self.btn_pause = ttk.Button(accion, text="Pausar", command=self._toggle_pause, state="disabled")
+        self.btn_pause.pack(side="left", padx=(6, 0))
         self.btn_open = ttk.Button(accion, text="Abrir carpeta de salida", command=self._open_output)
         self.btn_open.pack(side="right")
         self.chk_beep = self._crear_check(
@@ -2756,6 +2791,7 @@ class App(BaseTk):  # type: ignore[misc,valid-type]
             "entry_peso": "Peso máximo por imagen, en KB (mínimo 5).",
             "btn_start": "Inicia la conversión con los ajustes actuales (Ctrl+Enter o F5).",
             "btn_cancel": "Detiene el proceso después del archivo en curso.",
+            "btn_pause": "Pausa o reanuda la cola sin cancelar el trabajo.",
             "chk_beep": "Pitido al terminar: agudo si todo va bien, grave si hay errores.",
             "chk_apagar": "Apaga el equipo al terminar una conversión correcta, con cuenta atrás cancelable.",
             "btn_open": "Abre el Explorador en la carpeta de salida.",
@@ -2850,6 +2886,20 @@ class App(BaseTk):  # type: ignore[misc,valid-type]
         herr.add_separator()
         herr.add_command(label="Carpeta vigilada...", command=self._dialogo_vigilante)
         herr.add_command(label="Vista previa de la primera imagen", command=self._vista_previa)
+        herr.add_separator()
+        herr.add_command(
+            label="Subir origen",
+            accelerator="Ctrl+Arriba",
+            command=lambda: self._mover_origen(-1),
+        )
+        herr.add_command(
+            label="Bajar origen",
+            accelerator="Ctrl+Abajo",
+            command=lambda: self._mover_origen(1),
+        )
+        herr.add_command(
+            label="Reintentar archivos fallidos", command=self._reintentar_fallidos
+        )
         if self.oscuro and getattr(self, "barra_custom", None) is not None:
             self.configure(menu="")
             self.menu_barra = None
@@ -3362,6 +3412,131 @@ class App(BaseTk):  # type: ignore[misc,valid-type]
             dry_run=analizar,
         )
 
+    def _guardar_cola(self, job: Job) -> None:
+        datos = {
+            "version": 1,
+            "sources": [str(p) for p in job.sources],
+            "output_dir": str(job.output_dir),
+            "ajustes": {
+                "quality": job.quality,
+                "method": job.method,
+                "keep_structure": job.keep_structure,
+                "overwrite": job.overwrite,
+                "reencode_webp": job.reencode_webp,
+                "flatten": job.flatten,
+                "background": job.background,
+                "lossless": job.lossless,
+                "make_zip": job.make_zip,
+                "zip_name": job.zip_name,
+                "max_dimension": job.max_dimension,
+                "target_kb": job.target_kb,
+                "formato": job.formato,
+                "csv_report": job.csv_report,
+                "usar_gpu": job.usar_gpu,
+                "gpu_forzar": job.gpu_forzar,
+                "name_pattern": job.name_pattern,
+                "dry_run": job.dry_run,
+                "beep": bool(self.beep.get()),
+                "apagar_al_terminar": bool(self.apagar.get()),
+            },
+        }
+        try:
+            ruta = ruta_cola()
+            ruta.parent.mkdir(parents=True, exist_ok=True)
+            temporal = ruta.with_name(ruta.name + ".tmp")
+            temporal.write_text(
+                json.dumps(datos, indent=2, ensure_ascii=False), encoding="utf-8"
+            )
+            os.replace(temporal, ruta)
+        except Exception:  # noqa: BLE001
+            pass
+
+    def _borrar_cola(self) -> None:
+        try:
+            ruta_cola().unlink(missing_ok=True)
+        except OSError:
+            pass
+
+    def _actualizar_cola_si_existe(self) -> None:
+        if not ruta_cola().is_file():
+            return
+        if not self.sources:
+            self._borrar_cola()
+            return
+        destino = self.output_dir.get().strip()
+        salida = (
+            Path(destino)
+            if destino
+            else Path(tempfile.gettempdir()) / "conversor_webp_analisis"
+        )
+        try:
+            self._guardar_cola(self._crear_job(self.sources, salida))
+        except Exception:  # noqa: BLE001
+            pass
+
+    def _leer_cola(self) -> dict | None:
+        try:
+            datos = json.loads(ruta_cola().read_text(encoding="utf-8"))
+        except Exception:  # noqa: BLE001
+            return None
+        if not isinstance(datos, dict):
+            return None
+        fuentes = datos.get("sources")
+        if not isinstance(fuentes, list) or not all(isinstance(p, str) for p in fuentes):
+            return None
+        if not isinstance(datos.get("output_dir", ""), str):
+            return None
+        if not isinstance(datos.get("ajustes", {}), dict):
+            return None
+        return datos
+
+    def _restaurar_cola(self) -> None:
+        if self._sources_iniciales:
+            return
+        datos = self._leer_cola()
+        if not datos:
+            return
+        fuentes = [Path(p) for p in datos["sources"] if Path(p).exists()]
+        if not fuentes:
+            self._borrar_cola()
+            return
+        self.sources = fuentes
+        self.output_dir.set(datos.get("output_dir", ""))
+        ajustes = datos.get("ajustes", {})
+        self._aplicar_completos(
+            {
+                "quality": ajustes.get("quality", 85),
+                "method": ajustes.get("method", 6),
+                "lossless": ajustes.get("lossless", False),
+                "reencode_webp": ajustes.get("reencode_webp", False),
+                "flatten": ajustes.get("flatten", False),
+                "background": ajustes.get("background", "#ffffff"),
+                "max_dimension": ajustes.get("max_dimension", 0),
+                "target_kb": ajustes.get("target_kb", 0),
+                "keep_structure": ajustes.get("keep_structure", True),
+                "overwrite": ajustes.get("overwrite", True),
+                "make_zip": ajustes.get("make_zip", False),
+                "zip_name": ajustes.get("zip_name", ""),
+                "formato": ajustes.get("formato", "WEBP"),
+                "csv_report": ajustes.get("csv_report", False),
+            }
+        )
+        self.usar_gpu.set(bool(ajustes.get("usar_gpu", False)))
+        self.gpu_forzar_var.set(bool(ajustes.get("gpu_forzar", False)))
+        self.name_pattern.set(str(ajustes.get("name_pattern", "") or ""))
+        self.dry_run.set(bool(ajustes.get("dry_run", False)))
+        self.beep.set(bool(ajustes.get("beep", True)))
+        self.apagar.set(bool(ajustes.get("apagar_al_terminar", False)))
+        self.zip_name.set(str(ajustes.get("zip_name", "") or ""))
+        self._on_dry_run()
+        self._on_formato()
+        self._refrescar_gpu_ui()
+        self._refrescar_origen()
+        self.lbl_status.configure(
+            text=f"Cola pendiente restaurada: {len(fuentes)} origen(es)."
+        )
+        self._log("info", "Cola pendiente restaurada. Revisa los ajustes y pulsa Convertir.")
+
     def _dialogo_vigilante(self) -> None:
         if self._vigilante is not None and self._vigilante.is_alive():
             if messagebox.askyesno(
@@ -3851,6 +4026,7 @@ class App(BaseTk):  # type: ignore[misc,valid-type]
         self._aplicar_completos(h.get("ajustes", {}))
         self.preset_sel.set("Personalizado")
         self._refrescar_origen()
+        self._actualizar_cola_si_existe()
         self._log("info", f"Historial: cargado el trabajo del {h.get('fecha', '')}.")
         self.lbl_status.configure(text="Trabajo del historial cargado. Pulsa Convertir.")
 
@@ -3937,6 +4113,7 @@ class App(BaseTk):  # type: ignore[misc,valid-type]
             messagebox.showinfo(
                 APP_NAME, f"Se ignoraron {ignorados} archivo(s) que no son imagenes ni comprimidos."
             )
+        self._actualizar_cola_si_existe()
 
     def _add_files(self) -> None:
         rutas = filedialog.askopenfilenames(
@@ -3969,6 +4146,7 @@ class App(BaseTk):  # type: ignore[misc,valid-type]
     def _clear_sources(self) -> None:
         self.sources.clear()
         self._refrescar_origen()
+        self._borrar_cola()
 
     def _quitar_seleccionados(self) -> None:
         indices = list(self.source_list.curselection())
@@ -3978,12 +4156,55 @@ class App(BaseTk):  # type: ignore[misc,valid-type]
             del self.sources[i]
             self.source_list.delete(i)
         self._refrescar_origen()
+        self._actualizar_cola_si_existe()
+
+    def _mover_origen(self, delta: int) -> None:
+        if self.running or not self.sources:
+            return
+        seleccion = list(self.source_list.curselection())
+        if not seleccion:
+            return
+        if delta < 0 and seleccion[0] == 0:
+            return
+        if delta > 0 and seleccion[-1] >= len(self.sources) - 1:
+            return
+        orden = seleccion if delta < 0 else list(reversed(seleccion))
+        for i in orden:
+            j = i + delta
+            self.sources[i], self.sources[j] = self.sources[j], self.sources[i]
+        self._refrescar_origen()
+        destino = [i + delta for i in seleccion]
+        for i in destino:
+            self.source_list.selection_set(i)
+        self.source_list.see(destino[0])
+        self._actualizar_cola_si_existe()
+
+    def _reintentar_fallidos(self) -> None:
+        if self.running:
+            messagebox.showinfo(APP_NAME, "Espera a que termine el trabajo en curso.")
+            return
+        fuentes = [p for p in self._fallidos_ultimos if p.exists()]
+        if not fuentes:
+            messagebox.showinfo(
+                APP_NAME,
+                "No hay archivos fallidos pendientes de reintentar.",
+            )
+            return
+        self.sources = fuentes
+        self._refrescar_origen()
+        self.lbl_status.configure(
+            text=f"Fallidos cargados: {len(fuentes)}. Pulsa Convertir para reintentar."
+        )
+        self._log("info", f"Reintento preparado con {len(fuentes)} archivo(s) fallido(s).")
+        self._actualizar_cola_si_existe()
 
     def _bind_shortcuts(self) -> None:
         self.bind_all("<Control-o>", lambda _e: self._add_files())
         self.bind_all("<Control-O>", lambda _e: self._add_folder())  # Ctrl+Mayus+O
         self.bind_all("<Control-Return>", self._atajo_convertir)
         self.bind_all("<F5>", self._atajo_convertir)
+        self.source_list.bind("<Control-Up>", lambda _e: self._mover_origen(-1))
+        self.source_list.bind("<Control-Down>", lambda _e: self._mover_origen(1))
 
     def _atajo_convertir(self, _event=None):
         if not self.running:
@@ -4133,6 +4354,8 @@ class App(BaseTk):  # type: ignore[misc,valid-type]
         self.progress.configure(value=0, maximum=100)
         self._clear_log()
         self._limpiar_tabla()
+        self._job_actual = job
+        self._guardar_cola(job)
         if analizar:
             self._log("warn", "MODO ANALISIS: no se escribiran imagenes, solo el informe.")
         self._log("info", f"Salida: {salida}  ·  Formato: {job.formato}")
@@ -4151,17 +4374,35 @@ class App(BaseTk):  # type: ignore[misc,valid-type]
         self.total = 0
         self.lbl_status.configure(text="Preparando...")
         self.cancel_event.clear()
+        self.pause_event.clear()
+        self.btn_pause.configure(text="Pausar", state="normal")
 
         self.worker = threading.Thread(
             target=run_job,
-            args=(job, lambda *evento: self.queue.put(evento), self.cancel_event),
+            args=(job, lambda *evento: self.queue.put(evento), self.cancel_event, self.pause_event),
             daemon=True,
         )
         self.worker.start()
 
+    def _toggle_pause(self) -> None:
+        if not self.running:
+            return
+        if self.pause_event.is_set():
+            self.pause_event.clear()
+            self.btn_pause.configure(text="Pausar")
+            self.lbl_status.configure(text="Reanudando...")
+            self._log("info", "Cola reanudada.")
+        else:
+            self.pause_event.set()
+            self.btn_pause.configure(text="Reanudar")
+            self.lbl_status.configure(text="Pausado. Pulsa Reanudar para continuar.")
+            self._log("warn", "Cola pausada.")
+
     def _cancel(self) -> None:
         if self.running:
             self.cancel_event.set()
+            self.pause_event.clear()
+            self.btn_pause.configure(text="Pausar", state="disabled")
             self.lbl_status.configure(text="Cancelando...")
 
     def _set_running(self, value: bool) -> None:
@@ -4176,6 +4417,9 @@ class App(BaseTk):  # type: ignore[misc,valid-type]
         for w in (self.btn_save_preset, self.btn_del_preset):
             w.configure(state=estado)
         self.btn_cancel.configure(state="normal" if value else "disabled")
+        self.btn_pause.configure(state="normal" if value else "disabled", text="Pausar")
+        if not value:
+            self.pause_event.clear()
 
     def _clear_log(self) -> None:
         self.log.configure(state="normal")
@@ -4313,6 +4557,22 @@ class App(BaseTk):  # type: ignore[misc,valid-type]
 
     def _finish(self, res: Result) -> None:
         self._set_running(False)
+        fallidos = [src for src, _motivo in res.failed]
+        if any("conversor_webp_" in str(p).lower() for p in fallidos):
+            # Los fallos dentro de un comprimido apuntan a temporales ya borrados:
+            # para reintentar hay que volver a procesar los origenes originales.
+            fuentes_retry = [
+                p for p in (self._job_actual.sources if self._job_actual else []) if p.exists()
+            ]
+        else:
+            fuentes_retry = [p for p in fallidos if p.exists()]
+        self._fallidos_ultimos = fuentes_retry
+        if fuentes_retry and self._job_actual is not None:
+            job_retry = Job(**{**self._job_actual.__dict__, "sources": fuentes_retry})
+            self._guardar_cola(job_retry)
+        elif not res.cancelled:
+            self._borrar_cola()
+        self._job_actual = None
         self._reproducir_aviso(not res.failed and not res.cancelled)
         self._registrar_historial(res)
         mb_in = res.bytes_in / 1048576

@@ -1397,6 +1397,7 @@ static HWND g_progress = nullptr;
 static HWND g_status = nullptr;
 static HWND g_btn_convertir = nullptr;
 static HWND g_btn_cancelar = nullptr;
+static HWND g_btn_pausa = nullptr;
 static HWND g_check_lossless = nullptr;
 static HWND g_check_sobrescribir = nullptr;
 static HWND g_check_estructura = nullptr;
@@ -1706,10 +1707,12 @@ static void aplicar_paleta_cpp(bool oscuro) {
 static HICON g_icono = nullptr;
 
 static std::vector<std::wstring> g_origenes;
+static std::vector<std::wstring> g_fallidos_ultimos;
 static std::vector<std::wstring> g_rutas_resultados;
 static std::thread g_hilo;
 static std::atomic<bool> g_corriendo{false};
 static std::atomic<bool> g_cancelar{false};
+static std::atomic<bool> g_pausa{false};
 static std::mutex g_mutex_eventos;
 static std::deque<Evento> g_eventos;
 static std::atomic<bool> g_modo_cli{false};
@@ -1733,7 +1736,8 @@ enum {
     ID_MENU_CONTEXT_ON, ID_MENU_CONTEXT_OFF, ID_MENU_SENDTO_ON, ID_MENU_SENDTO_OFF,
     ID_MENU_UPDATE, ID_MENU_WATCH, ID_MENU_PREVIEW,
     ID_ADD_ARCHIVE = 3901, ID_PATTERN_HELP = 3902, ID_SCROLL_ORIGEN = 3904,
-    ID_TEMA = 3910,
+    ID_TEMA = 3910, ID_PAUSA = 3911, ID_RETRY = 3912,
+    ID_ORIGEN_UP = 3913, ID_ORIGEN_DOWN = 3914,
     ID_SECTION_ORIGEN = 1105, ID_LBL_EXTRACTOR = 1106,
     ID_HIST_BASE = 40000, ID_HIST_CLEAR = 40050
 };
@@ -2608,6 +2612,8 @@ static void anadir_lista(HWND lista, const std::wstring& texto) {
 }
 
 static std::wstring buscar_extractor();
+static void guardar_cola();
+static void borrar_cola();
 
 static void refrescar_origenes() {
     ListView_DeleteAllItems(g_lista_origen);
@@ -2656,6 +2662,9 @@ static void anadir_origen(const std::wstring& ruta) {
     for (auto& s : g_origenes) if (_wcsicmp(s.c_str(), ruta.c_str()) == 0) return;
     g_origenes.push_back(ruta);
     refrescar_origenes();
+    std::error_code ec_cola;
+    if (fs::exists(fs::path(g_ini).parent_path() / L"queue.ini", ec_cola))
+        guardar_cola();
     if (texto_ventana(g_edit_salida).empty()) {
         fs::path p(ruta);
         fs::path base = fs::is_directory(p) ? p : p.parent_path();
@@ -3064,6 +3073,7 @@ static void hilo_conversion(Options opt_trabajo, std::vector<std::wstring> orige
         t_hilos_avif = (n_hilos > 1) ? 1 : 4;
 
         for (;;) {
+            while (g_pausa && !g_cancelar) Sleep(100);
             if (g_cancelar) break;
             int i = siguiente.fetch_add(1);
             if (i >= total) break;
@@ -3542,6 +3552,99 @@ static Options leer_opciones_controles() {
     o.color = g_color;
     normalizar_opciones(o);
     return o;
+}
+
+static fs::path ruta_cola() { return fs::path(g_ini).parent_path() / L"queue.ini"; }
+
+static void borrar_cola() {
+    std::error_code ec;
+    fs::remove(ruta_cola(), ec);
+}
+
+static void guardar_cola() {
+    if (g_origenes.empty()) {
+        borrar_cola();
+        return;
+    }
+    std::wstring ruta = ruta_cola().wstring();
+    std::wstring cuenta = std::to_wstring(g_origenes.size());
+    WritePrivateProfileStringW(L"cola", L"count", cuenta.c_str(), ruta.c_str());
+    for (size_t i = 0; i < g_origenes.size(); i++) {
+        std::wstring clave = L"origen" + std::to_wstring(i);
+        WritePrivateProfileStringW(L"cola", clave.c_str(), g_origenes[i].c_str(),
+                                   ruta.c_str());
+    }
+    std::wstring opciones = serializar_opciones(g_opt);
+    WritePrivateProfileStringW(L"cola", L"opciones", opciones.c_str(), ruta.c_str());
+}
+
+static void cargar_cola() {
+    std::wstring ruta = ruta_cola().wstring();
+    int n = std::clamp((int)GetPrivateProfileIntW(L"cola", L"count", 0, ruta.c_str()),
+                       0, 10000);
+    if (n <= 0) return;
+    std::vector<std::wstring> fuentes;
+    for (int i = 0; i < n; i++) {
+        std::wstring clave = L"origen" + std::to_wstring(i);
+        wchar_t valor[32768] = L"";
+        GetPrivateProfileStringW(L"cola", clave.c_str(), L"", valor, 32768, ruta.c_str());
+        if (valor[0]) {
+            std::error_code ec;
+            if (fs::exists(valor, ec)) fuentes.push_back(valor);
+        }
+    }
+    if (fuentes.empty()) {
+        borrar_cola();
+        return;
+    }
+    wchar_t opciones[8192] = L"";
+    GetPrivateProfileStringW(L"cola", L"opciones", L"", opciones, 8192, ruta.c_str());
+    g_origenes = fuentes;
+    if (opciones[0]) g_opt = deserializar_opciones(opciones);
+    aplicar_opciones_controles(g_opt, true);
+    refrescar_origenes();
+    SetWindowTextW(g_status, L"Cola pendiente restaurada. Pulsa Convertir.");
+    log(L"Cola pendiente restaurada: " + std::to_wstring(fuentes.size()) + L" origen(es).");
+}
+
+static void mover_origen(int delta) {
+    if (g_corriendo) return;
+    int sel = ListView_GetNextItem(g_lista_origen, -1, LVNI_SELECTED);
+    if (sel < 0) return;
+    int destino = sel + delta;
+    if (destino < 0 || destino >= (int)g_origenes.size()) return;
+    std::swap(g_origenes[(size_t)sel], g_origenes[(size_t)destino]);
+    refrescar_origenes();
+    ListView_SetItemState(g_lista_origen, destino,
+                          LVIS_SELECTED | LVIS_FOCUSED,
+                          LVIS_SELECTED | LVIS_FOCUSED);
+    ListView_EnsureVisible(g_lista_origen, destino, FALSE);
+    std::error_code ec_cola;
+    if (fs::exists(ruta_cola(), ec_cola)) guardar_cola();
+}
+
+static void reintentar_fallidos() {
+    if (g_corriendo) {
+        MessageBoxW(g_hwnd, L"Espera a que termine el trabajo en curso.", APP_NAME,
+                    MB_ICONINFORMATION);
+        return;
+    }
+    std::vector<std::wstring> fuentes;
+    for (auto& p : g_fallidos_ultimos) {
+        std::error_code ec;
+        if (fs::exists(p, ec)) fuentes.push_back(p);
+    }
+    if (fuentes.empty()) {
+        MessageBoxW(g_hwnd, L"No hay archivos fallidos pendientes de reintentar.", APP_NAME,
+                    MB_ICONINFORMATION);
+        return;
+    }
+    g_origenes = fuentes;
+    refrescar_origenes();
+    SetWindowTextW(g_status, L"Fallidos cargados. Pulsa Convertir para reintentar.");
+    log(L"Reintento preparado con " + std::to_wstring(fuentes.size()) + L" archivo(s).");
+    std::error_code ec_cola;
+    if (fs::exists(ruta_cola(), ec_cola)) guardar_cola();
 }
 
 static void marcar_personalizado() {
@@ -4411,6 +4514,7 @@ static void crear_tooltips() {
     add(g_edit_objetivo, L"Peso máximo por imagen, en KB (mínimo 5).");
     add(g_btn_convertir, L"Inicia la conversión con los ajustes actuales (Ctrl+Enter o F5).");
     add(g_btn_cancelar, L"Detiene el proceso después del archivo en curso.");
+    add(g_btn_pausa, L"Pausa o reanuda la cola sin cancelar el trabajo.");
     add(g_check_beep, L"Pitido al terminar: agudo si todo va bien, grave si hay errores.");
     add(g_check_apagar, L"Apaga el equipo al terminar una conversión correcta, con cuenta atrás cancelable.");
     add(GetDlgItem(g_hwnd, ID_OPEN), L"Abre el Explorador en la carpeta de salida.");
@@ -5430,6 +5534,8 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             SendMessageW(g_btn_convertir, WM_SETFONT, (WPARAM)g_font_start, TRUE);
             g_btn_cancelar = boton(L"Cancelar", 192, 619, 82, 32, ID_CANCEL);
             EnableWindow(g_btn_cancelar, FALSE);
+            g_btn_pausa = boton(L"Pausar", 280, 619, 82, 32, ID_PAUSA);
+            EnableWindow(g_btn_pausa, FALSE);
             g_ui_apagar = g_opt.apagar;
             g_ui_beep = g_opt.beep;
             g_check_apagar = crear(L"BUTTON", L"Apagar al terminar",
@@ -5789,11 +5895,15 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
                     }
                     g_origenes = nuevos;
                     refrescar_origenes();
+                    std::error_code ec_cola;
+                    if (fs::exists(fs::path(g_ini).parent_path() / L"queue.ini", ec_cola))
+                        guardar_cola();
                     return 0;
                 }
                 case ID_CLEAR:
                     g_origenes.clear();
                     refrescar_origenes();
+                    borrar_cola();
                     return 0;
                 case ID_BROWSE: {
                     IFileOpenDialog* dlg = nullptr;
@@ -5923,9 +6033,13 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
                     }
 
                     guardar_config();
+                    guardar_cola();
                     EnableWindow(g_btn_convertir, FALSE);
                     EnableWindow(g_btn_cancelar, TRUE);
+                    EnableWindow(g_btn_pausa, TRUE);
                     g_cancelar = false;
+                    g_pausa = false;
+                    SetWindowTextW(g_btn_pausa, L"Pausar");
                     g_corriendo = true;
                     {
                         std::lock_guard<std::mutex> lock(g_mutex_eventos);
@@ -5942,7 +6056,27 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
                 }
                 case ID_CANCEL:
                     g_cancelar = true;
+                    g_pausa = false;
+                    EnableWindow(g_btn_pausa, FALSE);
+                    SetWindowTextW(g_btn_pausa, L"Pausar");
                     SetWindowTextW(g_status, L"Cancelando...");
+                    return 0;
+                case ID_PAUSA:
+                    if (g_corriendo) {
+                        g_pausa = !g_pausa;
+                        SetWindowTextW(g_btn_pausa, g_pausa ? L"Reanudar" : L"Pausar");
+                        SetWindowTextW(g_status, g_pausa ? L"Pausado. Pulsa Reanudar."
+                                                         : L"Reanudando...");
+                    }
+                    return 0;
+                case ID_ORIGEN_UP:
+                    mover_origen(-1);
+                    return 0;
+                case ID_ORIGEN_DOWN:
+                    mover_origen(1);
+                    return 0;
+                case ID_RETRY:
+                    reintentar_fallidos();
                     return 0;
                 case ID_MENU_CONTEXT_ON:
                     if (instalar_menu_contextual(true))
@@ -6218,14 +6352,18 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
                 }
                 for (auto& e : pendientes) {
                     if (e.tipo == Evento::LOG) log(e.texto);
-                    else if (e.tipo == Evento::ESTADO) SetWindowTextW(g_status, e.texto.c_str());
+                    else if (e.tipo == Evento::ESTADO) {
+                        if (!g_pausa) SetWindowTextW(g_status, e.texto.c_str());
+                    }
                     else if (e.tipo == Evento::PROGRESO) {
                         SendMessageW(g_progress, PBM_SETRANGE, 0, MAKELPARAM(0, std::max(1, e.b)));
                         SendMessageW(g_progress, PBM_SETPOS, e.a, 0);
-                        wchar_t b[96];
-                        swprintf_s(b, g_opt.dry_run ? L"Analizando %d/%d" : L"Convirtiendo %d/%d",
-                                   e.a, e.b);
-                        SetWindowTextW(g_status, b);
+                        if (!g_pausa) {
+                            wchar_t b[96];
+                            swprintf_s(b, g_opt.dry_run ? L"Analizando %d/%d" : L"Convirtiendo %d/%d",
+                                       e.a, e.b);
+                            SetWindowTextW(g_status, b);
+                        }
                     } else if (e.tipo == Evento::FILA) {
                         anadir_fila_resultado(e.fila);
                     } else if (e.tipo == Evento::ACTUALIZACION) {
@@ -6282,10 +6420,20 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
                                     APP_NAME, MB_ICONERROR);
                     } else if (e.tipo == Evento::FIN) {
                         g_corriendo = false;
+                        g_pausa = false;
                         EnableWindow(g_btn_convertir, TRUE);
                         EnableWindow(g_btn_cancelar, FALSE);
+                        EnableWindow(g_btn_pausa, FALSE);
+                        SetWindowTextW(g_btn_pausa, L"Pausar");
                         SetWindowTextW(g_status, e.texto.c_str());
                         bool exito = e.b == 0 && !g_cancelar;
+                        if (e.b > 0) {
+                            g_fallidos_ultimos = g_origenes;
+                            guardar_cola();
+                        } else if (!g_cancelar) {
+                            g_fallidos_ultimos.clear();
+                            borrar_cola();
+                        }
                         wchar_t extra[256];
                         swprintf_s(extra, L"%s\n\nTamano: %.2f MB -> %.2f MB",
                                    e.texto.c_str(), e.fila.kb_in / 1024.0, e.fila.kb_out / 1024.0);
@@ -6333,6 +6481,7 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
         case WM_DESTROY:
             detener_vigilante(false);
             g_cancelar = true;
+            g_pausa = false;
             if (g_hilo.joinable()) g_hilo.join();
             limpiar_temporales();
             if (g_tip_hwnd) DestroyWindow(g_tip_hwnd);
@@ -6560,6 +6709,7 @@ int wmain(int argc, wchar_t** argv) {
     for (auto& a : args) {
         if (!a.empty() && a[0] != L'-') anadir_origen(a);
     }
+    if (args.empty()) cargar_cola();
 
     HMENU menu = CreateMenu();
     g_menu_principal = menu;
@@ -6574,6 +6724,10 @@ int wmain(int argc, wchar_t** argv) {
     AppendMenuW(herramientas, MF_SEPARATOR, 0, nullptr);
     AppendMenuW(herramientas, MF_STRING, ID_MENU_WATCH, L"Vigilar una carpeta");
     AppendMenuW(herramientas, MF_STRING, ID_MENU_PREVIEW, L"Vista previa del seleccionado\tCtrl+P");
+    AppendMenuW(herramientas, MF_SEPARATOR, 0, nullptr);
+    AppendMenuW(herramientas, MF_STRING, ID_ORIGEN_UP, L"Subir origen\tCtrl+Arriba");
+    AppendMenuW(herramientas, MF_STRING, ID_ORIGEN_DOWN, L"Bajar origen\tCtrl+Abajo");
+    AppendMenuW(herramientas, MF_STRING, ID_RETRY, L"Reintentar archivos fallidos");
     HMENU ayuda = CreatePopupMenu();
     g_menu_ayuda = ayuda;
     AppendMenuW(ayuda, MF_STRING, ID_MENU_MANUAL, L"Manual de uso\tF1");
@@ -6596,6 +6750,8 @@ int wmain(int argc, wchar_t** argv) {
         {FVIRTKEY, VK_DELETE, ID_REMOVE},
         {FVIRTKEY, VK_F1, ID_MENU_MANUAL},
         {FVIRTKEY | FCONTROL, 'P', ID_MENU_PREVIEW},
+        {FVIRTKEY | FCONTROL, VK_UP, ID_ORIGEN_UP},
+        {FVIRTKEY | FCONTROL, VK_DOWN, ID_ORIGEN_DOWN},
     };
     HACCEL accel = CreateAcceleratorTableW(accels, (int)(sizeof(accels) / sizeof(accels[0])));
 
