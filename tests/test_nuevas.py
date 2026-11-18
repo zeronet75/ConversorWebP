@@ -155,6 +155,16 @@ class TestMetadatos(Base):
         self.assertAlmostEqual(dst.stat().st_mtime, hora, delta=3)
 
 
+class TestInformeHTML(Base):
+    def test_genera_html(self):
+        src = self.imagen("html.png", (64, 48))
+        job = cw.Job(sources=[src], output_dir=self.tmp / "out", html_report=True)
+        res = self.ejecutar(job)
+        self.assertIsNotNone(res.html_path)
+        self.assertTrue(res.html_path.exists())
+        self.assertIn("<table>", res.html_path.read_text(encoding="utf-8"))
+
+
 class TestRobustez(Base):
     def test_historial_valido(self):
         self.assertFalse(cw._historial_valido({"sources": 5}))

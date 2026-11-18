@@ -21,6 +21,7 @@ from __future__ import annotations
 import ctypes
 import csv
 import hashlib
+import html
 import importlib
 import importlib.util
 import io
@@ -77,7 +78,7 @@ except Exception:  # pragma: no cover - la app sigue funcionando sin arrastrar
 
 
 APP_NAME = "Conversor WebP"
-APP_VERSION = "2.7.0"
+APP_VERSION = "2.8.0"
 
 try:  # soporte HEIC/HEIF (iPhone) si pillow-heif esta instalado
     import pillow_heif
@@ -648,6 +649,7 @@ class Job:
     target_kb: int = 0          # 0 = sin limite; si > 0, peso maximo por imagen
     formato: str = "WEBP"       # "WEBP" o "AVIF"
     csv_report: bool = False    # guardar un informe CSV en la carpeta de salida
+    html_report: bool = False   # guardar un informe HTML en la carpeta de salida
     usar_gpu: bool = False      # modo experimental CUDA (desactivado por defecto)
     gpu_forzar: bool = False    # usar GPU aunque el lote sea pequeño
     name_pattern: str = ""      # patron de nombre; vacio = nombre original
@@ -666,6 +668,7 @@ class Result:
     archives: int = 0
     zip_path: Path | None = None
     csv_path: Path | None = None
+    html_path: Path | None = None
     cancelled: bool = False
     dry_run: bool = False
 
@@ -1552,6 +1555,45 @@ def run_job(
             res.csv_path = ruta_csv
             emit("log", ("info", f"Informe CSV: {ruta_csv}"))
 
+        if job.html_report and filas:
+            job.output_dir.mkdir(parents=True, exist_ok=True)
+            prefijo = "analisis" if job.dry_run else "informe"
+            ruta_html = job.output_dir / f"{prefijo}_{datetime.now():%Y%m%d_%H%M%S}.html"
+            cuerpo = []
+            for fila in sorted(filas, key=lambda f: str(f[0]).lower()):
+                celdas = "".join(
+                    f"<td>{html.escape(str(valor))}</td>" for valor in fila
+                )
+                cuerpo.append(f"<tr>{celdas}</tr>")
+            ahorro_total = (
+                (1 - res.bytes_out / res.bytes_in) * 100 if res.bytes_in else 0
+            )
+            resumen = (
+                f"Convertidas: {res.converted} · Omitidas: {res.skipped} · "
+                f"Fallidas: {len(res.failed)}"
+            )
+            documento = f"""<!doctype html>
+<html lang="es"><head><meta charset="utf-8">
+<title>Informe de Conversor WebP</title>
+<style>
+body{{font-family:Segoe UI,Arial,sans-serif;margin:24px;color:#1f2933}}
+h1{{font-size:22px}} table{{border-collapse:collapse;width:100%;margin-top:16px}}
+th,td{{border:1px solid #dde3ea;padding:6px 8px;font-size:13px;text-align:left}}
+th{{background:#eef1f6}} tr:nth-child(even){{background:#fafbfd}}
+.resumen{{background:#e8f0fe;padding:10px 14px;border-radius:6px}}
+</style></head><body>
+<h1>Conversor WebP · Informe de conversión</h1>
+<p class="resumen">{html.escape(resumen)}<br>
+Ahorro total: {ahorro_total:.1f} %</p>
+<table><thead><tr><th>Archivo</th><th>Origen</th><th>KB original</th>
+<th>KB resultado</th><th>Ahorro %</th><th>Estado</th><th>Nota</th></tr></thead>
+<tbody>{''.join(cuerpo)}</tbody></table>
+<p>Generado por Conversor WebP {APP_VERSION} · {datetime.now():%d/%m/%Y %H:%M}</p>
+</body></html>"""
+            ruta_html.write_text(documento, encoding="utf-8")
+            res.html_path = ruta_html
+            emit("log", ("info", f"Informe HTML: {ruta_html}"))
+
         emit("done", res)
 
     except Exception:  # noqa: BLE001
@@ -2034,6 +2076,7 @@ class App(BaseTk):  # type: ignore[misc,valid-type]
         self._aplicando_preset = False
         self.formato = tk.StringVar(value="WebP")
         self.csv_report = tk.BooleanVar(value=False)
+        self.html_report = tk.BooleanVar(value=False)
         self.usar_gpu = tk.BooleanVar(value=False)
         self.gpu_path = ""
         self.gpu_forzar_var = tk.BooleanVar(value=False)
@@ -2615,12 +2658,20 @@ class App(BaseTk):  # type: ignore[misc,valid-type]
         self.cmb_formato.bind("<<ComboboxSelected>>", self._on_formato)
         ttk.Label(fila_fmt, text="AVIF pesa menos", style="MutedCard.TLabel").pack(side="left", padx=(8, 0))
 
+        fila_informes = ttk.Frame(card_out, style="Card.TFrame")
+        fila_informes.pack(fill="x", pady=(6, 0))
         self.chk_csv = self._crear_check(
-            card_out,
-            "Guardar informe CSV en la carpeta de salida",
+            fila_informes,
+            "Informe CSV",
             self.csv_report,
         )
-        self.chk_csv.pack(anchor="w", pady=(6, 0))
+        self.chk_csv.pack(side="left")
+        self.chk_html = self._crear_check(
+            fila_informes,
+            "Informe HTML",
+            self.html_report,
+        )
+        self.chk_html.pack(side="left", padx=(16, 0))
         self.chk_extra = self._crear_check(
             card_out,
             "Conservar metadatos (EXIF/XMP) y fecha original",
@@ -2879,6 +2930,7 @@ class App(BaseTk):  # type: ignore[misc,valid-type]
             "entry_zip": "Nombre del ZIP que se creará en la carpeta de salida.",
             "cmb_formato": "Formato de salida: WebP (compatible) o AVIF (pesa menos).",
             "chk_csv": "Guarda un CSV con el peso original, final y el ahorro de cada archivo.",
+            "chk_html": "Guarda un informe HTML con la tabla de resultados y el ahorro.",
             "chk_extra": "Conserva EXIF/XMP (incluida la ubicación GPS) y la fecha del archivo original.",
             "entry_patron": "Patrón de nombre. Vacío conserva el original. Ej.: {nombre}_{ancho}x{alto}.",
             "btn_patron_ayuda": "Ver los marcadores disponibles para el nombre de salida.",
@@ -3008,6 +3060,12 @@ class App(BaseTk):  # type: ignore[misc,valid-type]
         )
         herr.add_command(
             label="Reintentar archivos fallidos", command=self._reintentar_fallidos
+        )
+        herr.add_separator()
+        herr.add_command(label="Exportar presets...", command=self._exportar_presets)
+        herr.add_command(label="Importar presets...", command=self._importar_presets)
+        herr.add_command(
+            label="Añadir imagen del portapapeles", command=self._pegar_portapapeles
         )
         if self.oscuro and getattr(self, "barra_custom", None) is not None:
             self.configure(menu="")
@@ -3515,6 +3573,7 @@ class App(BaseTk):  # type: ignore[misc,valid-type]
             target_kb=self._target_kb(),
             formato="AVIF" if self.formato.get().upper() == "AVIF" else "WEBP",
             csv_report=self.csv_report.get(),
+            html_report=self.html_report.get(),
             usar_gpu=self.usar_gpu.get(),
             gpu_forzar=self.gpu_forzar_var.get(),
             name_pattern=self.name_pattern.get(),
@@ -3542,6 +3601,7 @@ class App(BaseTk):  # type: ignore[misc,valid-type]
                 "target_kb": job.target_kb,
                 "formato": job.formato,
                 "csv_report": job.csv_report,
+                "html_report": job.html_report,
                 "usar_gpu": job.usar_gpu,
                 "gpu_forzar": job.gpu_forzar,
                 "name_pattern": job.name_pattern,
@@ -3630,6 +3690,7 @@ class App(BaseTk):  # type: ignore[misc,valid-type]
                 "zip_name": ajustes.get("zip_name", ""),
                 "formato": ajustes.get("formato", "WEBP"),
                 "csv_report": ajustes.get("csv_report", False),
+                "html_report": ajustes.get("html_report", False),
             }
         )
         self.usar_gpu.set(bool(ajustes.get("usar_gpu", False)))
@@ -4074,6 +4135,7 @@ class App(BaseTk):  # type: ignore[misc,valid-type]
                 "zip_name": self.zip_name.get(),
                 "formato": self.formato.get(),
                 "csv_report": bool(self.csv_report.get()),
+                "html_report": bool(self.html_report.get()),
                 "preservar_extra": bool(self.preservar_extra.get()),
             }
         )
@@ -4096,6 +4158,8 @@ class App(BaseTk):  # type: ignore[misc,valid-type]
                 )
             if "csv_report" in datos:
                 self.csv_report.set(bool(datos["csv_report"]))
+            if "html_report" in datos:
+                self.html_report.set(bool(datos["html_report"]))
             if "preservar_extra" in datos:
                 self.preservar_extra.set(bool(datos["preservar_extra"]))
         finally:
@@ -4180,6 +4244,86 @@ class App(BaseTk):  # type: ignore[misc,valid-type]
         self.preset_sel.set(nombre)
         self._save_config()
         self._log("info", f"Preset guardado: {nombre}")
+
+    def _exportar_presets(self) -> None:
+        if not self.presets_usuario:
+            messagebox.showinfo(APP_NAME, "No hay presets propios para exportar.")
+            return
+        ruta = filedialog.asksaveasfilename(
+            title="Exportar presets",
+            defaultextension=".json",
+            filetypes=[("Presets JSON", "*.json"), ("Todos los archivos", "*.*")],
+        )
+        if not ruta:
+            return
+        try:
+            Path(ruta).write_text(
+                json.dumps(
+                    {"version": 1, "presets": self.presets_usuario},
+                    indent=2,
+                    ensure_ascii=False,
+                ),
+                encoding="utf-8",
+            )
+            messagebox.showinfo(
+                APP_NAME, f"Exportados {len(self.presets_usuario)} preset(s)."
+            )
+        except Exception as e:  # noqa: BLE001
+            messagebox.showerror(APP_NAME, f"No se pudieron exportar los presets:\n{e}")
+
+    def _importar_presets(self) -> None:
+        ruta = filedialog.askopenfilename(
+            title="Importar presets",
+            filetypes=[("Presets JSON", "*.json"), ("Todos los archivos", "*.*")],
+        )
+        if not ruta:
+            return
+        try:
+            datos = json.loads(Path(ruta).read_text(encoding="utf-8"))
+            presets = datos.get("presets", datos)
+            if not isinstance(presets, dict):
+                raise ValueError("el archivo no contiene presets validos")
+            importados = 0
+            for nombre, valores in presets.items():
+                if isinstance(nombre, str) and isinstance(valores, dict):
+                    self.presets_usuario[nombre] = dict(valores)
+                    importados += 1
+            if not importados:
+                raise ValueError("no se encontro ningun preset valido")
+            self._refrescar_combo_preset()
+            self._save_config()
+            messagebox.showinfo(APP_NAME, f"Importados {importados} preset(s).")
+        except Exception as e:  # noqa: BLE001
+            messagebox.showerror(APP_NAME, f"No se pudieron importar los presets:\n{e}")
+
+    def _pegar_portapapeles(self) -> None:
+        try:
+            from PIL import ImageGrab
+
+            datos = ImageGrab.grabclipboard()
+        except Exception as e:  # noqa: BLE001
+            messagebox.showerror(APP_NAME, f"No se pudo leer el portapapeles:\n{e}")
+            return
+        if isinstance(datos, Image.Image):
+            carpeta = Path(tempfile.gettempdir()) / "ConversorWebP_clipboard"
+            try:
+                carpeta.mkdir(parents=True, exist_ok=True)
+                destino = carpeta / f"portapapeles_{datetime.now():%Y%m%d_%H%M%S}.png"
+                datos.convert("RGBA").save(destino)
+                self._anadir([destino])
+                self._log("info", f"Imagen del portapapeles anadida: {destino.name}")
+            except Exception as e:  # noqa: BLE001
+                messagebox.showerror(APP_NAME, f"No se pudo guardar la imagen:\n{e}")
+        elif isinstance(datos, list):
+            rutas = [Path(p) for p in datos if Path(p).exists()]
+            if rutas:
+                self._anadir(rutas)
+            else:
+                messagebox.showinfo(APP_NAME, "El portapapeles no contiene archivos validos.")
+        else:
+            messagebox.showinfo(
+                APP_NAME, "El portapapeles no contiene una imagen ni archivos."
+            )
 
     def _borrar_preset(self) -> None:
         nombre = self.preset_sel.get()
@@ -4583,6 +4727,7 @@ class App(BaseTk):  # type: ignore[misc,valid-type]
             target_kb=self._target_kb(),
             formato="AVIF" if self.formato.get().upper() == "AVIF" else "WEBP",
             csv_report=self.csv_report.get(),
+            html_report=self.html_report.get(),
             usar_gpu=self.usar_gpu.get(),
             gpu_forzar=self.gpu_forzar_var.get(),
             name_pattern=self.name_pattern.get(),
@@ -4868,7 +5013,9 @@ class App(BaseTk):  # type: ignore[misc,valid-type]
         if res.zip_path:
             self._log("info", f"ZIP: {res.zip_path}")
         if res.csv_path:
-            self._log("info", f"Informe: {res.csv_path}")
+            self._log("info", f"Informe CSV: {res.csv_path}")
+        if res.html_path:
+            self._log("info", f"Informe HTML: {res.html_path}")
         self.lbl_status.configure(text=resumen)
         if self.total:
             self.progress.configure(value=self.progress.cget("maximum"))
@@ -4877,6 +5024,8 @@ class App(BaseTk):  # type: ignore[misc,valid-type]
             extra = f"\n\nPeso estimado: {mb_in:.2f} MB -> {mb_out:.2f} MB  (ahorro {ahorro:.1f} %)"
             if res.csv_path:
                 extra += f"\nInforme CSV:\n{res.csv_path.name}"
+            if res.html_path:
+                extra += f"\nInforme HTML:\n{res.html_path.name}"
             if res.failed:
                 extra += "\n\nRevisa el registro para ver los errores."
             messagebox.showinfo(APP_NAME, "Analisis completado.\n" + resumen + extra)
@@ -4894,6 +5043,8 @@ class App(BaseTk):  # type: ignore[misc,valid-type]
                 extra += f"\nZIP creado:\n{res.zip_path.name}"
             if res.csv_path:
                 extra += f"\nInforme CSV:\n{res.csv_path.name}"
+            if res.html_path:
+                extra += f"\nInforme HTML:\n{res.html_path.name}"
             messagebox.showinfo(APP_NAME, resumen + extra)
         elif res.skipped:
             messagebox.showinfo(
@@ -5084,6 +5235,7 @@ class App(BaseTk):  # type: ignore[misc,valid-type]
         self.make_zip.set(booleano("make_zip", True))
         self.beep.set(booleano("beep", True))
         self.csv_report.set(booleano("csv_report", False))
+        self.html_report.set(booleano("html_report", False))
         self.usar_gpu.set(booleano("usar_gpu", False))
         self.gpu_path = str(data.get("gpu_path", "") or "")
         self.gpu_forzar_var.set(booleano("gpu_forzar", False))
@@ -5159,6 +5311,7 @@ class App(BaseTk):  # type: ignore[misc,valid-type]
                     "target_kb": self._target_kb(),
                     "formato": self.formato.get(),
                     "csv_report": self.csv_report.get(),
+                    "html_report": self.html_report.get(),
                     "usar_gpu": self.usar_gpu.get(),
                     "gpu_path": self.gpu_path,
                     "gpu_forzar": self.gpu_forzar_var.get(),
@@ -5227,6 +5380,7 @@ def run_cli(argv: list[str]) -> int:
     parser.add_argument("--format", dest="formato", default="webp", type=str.lower,
                         choices=["webp", "avif"], help="Formato de salida (webp o avif)")
     parser.add_argument("--csv", action="store_true", help="Guardar informe CSV en la salida")
+    parser.add_argument("--html", action="store_true", help="Guardar informe HTML en la salida")
     parser.add_argument("--json", action="store_true", help="Salida final en JSON")
     parser.add_argument("--quiet", action="store_true", help="Ocultar el progreso por archivo")
     parser.add_argument("--jobs", type=int, default=0,
@@ -5260,6 +5414,7 @@ def run_cli(argv: list[str]) -> int:
         target_kb=max(0, args.max_kb),
         formato="AVIF" if args.formato == "avif" else "WEBP",
         csv_report=bool(args.csv),
+        html_report=bool(args.html),
         usar_gpu=bool(args.gpu) and not args.no_gpu,
         gpu_forzar=bool(args.gpu) and not args.no_gpu,
         preservar_extra=bool(args.keep_metadata),
@@ -5323,6 +5478,7 @@ def run_cli(argv: list[str]) -> int:
             "dry_run": res.dry_run,
             "zip": str(res.zip_path) if res.zip_path else None,
             "csv": str(res.csv_path) if res.csv_path else None,
+            "html": str(res.html_path) if res.html_path else None,
             "shutdown_scheduled": apagado,
         }
         print(json.dumps(resumen, ensure_ascii=False))

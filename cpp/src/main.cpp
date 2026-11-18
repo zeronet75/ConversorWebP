@@ -79,7 +79,7 @@ using Microsoft::WRL::ComPtr;
 namespace fs = std::filesystem;
 
 static const wchar_t* APP_NAME = L"Conversor WebP";
-static const wchar_t* APP_VERSION = L"2.7.0";
+static const wchar_t* APP_VERSION = L"2.8.0";
 
 // ---------------------------------------------------------------------------
 //  Utilidades generales
@@ -157,7 +157,8 @@ static std::wstring ext_lower(const fs::path& p) {
 static bool es_imagen(const fs::path& p) {
     static const std::set<std::wstring> exts = {
         L".jpg", L".jpeg", L".jfif", L".png", L".bmp", L".dib", L".gif",
-        L".tif", L".tiff", L".ico", L".webp", L".avif", L".heic", L".heif"};
+        L".tif", L".tiff", L".ico", L".webp", L".avif", L".heic", L".heif",
+        L".tga", L".pcx", L".dds", L".ppm", L".pgm", L".pbm"};
     return exts.count(ext_lower(p)) > 0;
 }
 
@@ -872,10 +873,233 @@ static std::vector<uint8_t> codificar_webp_animado(
     return salida;
 }
 
+static bool decodificar_tga(const std::wstring& ruta, Bitmap& bmp, std::wstring& error) {
+    std::ifstream f(ruta, std::ios::binary);
+    if (!f) { error = L"no se pudo abrir el TGA"; return false; }
+    std::vector<uint8_t> d((std::istreambuf_iterator<char>(f)),
+                           std::istreambuf_iterator<char>());
+    if (d.size() < 18 || d[1] != 0) { error = L"TGA no soportado"; return false; }
+    int tipo = d[2];
+    int w = d[12] | (d[13] << 8), h = d[14] | (d[15] << 8);
+    int bpp = d[16], canales = bpp / 8;
+    if (w <= 0 || h <= 0 || (uint64_t)w * h > 120000000ull) {
+        error = L"tamano TGA no valido"; return false;
+    }
+    if (!(tipo == 2 || tipo == 3 || tipo == 10 || tipo == 11) ||
+        (canales != 1 && canales != 3 && canales != 4)) {
+        error = L"TGA comprimido no soportado"; return false;
+    }
+    size_t pos = 18 + d[0];
+    size_t total = (size_t)w * h;
+    std::vector<uint8_t> pixeles(total * (size_t)canales);
+    if (tipo == 2 || tipo == 3) {
+        size_t bytes = total * (size_t)canales;
+        if (pos + bytes > d.size()) { error = L"TGA truncado"; return false; }
+        std::copy(d.begin() + pos, d.begin() + pos + bytes, pixeles.begin());
+    } else {
+        size_t salida = 0;
+        while (salida < total) {
+            if (pos >= d.size()) { error = L"TGA truncado"; return false; }
+            int cabecera = d[pos++];
+            int cuenta = (cabecera & 0x7F) + 1;
+            if (cabecera & 0x80) {
+                if (pos + canales > d.size()) { error = L"TGA truncado"; return false; }
+                for (int i = 0; i < cuenta && salida < total; i++, salida++)
+                    for (int c = 0; c < canales; c++)
+                        pixeles[salida * canales + c] = d[pos + c];
+                pos += canales;
+            } else {
+                size_t bytes = (size_t)cuenta * canales;
+                if (pos + bytes > d.size()) { error = L"TGA truncado"; return false; }
+                size_t restantes = total - salida;
+                size_t copiar = std::min((size_t)cuenta, restantes);
+                std::copy(d.begin() + pos, d.begin() + pos + copiar * canales,
+                          pixeles.begin() + salida * canales);
+                pos += bytes; salida += cuenta;
+            }
+        }
+    }
+    bmp.w = w; bmp.h = h; bmp.alfa = false;
+    bmp.rgba.resize(total * 4);
+    bool origen_superior = (d[17] & 0x20) != 0;
+    for (int y = 0; y < h; y++) {
+        int sy = origen_superior ? y : h - 1 - y;
+        for (int x = 0; x < w; x++) {
+            const uint8_t* p = pixeles.data() + ((size_t)sy * w + x) * canales;
+            uint8_t* q = bmp.rgba.data() + ((size_t)y * w + x) * 4;
+            if (canales == 1) { q[0] = q[1] = q[2] = p[0]; q[3] = 255; }
+            else {
+                q[0] = p[2]; q[1] = p[1]; q[2] = p[0];
+                q[3] = canales == 4 ? p[3] : 255;
+                if (canales == 4 && p[3] < 255) bmp.alfa = true;
+            }
+        }
+    }
+    return true;
+}
+
+static bool decodificar_ppm(const std::wstring& ruta, Bitmap& bmp, std::wstring& error) {
+    std::ifstream f(ruta, std::ios::binary);
+    if (!f) { error = L"no se pudo abrir el PPM"; return false; }
+    std::vector<uint8_t> d((std::istreambuf_iterator<char>(f)),
+                           std::istreambuf_iterator<char>());
+    size_t pos = 0;
+    auto token = [&]() -> std::string {
+        while (pos < d.size()) {
+            if (d[pos] == '#') {
+                while (pos < d.size() && d[pos] != '\n') pos++;
+            } else if (isspace((unsigned char)d[pos])) {
+                pos++;
+            } else break;
+        }
+        size_t ini = pos;
+        while (pos < d.size() && !isspace((unsigned char)d[pos]) && d[pos] != '#') pos++;
+        return std::string((const char*)d.data() + ini, pos - ini);
+    };
+    std::string magia = token();
+    if (magia.size() != 2 || magia[0] != 'P' || magia[1] < '1' || magia[1] > '6') {
+        error = L"PPM no valido"; return false;
+    }
+    int tipo = magia[1] - '0';
+    auto token_int = [&]() {
+        std::string t = token();
+        return atoi(t.c_str());
+    };
+    int w = token_int();
+    int h = token_int();
+    if (w <= 0 || h <= 0 || (uint64_t)w * h > 120000000ull) {
+        error = L"tamano PPM no valido"; return false;
+    }
+    int maximo = 255;
+    if (tipo != 1 && tipo != 4) {
+        maximo = token_int();
+        if (maximo <= 0) maximo = 255;
+    }
+    while (pos < d.size() && isspace((unsigned char)d[pos])) pos++;
+    bmp.w = w; bmp.h = h; bmp.alfa = false;
+    bmp.rgba.resize((size_t)w * h * 4);
+    size_t total = (size_t)w * h;
+    if (tipo == 6 || tipo == 5) {
+        int canales = tipo == 6 ? 3 : 1;
+        if (pos + total * canales > d.size()) { error = L"PPM truncado"; return false; }
+        for (size_t i = 0; i < total; i++) {
+            const uint8_t* p = d.data() + pos + i * canales;
+            uint8_t* q = bmp.rgba.data() + i * 4;
+            if (canales == 3) {
+                q[0] = (uint8_t)(p[0] * 255 / maximo);
+                q[1] = (uint8_t)(p[1] * 255 / maximo);
+                q[2] = (uint8_t)(p[2] * 255 / maximo);
+            } else {
+                q[0] = q[1] = q[2] = (uint8_t)(p[0] * 255 / maximo);
+            }
+            q[3] = 255;
+        }
+    } else if (tipo == 4) {
+        size_t bytes = (total + 7) / 8;
+        if (pos + bytes > d.size()) { error = L"PBM truncado"; return false; }
+        for (size_t i = 0; i < total; i++) {
+            bool negro = (d[pos + i / 8] & (0x80 >> (i % 8))) != 0;
+            uint8_t* q = bmp.rgba.data() + i * 4;
+            q[0] = q[1] = q[2] = negro ? 0 : 255;
+            q[3] = 255;
+        }
+    } else {
+        int canales = (tipo == 3) ? 3 : 1;
+        for (size_t i = 0; i < total; i++) {
+            int valores[3] = {0, 0, 0};
+            for (int c = 0; c < canales; c++) {
+                std::string t = token();
+                if (t.empty()) { error = L"PPM truncado"; return false; }
+                valores[c] = atoi(t.c_str());
+            }
+            uint8_t* q = bmp.rgba.data() + i * 4;
+            if (canales == 3) {
+                q[0] = (uint8_t)(valores[0] * 255 / maximo);
+                q[1] = (uint8_t)(valores[1] * 255 / maximo);
+                q[2] = (uint8_t)(valores[2] * 255 / maximo);
+            } else {
+                q[0] = q[1] = q[2] = (uint8_t)(valores[0] * 255 / maximo);
+            }
+            q[3] = 255;
+        }
+    }
+    return true;
+}
+
+static bool decodificar_pcx(const std::wstring& ruta, Bitmap& bmp, std::wstring& error) {
+    std::ifstream f(ruta, std::ios::binary);
+    if (!f) { error = L"no se pudo abrir el PCX"; return false; }
+    std::vector<uint8_t> d((std::istreambuf_iterator<char>(f)),
+                           std::istreambuf_iterator<char>());
+    if (d.size() < 128 || d[0] != 0x0A || d[2] != 1) {
+        error = L"PCX no soportado"; return false;
+    }
+    int w = (d[8] | (d[9] << 8)) + 1;
+    int h = (d[10] | (d[11] << 8)) + 1;
+    int planos = d[65];
+    int bytes_linea = d[66] | (d[67] << 8);
+    if (w <= 0 || h <= 0 || (uint64_t)w * h > 120000000ull ||
+        (planos != 1 && planos != 3) || bytes_linea < w) {
+        error = L"PCX no valido"; return false;
+    }
+    std::vector<uint8_t> datos;
+    datos.reserve((size_t)h * planos * bytes_linea);
+    size_t pos = 128;
+    while (pos < d.size() && datos.size() < (size_t)h * planos * bytes_linea) {
+        uint8_t b = d[pos++];
+        if ((b & 0xC0) == 0xC0) {
+            int cuenta = b & 0x3F;
+            if (pos >= d.size()) { error = L"PCX truncado"; return false; }
+            uint8_t valor = d[pos++];
+            for (int i = 0; i < cuenta; i++) datos.push_back(valor);
+        } else {
+            datos.push_back(b);
+        }
+    }
+    if (datos.size() < (size_t)h * planos * bytes_linea) {
+        error = L"PCX truncado"; return false;
+    }
+    std::vector<uint8_t> paleta;
+    if (planos == 1) {
+        if (d.size() >= 769 && d[d.size() - 769] == 0x0C)
+            paleta.assign(d.end() - 768, d.end());
+        else
+            paleta.assign(d.begin() + 16, d.begin() + 64);
+    }
+    bmp.w = w; bmp.h = h; bmp.alfa = false;
+    bmp.rgba.resize((size_t)w * h * 4);
+    for (int y = 0; y < h; y++) {
+        const uint8_t* linea = datos.data() + (size_t)y * planos * bytes_linea;
+        for (int x = 0; x < w; x++) {
+            uint8_t* q = bmp.rgba.data() + ((size_t)y * w + x) * 4;
+            if (planos == 3) {
+                q[0] = linea[x + bytes_linea * 0];
+                q[1] = linea[x + bytes_linea * 1];
+                q[2] = linea[x + bytes_linea * 2];
+            } else {
+                int idx = linea[x];
+                if (!paleta.empty() && (size_t)idx * 3 + 2 < paleta.size()) {
+                    q[0] = paleta[idx * 3];
+                    q[1] = paleta[idx * 3 + 1];
+                    q[2] = paleta[idx * 3 + 2];
+                } else {
+                    q[0] = q[1] = q[2] = (uint8_t)idx;
+                }
+            }
+            q[3] = 255;
+        }
+    }
+    return true;
+}
+
 static bool decodificar_imagen(IWICImagingFactory* factory, const std::wstring& ruta,
                                Bitmap& bmp, std::wstring& error) {
     std::wstring ext = lower(fs::path(ruta).extension().wstring());
     if (ext == L".avif") return decodificar_avif(ruta, bmp, error);
+    if (ext == L".tga") return decodificar_tga(ruta, bmp, error);
+    if (ext == L".pcx") return decodificar_pcx(ruta, bmp, error);
+    if (ext == L".ppm" || ext == L".pgm" || ext == L".pbm")
+        return decodificar_ppm(ruta, bmp, error);
     return decodificar_wic(factory, ruta, bmp, error);
 }
 
@@ -1392,7 +1616,7 @@ struct Options {
     bool beep = true;
     bool csv = false;
     std::wstring salida;
-    std::wstring zip_nombre = L"imagenes_2.7.0-cpp.zip";
+    std::wstring zip_nombre = L"imagenes_2.8.0-cpp.zip";
     std::wstring patron;
     std::wstring formato = L"WEBP";
     bool dry_run = false;
@@ -5747,7 +5971,7 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
 
             // Cabecera
             etiqueta(L"Conversor WebP", 16, 17, 300, 30, 1400, g_font_title);
-            etiqueta(L"v2.7.0", 200, 29, 120, 18, 1401, g_font_muted);
+            etiqueta(L"v2.8.0", 200, 29, 120, 18, 1401, g_font_muted);
             etiqueta(L"JPG · PNG · BMP · TIFF · GIF · ICO  →  WebP / AVIF", 560, 23, 390, 20,
                      1402, g_font_muted, SS_RIGHT);
             boton(L"", 958, 20, 26, 26, ID_TEMA, BS_OWNERDRAW);
@@ -6127,7 +6351,7 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
                         dlg->GetOptions(&opts);
                         dlg->SetOptions(opts | FOS_ALLOWMULTISELECT | FOS_FILEMUSTEXIST);
                         COMDLG_FILTERSPEC filtros[] = {
-                            {L"Imagenes", L"*.jpg;*.jpeg;*.png;*.bmp;*.gif;*.tif;*.tiff;*.ico;*.webp;*.avif;*.heic;*.heif"},
+                            {L"Imagenes", L"*.jpg;*.jpeg;*.jfif;*.png;*.bmp;*.gif;*.tif;*.tiff;*.ico;*.webp;*.avif;*.heic;*.heif;*.tga;*.pcx;*.dds;*.ppm;*.pgm;*.pbm"},
                             {L"Todos", L"*.*"}};
                         dlg->SetFileTypes(2, filtros);
                         if (SUCCEEDED(dlg->Show(hwnd))) {
@@ -7034,7 +7258,7 @@ static int ejecutar_cli(const std::vector<std::wstring>& args) {
 //  WinMain
 // ---------------------------------------------------------------------------
 int wmain(int argc, wchar_t** argv) {
-    SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
+    SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_UNAWARE_GDISCALED);
     CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
     INITCOMMONCONTROLSEX icc{sizeof(icc), ICC_LISTVIEW_CLASSES | ICC_BAR_CLASSES |
                                                ICC_PROGRESS_CLASS | ICC_TAB_CLASSES |
@@ -7123,7 +7347,7 @@ int wmain(int argc, wchar_t** argv) {
     wc.hIconSm = icono_pequeno;
     RegisterClassExW(&wc);
 
-    g_hwnd = CreateWindowExW(0, wc.lpszClassName, L"Conversor WebP 2.7.0",
+    g_hwnd = CreateWindowExW(0, wc.lpszClassName, L"Conversor WebP 2.8.0",
                              WS_OVERLAPPEDWINDOW,
                              CW_USEDEFAULT, CW_USEDEFAULT, 1016, 900, nullptr, nullptr, inst, nullptr);
     if (!g_hwnd) return 1;

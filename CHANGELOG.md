@@ -6,6 +6,24 @@ Todos los cambios relevantes del proyecto. Formato basado en
 
 ---
 
+## [2.8.0] — 2026-11-18
+
+### Añadido
+
+- **Portapapeles:** añadir una imagen o archivos copiados desde el menú Herramientas.
+- **Informe HTML** con tabla de resultados, ahorro y enlace al CSV.
+- **Exportar/importar presets** en JSON.
+- **TGA, PCX, PPM, PGM y PBM** en C++.
+- **Escalado GDI** en C++ para que la interfaz no quede diminuta en pantallas con DPI alto.
+
+### Pendiente
+
+- Menú contextual moderno de Windows 11 (extensión COM/MSIX).
+- Traducción completa al inglés.
+- Decodificador DDS y DPI nítido por monitor.
+
+---
+
 ## [2.7.0] — 2026-11-18
 
 ### Añadido
@@ -296,6 +314,7 @@ Todos los cambios relevantes del proyecto. Formato basado en
 - Conservación de transparencia, perfil ICC y orientación EXIF.
 - Modo consola básico.
 
+[2.8.0]: #280--2026-11-18
 [2.7.0]: #270--2026-11-18
 [2.6.5]: #265--2026-11-18
 [2.6.4]: #264--2026-11-18
