@@ -2671,34 +2671,35 @@ static void cargar_config() {
 
 static void guardar_config() {
     if (g_ini.empty()) return;
+    std::wstring destino = g_ini + L".tmp";
     wchar_t buf[32];
     swprintf_s(buf, L"%d", g_opt.calidad);
-    WritePrivateProfileStringW(L"opciones", L"calidad", buf, g_ini.c_str());
+    WritePrivateProfileStringW(L"opciones", L"calidad", buf, destino.c_str());
     swprintf_s(buf, L"%d", g_opt.metodo);
-    WritePrivateProfileStringW(L"opciones", L"metodo", buf, g_ini.c_str());
-    WritePrivateProfileStringW(L"opciones", L"lossless", g_opt.sin_perdida ? L"1" : L"0", g_ini.c_str());
+    WritePrivateProfileStringW(L"opciones", L"metodo", buf, destino.c_str());
+    WritePrivateProfileStringW(L"opciones", L"lossless", g_opt.sin_perdida ? L"1" : L"0", destino.c_str());
     swprintf_s(buf, L"%d", g_opt.max_dim);
-    WritePrivateProfileStringW(L"opciones", L"maxdim", buf, g_ini.c_str());
+    WritePrivateProfileStringW(L"opciones", L"maxdim", buf, destino.c_str());
     swprintf_s(buf, L"%d", g_opt.objetivo_kb);
-    WritePrivateProfileStringW(L"opciones", L"objetivo", buf, g_ini.c_str());
-    WritePrivateProfileStringW(L"opciones", L"mantener", g_opt.mantener ? L"1" : L"0", g_ini.c_str());
-    WritePrivateProfileStringW(L"opciones", L"sobrescribir", g_opt.sobrescribir ? L"1" : L"0", g_ini.c_str());
-    WritePrivateProfileStringW(L"opciones", L"zip", g_opt.zip ? L"1" : L"0", g_ini.c_str());
-    WritePrivateProfileStringW(L"opciones", L"beep", g_opt.beep ? L"1" : L"0", g_ini.c_str());
-    WritePrivateProfileStringW(L"opciones", L"csv", g_opt.csv ? L"1" : L"0", g_ini.c_str());
-    WritePrivateProfileStringW(L"opciones", L"dry", g_opt.dry_run ? L"1" : L"0", g_ini.c_str());
-    WritePrivateProfileStringW(L"opciones", L"flatten", g_opt.flatten ? L"1" : L"0", g_ini.c_str());
+    WritePrivateProfileStringW(L"opciones", L"objetivo", buf, destino.c_str());
+    WritePrivateProfileStringW(L"opciones", L"mantener", g_opt.mantener ? L"1" : L"0", destino.c_str());
+    WritePrivateProfileStringW(L"opciones", L"sobrescribir", g_opt.sobrescribir ? L"1" : L"0", destino.c_str());
+    WritePrivateProfileStringW(L"opciones", L"zip", g_opt.zip ? L"1" : L"0", destino.c_str());
+    WritePrivateProfileStringW(L"opciones", L"beep", g_opt.beep ? L"1" : L"0", destino.c_str());
+    WritePrivateProfileStringW(L"opciones", L"csv", g_opt.csv ? L"1" : L"0", destino.c_str());
+    WritePrivateProfileStringW(L"opciones", L"dry", g_opt.dry_run ? L"1" : L"0", destino.c_str());
+    WritePrivateProfileStringW(L"opciones", L"flatten", g_opt.flatten ? L"1" : L"0", destino.c_str());
     swprintf_s(buf, L"%lu", (unsigned long)g_opt.color);
-    WritePrivateProfileStringW(L"opciones", L"color", buf, g_ini.c_str());
-    WritePrivateProfileStringW(L"opciones", L"apagar", g_opt.apagar ? L"1" : L"0", g_ini.c_str());
-    WritePrivateProfileStringW(L"opciones", L"fecha", g_opt.preservar_fecha ? L"1" : L"0", g_ini.c_str());
-    WritePrivateProfileStringW(L"opciones", L"tema", g_oscuro ? L"1" : L"0", g_ini.c_str());
-    WritePrivateProfileStringW(L"opciones", L"salida", g_opt.salida.c_str(), g_ini.c_str());
-    WritePrivateProfileStringW(L"opciones", L"zipnombre", g_opt.zip_nombre.c_str(), g_ini.c_str());
-    WritePrivateProfileStringW(L"opciones", L"patron", g_opt.patron.c_str(), g_ini.c_str());
-    WritePrivateProfileStringW(L"opciones", L"formato", g_opt.formato.c_str(), g_ini.c_str());
+    WritePrivateProfileStringW(L"opciones", L"color", buf, destino.c_str());
+    WritePrivateProfileStringW(L"opciones", L"apagar", g_opt.apagar ? L"1" : L"0", destino.c_str());
+    WritePrivateProfileStringW(L"opciones", L"fecha", g_opt.preservar_fecha ? L"1" : L"0", destino.c_str());
+    WritePrivateProfileStringW(L"opciones", L"tema", g_oscuro ? L"1" : L"0", destino.c_str());
+    WritePrivateProfileStringW(L"opciones", L"salida", g_opt.salida.c_str(), destino.c_str());
+    WritePrivateProfileStringW(L"opciones", L"zipnombre", g_opt.zip_nombre.c_str(), destino.c_str());
+    WritePrivateProfileStringW(L"opciones", L"patron", g_opt.patron.c_str(), destino.c_str());
+    WritePrivateProfileStringW(L"opciones", L"formato", g_opt.formato.c_str(), destino.c_str());
 
-    WritePrivateProfileStringW(L"presets", nullptr, nullptr, g_ini.c_str());
+    WritePrivateProfileStringW(L"presets", nullptr, nullptr, destino.c_str());
     int idx = 0;
     for (auto& p : g_presets) {
         if (!p.propio) continue;
@@ -2706,15 +2707,15 @@ static void guardar_config() {
         swprintf_s(clave, L"p%d", idx);
         std::wstring kname = std::wstring(clave) + L"nombre";
         std::wstring kdatos = std::wstring(clave) + L"datos";
-        WritePrivateProfileStringW(L"presets", kname.c_str(), p.nombre.c_str(), g_ini.c_str());
+        WritePrivateProfileStringW(L"presets", kname.c_str(), p.nombre.c_str(), destino.c_str());
         WritePrivateProfileStringW(L"presets", kdatos.c_str(),
-                                   serializar_opciones(p.opt).c_str(), g_ini.c_str());
+                                   serializar_opciones(p.opt).c_str(), destino.c_str());
         idx++;
     }
     swprintf_s(buf, L"%d", idx);
-    WritePrivateProfileStringW(L"presets", L"count", buf, g_ini.c_str());
+    WritePrivateProfileStringW(L"presets", L"count", buf, destino.c_str());
 
-    WritePrivateProfileStringW(L"historial", nullptr, nullptr, g_ini.c_str());
+    WritePrivateProfileStringW(L"historial", nullptr, nullptr, destino.c_str());
     for (size_t i = 0; i < g_historial.size(); i++) {
         auto& h = g_historial[i];
         wchar_t clave[64];
@@ -2727,15 +2728,16 @@ static void guardar_config() {
         }
         wchar_t conv[32];
         swprintf_s(conv, L"%d", h.convertidas);
-        WritePrivateProfileStringW(L"historial", (base + L"fecha").c_str(), h.fecha.c_str(), g_ini.c_str());
-        WritePrivateProfileStringW(L"historial", (base + L"origenes").c_str(), origenes.c_str(), g_ini.c_str());
-        WritePrivateProfileStringW(L"historial", (base + L"salida").c_str(), h.salida.c_str(), g_ini.c_str());
+        WritePrivateProfileStringW(L"historial", (base + L"fecha").c_str(), h.fecha.c_str(), destino.c_str());
+        WritePrivateProfileStringW(L"historial", (base + L"origenes").c_str(), origenes.c_str(), destino.c_str());
+        WritePrivateProfileStringW(L"historial", (base + L"salida").c_str(), h.salida.c_str(), destino.c_str());
         WritePrivateProfileStringW(L"historial", (base + L"datos").c_str(),
-                                   serializar_opciones(h.opt).c_str(), g_ini.c_str());
-        WritePrivateProfileStringW(L"historial", (base + L"conv").c_str(), conv, g_ini.c_str());
+                                   serializar_opciones(h.opt).c_str(), destino.c_str());
+        WritePrivateProfileStringW(L"historial", (base + L"conv").c_str(), conv, destino.c_str());
     }
     swprintf_s(buf, L"%d", (int)g_historial.size());
-    WritePrivateProfileStringW(L"historial", L"count", buf, g_ini.c_str());
+    WritePrivateProfileStringW(L"historial", L"count", buf, destino.c_str());
+    MoveFileExW(destino.c_str(), g_ini.c_str(), MOVEFILE_REPLACE_EXISTING);
 }
 
 // ---------------------------------------------------------------------------
