@@ -136,7 +136,8 @@ La carpeta temporal de extracción se elimina en un bloque `finally`, incluso si
 
 ## 4. Conversión de una imagen (`convert_one`)
 
-Orden exacto de las operaciones:
+`convert_one` detecta el tipo por extensión: si es vídeo, delega en `convert_video` (FFmpeg, VP9 +
+Opus, un proceso a la vez) y devuelve el peso de entrada/salida. Si es imagen, sigue este orden:
 
 ```text
 abrir → leer primer fotograma → exif_transpose → redimensionar →

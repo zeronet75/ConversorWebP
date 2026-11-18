@@ -78,7 +78,7 @@ except Exception:  # pragma: no cover - la app sigue funcionando sin arrastrar
 
 
 APP_NAME = "Conversor WebP"
-APP_VERSION = "2.10.0"
+APP_VERSION = "2.11.0"
 
 try:  # soporte HEIC/HEIF (iPhone) si pillow-heif esta instalado
     import pillow_heif
@@ -94,9 +94,16 @@ IMAGE_EXTS = {
     ".tif", ".tiff", ".ico", ".ppm", ".pgm", ".pbm", ".tga", ".pcx",
     ".dds", ".webp", ".heic", ".heif",
 }
+VIDEO_EXTS = {
+    ".mp4", ".m4v", ".mov", ".mkv", ".avi", ".wmv", ".flv", ".webm",
+    ".mpeg", ".mpg", ".mpe", ".m2v", ".ts", ".m2ts", ".mts", ".3gp",
+    ".3g2", ".ogv", ".vob", ".asf", ".f4v", ".rm", ".rmvb",
+}
 ARCHIVE_EXTS = {".zip", ".rar", ".7z"}
 MAX_EXTRACCION_BYTES = 4 * 1024**3
 MAX_EXTRACCION_ARCHIVOS = 200_000
+FFMPEG_URL = "https://www.gyan.dev/ffmpeg/builds/"
+VIDEO_SEM = threading.Semaphore(1)  # un ffmpeg a la vez; ffmpeg ya usa varios hilos
 
 
 class ErrorExtraccionSegura(RuntimeError):
@@ -351,8 +358,104 @@ def is_image(path: Path) -> bool:
     return path.suffix.lower() in IMAGE_EXTS
 
 
+def is_video(path: Path) -> bool:
+    return path.suffix.lower() in VIDEO_EXTS
+
+
+def is_media(path: Path) -> bool:
+    return is_image(path) or is_video(path)
+
+
 def collect_images_from_dir(root: Path) -> list[Path]:
     return sorted(p for p in root.rglob("*") if p.is_file() and is_image(p))
+
+
+def collect_media_from_dir(root: Path) -> list[Path]:
+    return sorted(p for p in root.rglob("*") if p.is_file() and is_media(p))
+
+
+def _candidatos_ejecutable(nombre: str, explicito: str = "") -> list[Path]:
+    base_nombre = nombre if os.name != "nt" else f"{nombre}.exe"
+    candidatos: list[Path] = []
+    if explicito:
+        p = Path(explicito).expanduser()
+        if p.is_dir():
+            p = p / base_nombre
+        candidatos.append(p)
+    env = os.environ.get("CONVERSOR_FFMPEG", "").strip()
+    if env:
+        p = Path(env).expanduser()
+        if p.is_dir():
+            p = p / base_nombre
+        candidatos.append(p)
+    raices = [Path(sys.executable).parent, Path(__file__).resolve().parent, Path.cwd()]
+    for raiz in raices:
+        for sub in ("", "bin", "tools", "tools/ffmpeg", "ffmpeg", "ffmpeg/bin"):
+            candidatos.append(raiz / sub / base_nombre if sub else raiz / base_nombre)
+    en_path = shutil.which(nombre)
+    if en_path:
+        candidatos.append(Path(en_path))
+    vistos: set[str] = set()
+    unicos: list[Path] = []
+    for p in candidatos:
+        try:
+            clave = str(p.resolve()).lower()
+        except OSError:
+            clave = str(p).lower()
+        if clave in vistos:
+            continue
+        vistos.add(clave)
+        unicos.append(p)
+    return unicos
+
+
+def find_ffmpeg(explicito: str = "") -> Path | None:
+    for p in _candidatos_ejecutable("ffmpeg", explicito):
+        try:
+            if p.is_file():
+                return p
+        except OSError:
+            continue
+    return None
+
+
+def find_ffprobe(explicito: str = "") -> Path | None:
+    ffmpeg = find_ffmpeg(explicito)
+    if ffmpeg is not None:
+        hermano = ffmpeg.with_name("ffprobe.exe" if os.name == "nt" else "ffprobe")
+        if hermano.is_file():
+            return hermano
+    for p in _candidatos_ejecutable("ffprobe", explicito):
+        try:
+            if p.is_file():
+                return p
+        except OSError:
+            continue
+    return None
+
+
+def video_dimensions(path: Path, ffprobe: Path | None = None) -> tuple[int, int]:
+    """Ancho y alto del primer flujo de vídeo, o (0, 0) si no se puede leer."""
+    probe = ffprobe or find_ffprobe()
+    if probe is None:
+        return 0, 0
+    try:
+        proc = subprocess.run(
+            [
+                str(probe), "-v", "error", "-select_streams", "v:0",
+                "-show_entries", "stream=width,height", "-of", "csv=p=0",
+                str(path),
+            ],
+            capture_output=True,
+            text=True,
+            timeout=30,
+            creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0,
+        )
+        linea = (proc.stdout or "").strip().splitlines()[0]
+        ancho, alto = (int(x) for x in linea.split(",")[:2])
+        return max(0, ancho), max(0, alto)
+    except Exception:
+        return 0, 0
 
 
 def hex_to_rgb(value: str) -> tuple[int, int, int]:
@@ -454,11 +557,14 @@ def aplicar_patron(patron: str, src: Path, rel: Path, job: Job, ext: str) -> Pat
         return rel.with_suffix(ext)
 
     ancho = alto = 0
-    try:
-        with Image.open(src) as im:
-            ancho, alto = im.size
-    except Exception:
-        pass
+    if is_video(src):
+        ancho, alto = video_dimensions(src)
+    else:
+        try:
+            with Image.open(src) as im:
+                ancho, alto = im.size
+        except Exception:
+            pass
     if job.max_dimension and max(ancho, alto) > job.max_dimension:
         escala = job.max_dimension / max(ancho, alto)
         ancho, alto = max(1, round(ancho * escala)), max(1, round(alto * escala))
@@ -656,6 +762,7 @@ class Job:
     dry_run: bool = False       # solo analizar: no escribe archivos
     preservar_extra: bool = False  # conservar EXIF/XMP y fecha original
     jobs: int = 0               # 0 = automatico; >0 = maximo de hilos
+    ffmpeg: str = ""            # ruta explicita a ffmpeg.exe (opcional)
 
 
 @dataclass
@@ -1181,8 +1288,119 @@ def _convertir_animado_webp(
     return src.stat().st_size, tam_out, aviso
 
 
-def convert_one(src: Path, dst: Path, job: Job) -> tuple[int, int, str]:
-    """Convierte una imagen. Devuelve (bytes_in, bytes_out, aviso)."""
+def _vp9_crf(quality: int) -> int:
+    """Calidad 1-100 -> CRF de VP9 (menos CRF = más calidad). 85 -> 30."""
+    q = max(1, min(100, int(quality)))
+    return max(15, min(63, round(63 - (q - 1) * 39 / 99)))
+
+
+def _vp9_cpu_used(method: int) -> int:
+    """Esfuerzo 0-6 -> cpu-used de VP9 (0 lento/mejor, 8 rápido)."""
+    m = max(0, min(6, int(method)))
+    return max(2, min(8, 8 - round(m * 0.75)))
+
+
+def convert_video(
+    src: Path, dst: Path, job: Job, cancel_event: threading.Event | None = None
+) -> tuple[int, int, str]:
+    """Convierte un vídeo a WebM (VP9 + Opus) con FFmpeg."""
+    if job.dry_run:
+        return src.stat().st_size, 0, "vídeo: se convertiría a WebM (peso no estimado)"
+
+    ffmpeg = find_ffmpeg(job.ffmpeg)
+    if ffmpeg is None:
+        raise RuntimeError(
+            "FFmpeg no encontrado. Instálalo y añádelo al PATH, copia ffmpeg.exe "
+            f"junto al programa o usa --ffmpeg. Descarga: {FFMPEG_URL}"
+        )
+
+    dst.parent.mkdir(parents=True, exist_ok=True)
+    parcial = dst.with_name(dst.name + ".part")
+    try:
+        parcial.unlink()
+    except OSError:
+        pass
+
+    crf = _vp9_crf(job.quality)
+    cpu = _vp9_cpu_used(job.method)
+    # yuv420p necesita dimensiones pares. Si hay lado máximo, se limita sin ampliar.
+    filtros = "scale=trunc(iw/2)*2:trunc(ih/2)*2"
+    if job.max_dimension:
+        d = max(2, int(job.max_dimension))
+        filtros = (
+            f"scale=w='min(iw,{d})':h='min(ih,{d})':"
+            "force_original_aspect_ratio=decrease," + filtros
+        )
+
+    args = [
+        str(ffmpeg), "-nostdin", "-hide_banner", "-loglevel", "error", "-y",
+        "-i", str(src),
+        "-map", "0:v:0", "-map", "0:a?",
+        "-c:v", "libvpx-vp9", "-row-mt", "1", "-deadline", "good",
+        "-cpu-used", str(cpu),
+    ]
+    if job.lossless:
+        args += ["-lossless", "1", "-b:v", "0"]
+    else:
+        args += ["-crf", str(crf), "-b:v", "0"]
+    args += [
+        "-pix_fmt", "yuv420p", "-vf", filtros,
+        "-c:a", "libopus", "-b:a", "96k",
+        "-map_metadata", "0",
+        "-f", "webm", str(parcial),
+    ]
+
+    error_txt = ""
+    codigo = 1
+    with tempfile.TemporaryFile() as errores:
+        proc = subprocess.Popen(
+            args,
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=errores,
+            creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0,
+        )
+        try:
+            while proc.poll() is None:
+                if cancel_event is not None and cancel_event.is_set():
+                    proc.terminate()
+                    try:
+                        proc.wait(timeout=5)
+                    except subprocess.TimeoutExpired:
+                        proc.kill()
+                    raise RuntimeError("cancelado")
+                time.sleep(0.15)
+            codigo = proc.wait()
+            errores.seek(0)
+            error_txt = errores.read().decode("utf-8", "replace").strip()
+        finally:
+            if proc.poll() is None:
+                proc.kill()
+
+    if codigo != 0:
+        try:
+            parcial.unlink()
+        except OSError:
+            pass
+        detalle = error_txt[-1500:] if error_txt else f"código {codigo}"
+        raise RuntimeError(f"FFmpeg falló: {detalle}")
+
+    os.replace(parcial, dst)
+    _aplicar_fecha(src, dst, job)
+    nota = "VP9 sin pérdida" if job.lossless else f"VP9 CRF {crf}"
+    if job.target_kb > 0:
+        nota += "; el peso máximo no se aplica a vídeos"
+    return src.stat().st_size, dst.stat().st_size, nota
+
+
+def convert_one(
+    src: Path, dst: Path, job: Job, cancel_event: threading.Event | None = None
+) -> tuple[int, int, str]:
+    """Convierte una imagen o un vídeo. Devuelve (bytes_in, bytes_out, aviso)."""
+    if is_video(src):
+        with VIDEO_SEM:
+            return convert_video(src, dst, job, cancel_event)
+
     resultado_gpu = convertir_jpeg_gpu(src, dst, job)
     if resultado_gpu is not None:
         _aplicar_fecha(src, dst, job)
@@ -1279,7 +1497,7 @@ def run_job(
             if cancel_event.is_set():
                 break
             if src.is_dir():
-                for f in collect_images_from_dir(src):
+                for f in collect_media_from_dir(src):
                     entradas.append((f, f.relative_to(src)))
             elif src.suffix.lower() in ARCHIVE_EXTS:
                 emit("status", f"Extrayendo {src.name}...")
@@ -1293,18 +1511,38 @@ def run_job(
                     emit("log", ("err", f"FALLO    {src.name}: {e}"))
                     res.failed.append((src, str(e)))
                     continue
-                dentro = collect_images_from_dir(destino)
-                emit("log", ("muted", f"         {len(dentro)} imagen(es) dentro de {src.name}"))
+                dentro = collect_media_from_dir(destino)
+                emit("log", ("muted", f"         {len(dentro)} archivo(s) dentro de {src.name}"))
                 base = Path(src.stem) if prefijar_comprimidos else Path()
                 for f in dentro:
                     entradas.append((f, base / f.relative_to(destino)))
-            elif is_image(src):
+            elif is_media(src):
                 entradas.append((src, Path(src.name)))
             else:
-                emit("log", ("muted", f"OMITIDA  {src.name} (no es imagen ni comprimido)"))
+                emit("log", ("muted", f"OMITIDA  {src.name} (no es imagen, vídeo ni comprimido)"))
 
         if not job.reencode_webp:
-            entradas = [e for e in entradas if e[0].suffix.lower() != ext]
+            entradas = [
+                e for e in entradas
+                if not (
+                    (is_image(e[0]) and e[0].suffix.lower() == ext)
+                    or (is_video(e[0]) and e[0].suffix.lower() == ".webm")
+                )
+            ]
+
+        if (
+            not job.dry_run
+            and any(is_video(e[0]) for e in entradas)
+            and find_ffmpeg(job.ffmpeg) is None
+        ):
+            emit(
+                "log",
+                (
+                    "warn",
+                    "FFmpeg no encontrado: los vídeos fallarán. Instálalo o copia "
+                    f"ffmpeg.exe junto al programa. Descarga: {FFMPEG_URL}",
+                ),
+            )
 
         # Quita duplicados aunque se hayan anadido carpeta y archivo a la vez
         vistas: set[str] = set()
@@ -1333,17 +1571,21 @@ def run_job(
         for src, rel in entradas:
             if not job.keep_structure:
                 rel = Path(rel.name)
-            rel_salida = aplicar_patron(job.name_pattern, src, rel, job, ext)
+            es_vid = is_video(src)
+            ext_salida = ".webm" if es_vid else ext
+            rel_salida = aplicar_patron(job.name_pattern, src, rel, job, ext_salida)
             dst = job.output_dir / rel_salida
             clave = str(dst).lower()
             if clave in usados:
-                base = dst.with_name(f"{dst.stem}_{src.suffix.lstrip('.').lower()}{ext}")
+                base = dst.with_name(
+                    f"{dst.stem}_{src.suffix.lstrip('.').lower()}{ext_salida}"
+                )
                 dst = base
                 clave = str(dst).lower()
                 intento = 1
                 while clave in usados:
                     intento += 1
-                    dst = base.with_name(f"{base.stem}_{intento}{ext}")
+                    dst = base.with_name(f"{base.stem}_{intento}{ext_salida}")
                     clave = str(dst).lower()
             usados.add(clave)
 
@@ -1415,7 +1657,7 @@ def run_job(
                 nombre = dst.relative_to(job.output_dir).as_posix()
             except ValueError:
                 nombre = dst.name
-            ahorro = (1 - tam_out / tam_in) * 100 if tam_in else 0
+            ahorro = (1 - tam_out / tam_in) * 100 if tam_in and tam_out else 0
             estado = "analizada" if job.dry_run else "convertida"
             filas.append(
                 (nombre, src.name, round(tam_in / 1024, 1), round(tam_out / 1024, 1),
@@ -1479,10 +1721,10 @@ def run_job(
         def convertir_con_pausa(src: Path, dst: Path):
             if not esperar_pausa():
                 return None
-            return convert_one(src, dst, job)
+            return convert_one(src, dst, job, cancel_event)
 
         if paralelo:
-            emit("status", f"Convirtiendo {len(tareas)} imagenes ({trabajadores} en paralelo)...")
+            emit("status", f"Convirtiendo {len(tareas)} archivos ({trabajadores} en paralelo)...")
             with ThreadPoolExecutor(max_workers=trabajadores) as pool:
                 futuros = {
                     pool.submit(convertir_con_pausa, src, dst): (src, dst)
@@ -1513,9 +1755,13 @@ def run_job(
                     emit("log", ("warn", "Cancelado por el usuario."))
                     break
                 try:
-                    tam_in, tam_out, aviso = convert_one(src, dst, job)
+                    tam_in, tam_out, aviso = convert_one(src, dst, job, cancel_event)
                     exito(src, dst, tam_in, tam_out, aviso)
                 except Exception as e:  # noqa: BLE001
+                    if cancel_event.is_set():
+                        res.cancelled = True
+                        emit("log", ("warn", "Cancelado por el usuario."))
+                        break
                     fallo(src, dst, e)
                 hechas += 1
                 emit("progress", (hechas, total))
@@ -1654,7 +1900,7 @@ class DropZone(tk.Canvas):
         self.create_text(
             w / 2,
             h / 2 + 12,
-            text="Archivos, carpetas, .zip, .rar o .7z  ·  tambien puedes hacer clic aqui",
+            text="Archivos, videos, carpetas, .zip, .rar o .7z  ·  tambien puedes hacer clic aqui",
             fill=MUTED,
             font=("Segoe UI", 8),
         )
@@ -1733,11 +1979,13 @@ class VentanaAcerca(tk.Toplevel):
 
         t.insert("end", "Que hace\n", "h1")
         for linea in (
-            "Convierte JPG, PNG, BMP, TIFF, GIF, ICO, TGA, PCX, DDS y PPM/PGM/PBM a formato WebP.",
+            "Convierte JPG, PNG, BMP, TIFF, GIF, ICO, TGA, PCX, DDS y PPM/PGM/PBM a WebP, "
+            "y vídeos MP4, MOV, MKV, AVI, WebM y similares a WebM.",
             "Trabaja con imagenes sueltas, carpetas completas y comprimidos .zip / .rar / .7z.",
             "Arrastra y suelta desde el Explorador de Windows en cualquier punto de la ventana.",
             "Guarda el resultado en la carpeta que elijas y, si quieres, lo empaqueta en un .zip.",
             "Todo el proceso es local: no se envia nada a internet. Los originales nunca se modifican.",
+            "Para convertir videos hace falta FFmpeg: el programa lo busca en PATH o junto al ejecutable.",
         ):
             t.insert("end", "•  " + linea + "\n", "li")
 
@@ -1747,15 +1995,14 @@ class VentanaAcerca(tk.Toplevel):
             "Calidad 1-100 (85 por defecto): mas calidad, mas peso. 85-92 es lo ideal para web.",
             "Esfuerzo 0-6 (6 por defecto): cuanto trabaja el compresor; mas esfuerzo, archivos mas pequenos.",
             "Sin perdida (lossless): fidelidad exacta al original, archivos mas grandes. Para capturas y logos.",
-            "Recodificar tambien los .webp / .avif: por defecto se saltan los que ya estan en el formato destino.",
+            "Recodificar tambien los .webp / .avif / .webm: por defecto se saltan los que ya estan en el formato destino.",
             "Aplanar transparencia sobre un color: rellena el fondo alfa de los PNG con el color elegido.",
             "Mantener subcarpetas del origen: reproduce la estructura de carpetas original.",
             "Sobrescribir archivos existentes: si se desactiva, los ya convertidos se omiten.",
             "Empaquetar el resultado en .zip: crea un ZIP con todos los archivos en la carpeta de salida.",
             "Lado maximo: reduce a 2560, 1920, 1600, 1200, 800 o 512 px sin ampliar las pequenas.",
             "Peso maximo: ajusta la calidad automaticamente para no superar los KB indicados.",
-            "Formato de salida: WebP o AVIF (AVIF suele pesar menos con la misma calidad).",
-            "Informe CSV: deja en la carpeta de salida una tabla con peso original, final y ahorro.",
+            "Formato de salida de imágenes: WebP o AVIF (AVIF suele pesar menos). Los vídeos se convierten siempre a WebM.",            "Informe CSV: deja en la carpeta de salida una tabla con peso original, final y ahorro.",
             "Aviso sonoro al terminar: tono agudo si todo fue bien, grave si hubo errores o se cancelo.",
         ):
             t.insert("end", "•  " + linea + "\n", "li")
@@ -1779,6 +2026,7 @@ class VentanaAcerca(tk.Toplevel):
         for linea in (
             "La orientacion de las fotos (etiqueta EXIF), para que no salgan giradas.",
             "La transparencia de PNG, GIF y WebP, salvo que se active el aplanado.",
+            "En vídeo, el audio se conserva y se recodifica a Opus 96 kbps.",
             "El perfil de color ICC, si la imagen lo lleva incrustado.",
             "Los GIF animados se convierten usando el primer fotograma (se avisa en el registro).",
             "Los metadatos EXIF y la ubicacion GPS no se copian, para que los archivos pesen menos.",
@@ -1804,6 +2052,9 @@ class VentanaAcerca(tk.Toplevel):
                                  else "Arrastrar y soltar: no disponible (instala tkinterdnd2)\n"), "li")
         t.insert("end", "•  " + (f"Extractor de comprimidos: {tool}\n" if tool
                                  else "Extractor de comprimidos: ninguno (solo .zip)\n"), "li")
+        ffmpeg = find_ffmpeg()
+        t.insert("end", "•  " + (f"FFmpeg para vídeo: {ffmpeg.name}\n" if ffmpeg
+                                 else "FFmpeg para vídeo: no encontrado (copia ffmpeg.exe junto al programa)\n"), "li")
         estado_gpu = detectar_hardware_gpu()
         gpu = estado_gpu.nvidia or (estado_gpu.hardware[0] if estado_gpu.hardware else "no detectada")
         t.insert("end", "•  " + f"GPU: {gpu}\n", "li")
@@ -1832,7 +2083,7 @@ class VentanaAcerca(tk.Toplevel):
         for linea in (
             "Para un lote grande, deja esfuerzo 6 y vete a hacer otra cosa: puedes cancelar cuando quieras.",
             "Si repites una conversion, desactiva 'Sobrescribir' para reanudar sin repetir trabajo.",
-            "El ZIP del resultado no sustituye a los WebP: ambos quedan en la carpeta de salida.",
+            "El ZIP del resultado no sustituye a los archivos convertidos: ambos quedan en la carpeta de salida.",
             "El manual completo, con todas las opciones explicadas, esta en Ayuda -> Manual de uso (F1).",
         ):
             t.insert("end", "•  " + linea + "\n", "li")
@@ -1881,6 +2132,7 @@ class Vigilante(threading.Thread):
             gpu_forzar=False,
             name_pattern=b.name_pattern,
             dry_run=False,
+            ffmpeg=b.ffmpeg,
         )
 
     def run(self) -> None:
@@ -1891,7 +2143,7 @@ class Vigilante(threading.Thread):
                     p
                     for p in self.entrada.rglob("*")
                     if p.is_file()
-                    and (is_image(p) or p.suffix.lower() in ARCHIVE_EXTS)
+                    and (is_media(p) or p.suffix.lower() in ARCHIVE_EXTS)
                 ]
             except Exception:
                 continue
@@ -2571,7 +2823,7 @@ class App(BaseTk):  # type: ignore[misc,valid-type]
 
         self.drop_zone = DropZone(
             card_src,
-            "Arrastra aqui tus imagenes, carpetas o comprimidos .zip / .rar",
+            "Arrastra aqui tus imagenes, videos, carpetas o comprimidos .zip / .rar",
             on_click=self._add_files,
             on_drop=self._drop_paths,
         )
@@ -2656,7 +2908,7 @@ class App(BaseTk):  # type: ignore[misc,valid-type]
         )
         self.cmb_formato.pack(side="left", padx=(6, 0))
         self.cmb_formato.bind("<<ComboboxSelected>>", self._on_formato)
-        ttk.Label(fila_fmt, text="AVIF pesa menos", style="MutedCard.TLabel").pack(side="left", padx=(8, 0))
+        ttk.Label(fila_fmt, text="AVIF pesa menos · vídeos → WebM", style="MutedCard.TLabel").pack(side="left", padx=(8, 0))
 
         fila_informes = ttk.Frame(card_out, style="Card.TFrame")
         fila_informes.pack(fill="x", pady=(6, 0))
@@ -2810,7 +3062,7 @@ class App(BaseTk):  # type: ignore[misc,valid-type]
         accion.pack(fill="x", pady=(12, 0))
         self.btn_start = tk.Button(
             accion,
-            text="Convertir a WebP",
+            text="Convertir ahora",
             command=self._start,
             bg=ACCENT,
             fg="white",
@@ -2928,7 +3180,7 @@ class App(BaseTk):  # type: ignore[misc,valid-type]
             "chk_overwrite": "Activado reemplaza archivos existentes; desactivado los omite.",
             "chk_zip": "Crea además un ZIP con todos los archivos generados.",
             "entry_zip": "Nombre del ZIP que se creará en la carpeta de salida.",
-            "cmb_formato": "Formato de salida: WebP (compatible) o AVIF (pesa menos).",
+            "cmb_formato": "Formato de salida de imágenes: WebP o AVIF. Los vídeos se convierten a WebM.",
             "chk_csv": "Guarda un CSV con el peso original, final y el ahorro de cada archivo.",
             "chk_html": "Guarda un informe HTML con la tabla de resultados y el ahorro.",
             "chk_extra": "Conserva EXIF/XMP (incluida la ubicación GPS) y la fecha del archivo original.",
@@ -3038,6 +3290,11 @@ class App(BaseTk):  # type: ignore[misc,valid-type]
             label="Quitar del menu contextual", command=self._quitar_menu_contextual
         )
         herr.add_separator()
+        herr.add_command(
+            label="Descargar FFmpeg (necesario para vídeo)...",
+            command=lambda: webbrowser.open(FFMPEG_URL),
+        )
+        herr.add_separator()
         herr.add_command(label="Aceleracion GPU (CUDA)...", command=self._dialogo_gpu)
         herr.add_checkbutton(
             label="Forzar GPU en lotes pequenos",
@@ -3113,7 +3370,7 @@ class App(BaseTk):  # type: ignore[misc,valid-type]
             "Acerca de Conversor WebP": "Versión, características y entorno del equipo.",
             "Anadir a 'Enviar a' del Explorador": "Crea un acceso en 'Enviar a' para abrir la app con los archivos seleccionados.",
             "Quitar de 'Enviar a'": "Elimina el acceso creado en 'Enviar a'.",
-            "Anadir al menu contextual de Windows": "Añade 'Convertir a WebP' al clic derecho de imágenes, carpetas y comprimidos.",
+            "Anadir al menu contextual de Windows": "Añade 'Convertir con Conversor WebP' al clic derecho de imágenes, vídeos, carpetas y comprimidos.",
             "Quitar del menu contextual": "Elimina la entrada del menú contextual de Windows.",
             "Aceleracion GPU (CUDA)...": "Muestra el estado de CUDA y permite indicar la carpeta de PyTorch.",
             "Forzar GPU en lotes pequenos": "Usa la GPU aunque el lote sea pequeño (puede tardar más al inicio).",
@@ -3224,9 +3481,17 @@ class App(BaseTk):  # type: ignore[misc,valid-type]
     def _claves_contexto() -> list[str]:
         claves = [
             r"Software\Classes\SystemFileAssociations\image\shell\ConversorWebP",
+            r"Software\Classes\SystemFileAssociations\video\shell\ConversorWebP",
             r"Software\Classes\Directory\shell\ConversorWebP",
         ]
         for ext in (".zip", ".rar", ".7z"):
+            claves.append(
+                rf"Software\Classes\SystemFileAssociations\{ext}\shell\ConversorWebP"
+            )
+        for ext in (
+            ".mp4", ".m4v", ".mov", ".mkv", ".avi", ".wmv", ".flv", ".webm",
+            ".mpeg", ".mpg", ".ts", ".m2ts", ".mts", ".3gp", ".ogv",
+        ):
             claves.append(
                 rf"Software\Classes\SystemFileAssociations\{ext}\shell\ConversorWebP"
             )
@@ -3241,7 +3506,7 @@ class App(BaseTk):  # type: ignore[misc,valid-type]
             for base in self._claves_contexto():
                 with winreg.CreateKey(winreg.HKEY_CURRENT_USER, base) as clave:
                     winreg.SetValueEx(
-                        clave, "", 0, winreg.REG_SZ, "Convertir a WebP con Conversor WebP"
+                        clave, "", 0, winreg.REG_SZ, "Convertir con Conversor WebP"
                     )
                     winreg.SetValueEx(clave, "Icon", 0, winreg.REG_SZ, f"{icono},0")
                 with winreg.CreateKey(
@@ -3251,8 +3516,8 @@ class App(BaseTk):  # type: ignore[misc,valid-type]
             messagebox.showinfo(
                 APP_NAME,
                 "Menu contextual instalado.\n\n"
-                "Haz clic derecho sobre una imagen, una carpeta o un .zip/.rar y elige "
-                "'Convertir a WebP con Conversor WebP'. El programa se abrira con ese "
+                "Haz clic derecho sobre una imagen, un vídeo, una carpeta o un .zip/.rar y elige "
+                "'Convertir con Conversor WebP'. El programa se abrira con ese "
                 "contenido cargado.",
             )
         except Exception as e:  # noqa: BLE001
@@ -4082,7 +4347,7 @@ class App(BaseTk):  # type: ignore[misc,valid-type]
         fmt = "AVIF" if self.formato.get().upper() == "AVIF" else "WebP"
         self.formato.set(fmt)
         self.btn_start.configure(text=f"Convertir a {fmt}")
-        self.chk_webp.configure(text="Recodificar tambien los .webp / .avif")
+        self.chk_webp.configure(text="Recodificar tambien los .webp / .avif / .webm")
 
     def _on_peso(self) -> None:
         self.entry_peso.configure(state="normal" if self.peso_activo.get() else "disabled")
@@ -4443,7 +4708,7 @@ class App(BaseTk):  # type: ignore[misc,valid-type]
         if zips:
             partes.append(f"{zips} comprimido(s)")
         if archivos:
-            partes.append(f"{archivos} imagen(es)")
+            partes.append(f"{archivos} archivo(s)")
         self.lbl_count.configure(text="Origen: " + ", ".join(partes))
 
     def _anadir(self, rutas: list[Path]) -> None:
@@ -4465,7 +4730,7 @@ class App(BaseTk):  # type: ignore[misc,valid-type]
             if not r.exists():
                 ignorados += 1
                 continue
-            if r.is_dir() or is_image(r) or r.suffix.lower() in ARCHIVE_EXTS:
+            if r.is_dir() or is_media(r) or r.suffix.lower() in ARCHIVE_EXTS:
                 self.sources.append(r)
                 existentes.add(clave)
             else:
@@ -4480,22 +4745,24 @@ class App(BaseTk):  # type: ignore[misc,valid-type]
                 base, nombre = primera.parent, primera.stem
             else:
                 base, nombre = primera.parent, primera.parent.name
-            self.output_dir.set(str(base / f"{nombre}_webp"))
+            self.output_dir.set(str(base / f"{nombre}{'_webm' if is_video(primera) else '_webp'}"))
 
         if ignorados:
             messagebox.showinfo(
-                APP_NAME, f"Se ignoraron {ignorados} archivo(s) que no son imagenes ni comprimidos."
+                APP_NAME, f"Se ignoraron {ignorados} archivo(s) que no son imágenes, vídeos ni comprimidos."
             )
         self._actualizar_cola_si_existe()
 
     def _add_files(self) -> None:
         rutas = filedialog.askopenfilenames(
-            title="Selecciona imagenes",
+            title="Selecciona imágenes o vídeos",
             filetypes=[
                 (
-                    "Imagenes",
+                    "Imágenes y vídeos",
                     "*.jpg *.jpeg *.jfif *.png *.bmp *.gif *.tif *.tiff *.ico "
-                    "*.webp *.avif *.tga *.pcx *.dds *.ppm *.pgm *.pbm",
+                    "*.webp *.avif *.tga *.pcx *.dds *.ppm *.pgm *.pbm "
+                    "*.mp4 *.m4v *.mov *.mkv *.avi *.wmv *.flv *.webm *.mpeg "
+                    "*.mpg *.ts *.m2ts *.mts *.3gp *.ogv",
                 ),
                 ("Todos los archivos", "*.*"),
             ],
@@ -4504,7 +4771,7 @@ class App(BaseTk):  # type: ignore[misc,valid-type]
             self._anadir([Path(r) for r in rutas])
 
     def _add_folder(self) -> None:
-        carpeta = filedialog.askdirectory(title="Selecciona una carpeta con imagenes")
+        carpeta = filedialog.askdirectory(title="Selecciona una carpeta con imágenes o vídeos")
         if carpeta:
             self._anadir([Path(carpeta)])
 
@@ -4743,7 +5010,7 @@ class App(BaseTk):  # type: ignore[misc,valid-type]
         self._guardar_cola(job)
         if analizar:
             self._log("warn", "MODO ANALISIS: no se escribiran imagenes, solo el informe.")
-        self._log("info", f"Salida: {salida}  ·  Formato: {job.formato}")
+        self._log("info", f"Salida: {salida}  ·  Imágenes: {job.formato}  ·  Vídeos: WebM")
         if job.name_pattern.strip():
             self._log("info", f"Patron de nombres: {job.name_pattern}")
         if job.max_dimension:
@@ -5359,10 +5626,10 @@ def run_cli(argv: list[str]) -> int:
 
     parser = argparse.ArgumentParser(
         prog="ConversorWebP",
-        description="Convierte imagenes a WebP. Sin argumentos abre la interfaz grafica.",
+        description="Convierte imágenes a WebP/AVIF y vídeos a WebM. Sin argumentos abre la interfaz gráfica.",
     )
     parser.add_argument("--version", action="version", version=f"%(prog)s {APP_VERSION}")
-    parser.add_argument("origen", nargs="+", help="Archivos, carpetas o .zip/.rar de origen")
+    parser.add_argument("origen", nargs="+", help="Archivos, carpetas o .zip/.rar de origen (imágenes o vídeos)")
     parser.add_argument("-o", "--output", required=True, help="Carpeta de salida")
     parser.add_argument("-q", "--quality", type=int, default=85, help="Calidad 1-100 (85)")
     parser.add_argument("-m", "--method", type=int, default=6, help="Esfuerzo 0-6 (6)")
@@ -5371,14 +5638,15 @@ def run_cli(argv: list[str]) -> int:
     parser.add_argument("--bg", type=color_arg, default="#ffffff", help="Color de fondo al aplanar")
     parser.add_argument("--no-recursive", action="store_true", help="No mantener subcarpetas")
     parser.add_argument("--no-overwrite", action="store_true", help="Omitir WebP existentes")
-    parser.add_argument("--webp", action="store_true", help="Recodificar tambien los .webp")
+    parser.add_argument("--webp", action="store_true", help="Recodificar tambien los .webp/.avif/.webm")
     parser.add_argument("--zip", dest="zip_name", default=None, help="Crear un ZIP con el resultado")
     parser.add_argument("--max-dim", type=int, default=0,
                         help="Redimensionar al lado maximo indicado en px (0 = sin cambio)")
     parser.add_argument("--max-kb", type=int, default=0,
                         help="Peso maximo por imagen en KB (0 = sin limite)")
     parser.add_argument("--format", dest="formato", default="webp", type=str.lower,
-                        choices=["webp", "avif"], help="Formato de salida (webp o avif)")
+                        choices=["webp", "avif"], help="Formato de salida de imágenes (webp o avif)")
+    parser.add_argument("--ffmpeg", default="", help="Ruta a ffmpeg.exe (opcional; si no, se busca en PATH)")
     parser.add_argument("--csv", action="store_true", help="Guardar informe CSV en la salida")
     parser.add_argument("--html", action="store_true", help="Guardar informe HTML en la salida")
     parser.add_argument("--json", action="store_true", help="Salida final en JSON")
@@ -5419,6 +5687,7 @@ def run_cli(argv: list[str]) -> int:
         gpu_forzar=bool(args.gpu) and not args.no_gpu,
         preservar_extra=bool(args.keep_metadata),
         jobs=max(0, min(32, args.jobs)),
+        ffmpeg=args.ffmpeg,
     )
     if args.preset:
         preset = PRESETS_BUILTIN.get(args.preset)

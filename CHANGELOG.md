@@ -6,6 +6,37 @@ Todos los cambios relevantes del proyecto. Formato basado en
 
 ---
 
+## [2.11.0] — 2026-11-18
+
+### Añadido
+
+- **Conversión de vídeo a WebM** en las ediciones Python y C++, con vídeo **VP9** y audio **Opus**.
+- Entradas habituales: MP4, M4V, MOV, MKV, AVI, WMV, FLV, WebM, MPEG, TS, M2TS, 3GP, OGV y otras compatibles con FFmpeg.
+- **Lotes mixtos**: imágenes a WebP/AVIF y vídeos a WebM en el mismo trabajo.
+- La **calidad 1-100** se traduce al CRF de VP9 (85 ≈ CRF 30); el **esfuerzo 0-6** ajusta `-cpu-used`.
+- El **lado máximo** limita el vídeo sin ampliarlo y el **audio se conserva** como Opus 96 kbps.
+- Los vídeos se convierten de uno en uno (FFmpeg ya usa varios hilos); las imágenes siguen en paralelo.
+- **Detección de FFmpeg** en `PATH`, junto al ejecutable, en `bin\`, `tools\` o `tools\ffmpeg\`; opción `--ffmpeg` y clave `ffmpeg` en `config.ini`.
+- Menú **Herramientas → Descargar FFmpeg para vídeo** y avisos claros si falta.
+- Entradas de **menú contextual** para vídeos en la edición C++.
+
+### Limitaciones
+
+- FFmpeg es una dependencia externa: sin él, los vídeos fallan pero las imágenes siguen funcionando.
+- El **peso máximo en KB** no se aplica a vídeos.
+- No se conservan todos los metadatos del contenedor; WebM solo admite un subconjunto.
+
+### Pruebas
+
+- 29 pruebas Python superadas, incluidas 4 de vídeo (WebM, lote mixto, omisión y dry-run).
+- C++ compilado y probado con vídeo real: VP9, Opus, audio, redimensionado, patrón y lote mixto.
+
+### Pendiente
+
+- Traducción completa al inglés.
+
+---
+
 ## [2.10.0] — 2026-11-18
 
 ### Añadido
@@ -366,6 +397,7 @@ Todos los cambios relevantes del proyecto. Formato basado en
 - Conservación de transparencia, perfil ICC y orientación EXIF.
 - Modo consola básico.
 
+[2.11.0]: #2110--2026-11-18
 [2.10.0]: #2100--2026-11-18
 [2.9.1]: #291--2026-11-18
 [2.9.0]: #290--2026-11-18

@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Manual de uso · Conversor WebP 2.10.0</title>
+<title>Manual de uso · Conversor WebP 2.11.0</title>
 <style>
   :root{
     --azul:#1a73e8; --azul-osc:#1557b0; --texto:#1f2933; --gris:#5f6b7a;
@@ -67,7 +67,7 @@
 <div class="hoja">
 
 <header>
-  <h1>Conversor WebP 2.10.0</h1>
+  <h1>Conversor WebP 2.11.0</h1>
   <p class="sub">Manual de uso · Qué hace cada opción y cómo sacarle partido</p>
 </header>
 
@@ -79,6 +79,7 @@
     <li><a href="#origen">Sección 1 · Origen</a></li>
     <li><a href="#salida">Sección 2 · Carpeta de salida</a></li>
     <li><a href="#calidad">Sección 3 · Calidad y opciones</a></li>
+    <li><a href="#video">Vídeo a WebM</a></li>
     <li><a href="#acciones">Botones de acción, progreso y registro</a></li>
     <li><a href="#arrastrar">Arrastrar y soltar</a></li>
     <li><a href="#comprimidos">Comprimidos .zip, .rar y .7z</a></li>
@@ -93,7 +94,7 @@
 </div>
 
 <div class="nota">
-  <strong>Novedades de la versión 2.10.0:</strong> la edición C++ estrena DPI nítido del sistema (texto y controles a resolución real, con opciones <code>auto</code>, <code>system</code> y <code>gdi</code>); la edición Python ya usaba DPI del sistema y fuentes escaladas. Se mantienen la cola persistente con pausa, reanudación, reintento y reordenación; vista previa con calidad de prueba y peso estimado; WebP animado desde GIF/WebP; conservación opcional de metadatos EXIF/XMP y fecha original; CLI con salida JSON, modo silencioso, trabajos en paralelo y presets; actualizaciones con verificación Authenticode cuando el ejecutable esté firmado; configuración atómica en C++; aviso de espacio libre, tiempo restante e instancia única.
+  <strong>Novedades de la versión 2.11.0:</strong> conversión de vídeos MP4, MOV, MKV, AVI, WebM y similares a <strong>WebM</strong> (VP9 + Opus) con FFmpeg, en lotes mixtos con imágenes; y DPI nítido del sistema en la edición C++ (texto y controles a resolución real, con opciones <code>auto</code>, <code>system</code> y <code>gdi</code>). Se mantienen la cola persistente con pausa, reanudación, reintento y reordenación; vista previa con calidad de prueba y peso estimado; WebP animado desde GIF/WebP; conservación opcional de metadatos EXIF/XMP y fecha original; CLI con salida JSON, modo silencioso, trabajos en paralelo y presets; actualizaciones con verificación Authenticode cuando el ejecutable esté firmado; configuración atómica en C++; aviso de espacio libre, tiempo restante e instancia única.
   <br><br>
   <strong>Novedades de la versión 2.6.2:</strong> actualización automática desde la propia aplicación,
   edición C++ con paridad funcional, apagado opcional, tooltips, HEIC, carpeta vigilada, patrones,
@@ -123,7 +124,7 @@ si quieres, entregarlo todo empaquetado en un <strong>ZIP</strong>.</p>
   <li>Pulsa <strong>Examinar…</strong> y elige la carpeta donde quieres los <code>.webp</code>.</li>
   <li>Deja la calidad en <strong>85</strong> (buen equilibrio) y, si quieres el resultado en un solo
       archivo, marca <strong>Empaquetar el resultado en .zip</strong>.</li>
-  <li>Pulsa <strong>Convertir a WebP</strong>. Al terminar verás el resumen y podrás abrir la carpeta
+  <li>Pulsa <strong>Convertir ahora</strong>. Al terminar verás el resumen y podrás abrir la carpeta
       con <strong>Abrir carpeta de salida</strong>.</li>
 </ol>
 
@@ -330,10 +331,28 @@ Cualquier fallo de CUDA revierte a CPU para esa imagen.</p>
   <em>Herramientas → Aceleración GPU</em> puedes ver el estado y elegir la carpeta que lo contiene.
 </div>
 
+<h3 id="video">Vídeo a WebM</h3>
+<p>Además de imágenes, el programa convierte vídeos a <strong>WebM</strong> con vídeo <strong>VP9</strong>
+y audio <strong>Opus</strong>. Se aceptan MP4, M4V, MOV, MKV, AVI, WMV, FLV, WebM, MPEG, TS, M2TS, 3GP,
+OGV y otros formatos que entienda FFmpeg.</p>
+<ul>
+  <li>La <strong>calidad 1-100</strong> se aplica al CRF de VP9 (85 ≈ CRF 30).</li>
+  <li>El <strong>esfuerzo 0-6</strong> ajusta la velocidad de compresión.</li>
+  <li>El <strong>lado máximo</strong> reduce el vídeo sin ampliarlo.</li>
+  <li>El <strong>audio se conserva</strong> y se recodifica a Opus 96 kbps.</li>
+  <li>El <strong>peso máximo en KB</strong> solo se aplica a imágenes.</li>
+  <li>Un <code>.webm</code> de origen se omite salvo que actives <strong>Recodificar</strong>.</li>
+</ul>
+<p>Para vídeo hace falta <strong>FFmpeg</strong>. El programa lo busca en <code>PATH</code>, junto al
+ejecutable, en <code>bin\</code>, en <code>tools\</code> o en la ruta que indiques con <code>--ffmpeg</code>.
+Puedes descargarlo en <a href="https://www.gyan.dev/ffmpeg/builds/">gyan.dev</a> y copiar
+<code>ffmpeg.exe</code> (y <code>ffprobe.exe</code> si usas patrones con <code>{ancho}</code>) junto a
+<code>ConversorWebP.exe</code>. El menú <em>Herramientas → Descargar FFmpeg</em> abre esa página.</p>
+
 <h2 id="acciones">6. Botones de acción, progreso y registro</h2>
 <table>
   <tr><th>Elemento</th><th>Qué hace</th></tr>
-  <tr><td><strong>Convertir a WebP</strong></td><td>Comprueba los datos, crea la carpeta de salida si falta y arranca la conversión.</td></tr>
+  <tr><td><strong>Convertir ahora</strong></td><td>Comprueba los datos, crea la carpeta de salida si falta y arranca la conversión.</td></tr>
   <tr><td><strong>Cancelar</strong></td><td>Detiene el proceso después del archivo en curso. Lo ya convertido se conserva.</td></tr>
   <tr><td><strong>Abrir carpeta de salida</strong></td><td>Abre el Explorador de Windows en la carpeta de destino.</td></tr>
   <tr><td><strong>Aviso sonoro al terminar</strong></td><td>Pitido al finalizar: dos tonos agudos si todo salió bien y dos graves si hubo errores o cancelaste. Se puede desactivar con la casilla que está a la derecha de los botones.</td></tr>
@@ -432,7 +451,8 @@ instalados; el programa los busca solo en las rutas habituales de Windows.</p>
   <tr><td><code>-q, --quality</code></td><td>Calidad 1–100. Por defecto 85.</td></tr>
   <tr><td><code>-m, --method</code></td><td>Esfuerzo 0–6. Por defecto 6.</td></tr>
   <tr><td><code>--zip NOMBRE</code></td><td>Crea un ZIP con el resultado dentro de la carpeta de salida.</td></tr>
-  <tr><td><code>--format webp|avif</code></td><td>Formato de salida. Por defecto <code>webp</code>.</td></tr>
+  <tr><td><code>--format webp|avif</code></td><td>Formato de salida de imágenes. Por defecto <code>webp</code>. Los vídeos van a WebM.</td></tr>
+  <tr><td><code>--ffmpeg RUTA</code></td><td>Ruta a <code>ffmpeg.exe</code> para vídeo (opcional).</td></tr>
   <tr><td><code>--max-dim N</code></td><td>Redimensiona al lado máximo de N píxeles (no amplía).</td></tr>
   <tr><td><code>--max-kb N</code></td><td>Busca la calidad necesaria para no superar N KB por imagen.</td></tr>
   <tr><td><code>--csv</code></td><td>Genera el informe CSV en la carpeta de salida.</td></tr>
@@ -444,12 +464,13 @@ instalados; el programa los busca solo en las rutas habituales de Windows.</p>
   <tr><td><code>--flat --bg "#ffffff"</code></td><td>Aplana la transparencia sobre ese color.</td></tr>
   <tr><td><code>--no-recursive</code></td><td>No mantiene subcarpetas (todo plano).</td></tr>
   <tr><td><code>--no-overwrite</code></td><td>Omite los WebP que ya existan.</td></tr>
-  <tr><td><code>--webp</code></td><td>Recodifica también los <code>.webp</code> existentes.</td></tr>
+  <tr><td><code>--webp</code></td><td>Recodifica también los <code>.webp</code>, <code>.avif</code> y <code>.webm</code> existentes.</td></tr>
 </table>
 <p>Ejemplos:</p>
 <pre><code>ConversorWebP.exe "C:\fotos\vacaciones.rar" -o "C:\fotos\webp" --zip vacaciones.zip
 ConversorWebP.exe "C:\capturas" -o "C:\capturas\webp" -q 95 --webp
-ConversorWebP.exe "C:\logos\logo.png" -o "C:\logos" --lossless</code></pre>
+ConversorWebP.exe "C:\logos\logo.png" -o "C:\logos" --lossless
+ConversorWebP.exe "C:\videos\demo.mp4" -o "C:\videos\webm" --max-dim 1280</code></pre>
 <p>Sin argumentos, el ejecutable abre siempre la interfaz gráfica.</p>
 
 <h2 id="ajustes">12. Dónde se guardan los ajustes</h2>
@@ -552,7 +573,7 @@ sobrescribir lo que ya exista. Se detiene desde el mismo menú o al cerrar el pr
 con dimensiones, peso y porcentaje de ahorro.</p>
 
 <h3>Menú contextual de Windows</h3>
-<p>Se puede añadir «Convertir a WebP con Conversor WebP» al clic derecho de imágenes, carpetas y
+<p>Se puede añadir «Convertir con Conversor WebP» al clic derecho de imágenes, vídeos, carpetas y
 comprimidos. Se instala en HKCU (sin administrador) y se quita desde Herramientas.</p>
 
 <h3>HEIC/HEIF</h3>
@@ -585,7 +606,7 @@ muestran un aviso en la barra de estado. <em>Ayuda → Buscar actualizaciones</e
 ofrece abrir la página de descarga.</p>
 
 <p class="pie">
-  Conversor WebP 2.10.0 · Programa local para Windows · Interfaz Tkinter, conversión con Pillow, arrastre con
+  Conversor WebP 2.11.0 · Programa local para Windows · Interfaz Tkinter, conversión con Pillow, arrastre con
   TkDND, extracción con 7-Zip/WinRAR.<br>
   Este manual se abre desde el programa en <strong>Ayuda → Manual de uso</strong> y también puede abrirse
   con doble clic en cualquier navegador.

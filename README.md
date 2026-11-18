@@ -5,12 +5,13 @@
 <h1 align="center">Conversor WebP</h1>
 
 <p align="center">
-  Conversor de imágenes para Windows con interfaz gráfica y línea de comandos.<br>
-  JPG · PNG · BMP · TIFF · GIF · ICO · TGA · PCX · DDS · PPM → <strong>WebP</strong> o <strong>AVIF</strong>
+  Conversor de imágenes y vídeos para Windows con interfaz gráfica y línea de comandos.<br>
+  JPG · PNG · BMP · TIFF · GIF · ICO · TGA · PCX · DDS · PPM → <strong>WebP</strong> o <strong>AVIF</strong><br>
+  MP4 · MOV · MKV · AVI · WebM → <strong>WebM</strong>
 </p>
 
 <p align="center">
-  <img alt="Versión" src="https://img.shields.io/badge/version-2.10.0-1a73e8">
+  <img alt="Versión" src="https://img.shields.io/badge/version-2.11.0-1a73e8">
   <img alt="Windows" src="https://img.shields.io/badge/Windows-10%20%7C%2011-0078D6">
   <img alt="Python" src="https://img.shields.io/badge/Python-3.12-3776AB">
   <img alt="Pillow" src="https://img.shields.io/badge/Pillow-13-11557C">
@@ -35,6 +36,7 @@
 - [Arrastrar y soltar](#arrastrar-y-soltar)
 - [Comprimidos ZIP, RAR y 7Z](#comprimidos-zip-rar-y-7z)
 - [Formato de salida: WebP y AVIF](#formato-de-salida-webp-y-avif)
+- [Vídeo a WebM](#vídeo-a-webm)
 - [Tamaño y peso de las imágenes](#tamaño-y-peso-de-las-imágenes)
 - [Modo consola](#modo-consola)
 - [Configuración guardada](#configuración-guardada)
@@ -64,7 +66,7 @@ guardar el resultado donde elijas, empaquetarlo en un ZIP y generar un informe C
 El programa se distribuye en dos formas:
 
 - **Ejecutable autocontenido** (`ConversorWebP.exe`): no requiere instalar Python.
-- **Código fuente** (`conversor_webp.py`): un único archivo Python de ~1.900 líneas, con Tkinter y Pillow.
+- **Código fuente** (`conversor_webp.py`): un único archivo Python, con Tkinter y Pillow.
 
 ---
 
@@ -72,6 +74,8 @@ El programa se distribuye en dos formas:
 
 ### Entrada y organización
 - Imágenes **JPG, JPEG, JFIF, PNG, BMP, DIB, GIF, TIFF, ICO, TGA, PCX, DDS, PPM, PGM, PBM**, **HEIC/HEIF**.
+- Vídeos **MP4, M4V, MOV, MKV, AVI, WMV, FLV, WebM, MPEG, TS, M2TS, 3GP, OGV** y otros formatos compatibles con FFmpeg.
+- Los vídeos se convierten a **WebM (VP9 + Opus)**, conservando el audio.
 - **Carpeta vigilada**: convierte automáticamente lo que aparezca en una carpeta.
 - **Patrón de nombres** (`{nombre}_{ancho}x{alto}`, `{hash}`, `{fecha}`...).
 - **Solo analizar**: calcula el peso estimado sin escribir archivos.
@@ -87,7 +91,8 @@ El programa se distribuye en dos formas:
 - Detección automática de **7-Zip** o **WinRAR** para los comprimidos.
 
 ### Conversión
-- Salida **WebP** con pérdida, **WebP sin pérdida** o **AVIF**.
+- Salida **WebP** con pérdida, **WebP sin pérdida** o **AVIF** para imágenes.
+- **Vídeo a WebM** con VP9 y audio Opus, con la misma calidad y esfuerzo.
 - **Calidad 1-100** y **esfuerzo 0-6**.
 - **Redimensionado** por lado máximo (2560 / 1920 / 1600 / 1200 / 800 / 512 px), sin ampliar nunca.
 - **Peso máximo por imagen** en KB: ajusta la calidad automáticamente para no superarlo.
@@ -119,7 +124,8 @@ El programa se distribuye en dos formas:
 
 | Uso | Necesitas |
 |---|---|
-| Ejecutable `.exe` | Windows 10 u 11 (64 bits). Nada más. |
+| Ejecutable `.exe` | Windows 10 u 11 (64 bits). Nada más para imágenes. |
+| Convertir vídeo a WebM | [FFmpeg](https://www.gyan.dev/ffmpeg/builds/) en el `PATH` o `ffmpeg.exe` junto al programa. |
 | Código fuente | Python 3.10 o superior (probado con 3.12). |
 | Abrir `.rar` / `.7z` | [7-Zip](https://www.7-zip.org) o WinRAR instalados (los `.zip` funcionan sin nada). |
 
@@ -198,7 +204,7 @@ python conversor_webp.py
 | **Sobrescribir archivos existentes** | Activado reemplaza; desactivado omite lo ya convertido. |
 | **Empaquetar el resultado en .zip** | Crea además un ZIP con los archivos generados. |
 | **Nombre del ZIP** | Editable; se añade `.zip` si falta. |
-| **Formato de salida** | **WebP** o **AVIF**. |
+| **Formato de salida** | **WebP** o **AVIF** para imágenes. Los vídeos van siempre a **WebM**. |
 | **Guardar informe CSV** | Deja un CSV con el detalle de cada archivo. |
 
 ### 3. Calidad y opciones
@@ -210,7 +216,7 @@ python conversor_webp.py
 | **Calidad (1-100)** | Más calidad = mejor aspecto y más peso. 85-92 para web. |
 | **Esfuerzo (0-6)** | Cuánto trabaja el compresor. 6 comprime más, tarda algo más. |
 | **Sin pérdida (lossless)** | Compresión sin descartar píxeles. Para capturas, logos e iconos. |
-| **Recodificar también los .webp / .avif** | Vuelve a procesar archivos que ya están en el formato destino. |
+| **Recodificar también los .webp / .avif / .webm** | Vuelve a procesar archivos que ya están en el formato destino. |
 | **Aplanar transparencia sobre** | Rellena el alfa con un color sólido. |
 | **Lado máximo** | Reduce el lado mayor a 2560/1920/1600/1200/800/512 px sin ampliar. |
 | **Peso máximo** | Ajusta la calidad para no superar los KB indicados por imagen. |
@@ -308,7 +314,35 @@ Se puede quitar desde **Herramientas → Quitar de “Enviar a”**.
 | Transparencia / ICC | Sí | Sí |
 | Sin pérdida | Sí | Sí |
 
-El botón principal y la extensión de los archivos se adaptan al formato elegido.
+La extensión de los archivos se adapta al formato elegido para las imágenes.
+
+---
+
+## Vídeo a WebM
+
+Los vídeos se detectan por extensión y se convierten **siempre a WebM**, aunque el formato de imagen esté
+en WebP o AVIF. Se usa **VP9** para imagen y **Opus** para el audio:
+
+- **Calidad 1-100** se traduce a CRF de VP9 (85 → CRF 30; 100 → CRF 24).
+- **Esfuerzo 0-6** se traduce a `-cpu-used` (más esfuerzo = más lento y mejor compresión).
+- **Lado máximo** limita el vídeo sin ampliarlo.
+- El **audio se conserva** y se recodifica a Opus 96 kbps.
+- El **peso máximo por imagen** no se aplica a vídeos.
+- Un `.webm` de origen se omite salvo que se active **Recodificar**.
+
+FFmpeg es necesario. El programa lo busca en este orden:
+
+1. `--ffmpeg RUTA` o la clave `ffmpeg` de `config.ini`.
+2. La variable de entorno `CONVERSOR_FFMPEG`.
+3. `ffmpeg.exe` junto al programa, en `bin\`, en `tools\` o en `tools\ffmpeg\`.
+4. El `PATH` de Windows.
+
+Puedes descargar una build estática en <https://www.gyan.dev/ffmpeg/builds/> y copiar `ffmpeg.exe` (y
+`ffprobe.exe` para los patrones `{ancho}`/`{alto}`) junto a `ConversorWebP.exe`. El menú
+**Herramientas → Descargar FFmpeg para vídeo** abre esa página.
+
+La conversión de vídeo se hace **de uno en uno** (FFmpeg ya usa varios hilos); las imágenes del mismo
+lote siguen convirtiéndose en paralelo.
 
 ---
 
@@ -410,7 +444,7 @@ original y resultado lado a lado con dimensiones, peso y ahorro.
 ### Menú contextual de Windows
 
 `Herramientas → Añadir al menú contextual de Windows` registra (solo HKCU, sin administrador) la opción
-**Convertir a WebP con Conversor WebP** para imágenes, carpetas y archivos `.zip`, `.rar` y `.7z`.
+**Convertir con Conversor WebP** para imágenes, vídeos, carpetas y archivos `.zip`, `.rar` y `.7z`.
 Se elimina desde el mismo menú.
 
 ### HEIC/HEIF
@@ -455,7 +489,8 @@ ConversorWebP.exe <origen...> -o <carpeta_salida> [opciones]
 | `-o, --output` | Carpeta de salida (obligatoria en modo consola). |
 | `-q, --quality` | Calidad 1-100. Por defecto 85. |
 | `-m, --method` | Esfuerzo 0-6. Por defecto 6. |
-| `--format webp\|avif` | Formato de salida. Por defecto WebP. |
+| `--format webp\|avif` | Formato de salida de imágenes. Por defecto WebP. Los vídeos van a WebM. |
+| `--ffmpeg RUTA` | Ruta a `ffmpeg.exe` (opcional; si no, se busca en PATH o junto al programa). |
 | `--max-dim N` | Lado máximo en píxeles (no amplía). |
 | `--max-kb N` | Peso máximo por imagen en KB. |
 | `--zip NOMBRE` | Crea un ZIP con el resultado. |
@@ -464,7 +499,7 @@ ConversorWebP.exe <origen...> -o <carpeta_salida> [opciones]
 | `--flat` / `--bg "#ffffff"` | Aplanar transparencia sobre un color. |
 | `--no-recursive` | No mantener subcarpetas. |
 | `--no-overwrite` | Omitir archivos existentes. |
-| `--webp` | Recodificar también los `.webp`. |
+| `--webp` | Recodificar también los `.webp`, `.avif` y `.webm`. |
 | `--shutdown` | Apaga el equipo al terminar correctamente (60 s). |
 | `--shutdown-delay N` | Segundos antes de apagar (mínimo 10). |
 
@@ -515,6 +550,8 @@ nombre del ZIP. Para volver a la configuración de fábrica, cierra el programa 
 | Transparencia | Se conserva (PNG, GIF, WebP, AVIF), salvo que se aplique «aplanar». |
 | Perfil ICC | Se mantiene si la imagen lo lleva. |
 | GIF animados | Se convierten a **WebP animado**; AVIF usa el primer fotograma. |
+| Audio de vídeo | Se recodifica a **Opus 96 kbps** y se conserva. |
+| Metadatos de vídeo | Se copian los que admite WebM/Matroska; no se garantiza GPS ni capítulos. |
 | Metadatos EXIF/GPS | No se copian (archivos más ligeros y sin datos de ubicación). |
 | Archivos originales | Nunca se modifican ni se borran. |
 
@@ -526,6 +563,8 @@ nombre del ZIP. Para volver a la configuración de fábrica, cierra el programa 
 - **JPEG en CMYK**: se convierte a RGB de forma estándar; en imágenes de imprenta con perfil CMYK los
   colores pueden variar ligeramente.
 - **RAR/7Z**: requieren 7-Zip o WinRAR instalados.
+- **Vídeo**: requiere FFmpeg; sin él, los vídeos fallan con un aviso, pero las imágenes siguen funcionando.
+- **Vídeo y peso máximo**: el límite en KB solo se aplica a imágenes.
 - **Comprimidos anidados**: no se recorren.
 - **Ejecutable sin firma**: Windows puede mostrar el aviso de SmartScreen.
 
@@ -608,6 +647,7 @@ ConversorWebP/
 
 Consulta [CHANGELOG.md](CHANGELOG.md). Resumen:
 
+- **2.11.0** — conversión de vídeo a WebM (VP9 + Opus) con FFmpeg, en lotes mixtos.
 - **2.10.0** — DPI nítido del sistema en C++, con opciones `auto`, `system` y `gdi`.
 - **2.9.1** — menú contextual moderno de Windows 11 mediante DLL COM opcional.
 - **2.9.0** — soporte DDS en C++.

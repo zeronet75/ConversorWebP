@@ -1,9 +1,9 @@
 ; Instalador de Conversor WebP C++ (Inno Setup 6)
 ; Compilar con: ISCC.exe installer\ConversorWebPC.iss
-; Genera dist\ConversorWebPC-2.10.0-setup.exe
+; Genera dist\ConversorWebPC-2.11.0-setup.exe
 
 #define MiApp "Conversor WebP C++"
-#define MiVersion "2.10.0"
+#define MiVersion "2.11.0"
 #define MiExe "ConversorWebPC.exe"
 
 [Setup]
@@ -41,6 +41,8 @@ Source: "..\bin\7zr.exe"; DestDir: "{app}"; Flags: ignoreversion skipifsourcedoe
 Source: "..\bin\LEEME.txt"; DestDir: "{app}"; Flags: ignoreversion
 Source: "..\bin\ConversorWebPC.exe.manifest"; DestDir: "{app}"; Flags: ignoreversion skipifsourcedoesntexist
 Source: "..\bin\ConversorWebPContext.dll"; DestDir: "{app}"; Flags: ignoreversion skipifsourcedoesntexist
+Source: "..\bin\ffmpeg.exe"; DestDir: "{app}"; Flags: ignoreversion skipifsourcedoesntexist
+Source: "..\bin\ffprobe.exe"; DestDir: "{app}"; Flags: ignoreversion skipifsourcedoesntexist
 Source: "..\README.md"; DestDir: "{app}"; DestName: "LEEME_C++.md"; Flags: ignoreversion isreadme
 Source: "..\BENCHMARK.md"; DestDir: "{app}"; Flags: ignoreversion skipifsourcedoesntexist
 

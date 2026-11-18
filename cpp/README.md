@@ -8,6 +8,8 @@ del proyecto principal.
   tarjetas, secciones y controles que la versión Tkinter.
 - **Decodificación:** WIC (incluye HEIC/HEIF si el códec HEVC de Windows está instalado) y libavif (AVIF).
 - **Codificación:** libwebp 1.6.0 y libavif 1.4.2 con libaom 3.12.1, estáticas.
+- **Vídeo:** conversión a WebM (VP9 + Opus) mediante FFmpeg externo. Se detecta en `PATH`,
+  junto al `.exe`, en `bin\`, `tools\` o con `--ffmpeg`. También acepta vídeos en lotes mixtos.
 - **Color:** lcms2 para validar/convertir perfiles; los perfiles RGB se incrustan en
   WebP (chunk ICCP) y AVIF.
 - **Portable:** el ejecutable no escribe en el registro; usa `config.ini` junto al
@@ -59,6 +61,7 @@ slider, scrollbar y pestañas.
 
 ### Interfaz y flujo
 - Arrastrar y soltar archivos, carpetas y comprimidos.
+- Conversión de imágenes a WebP/AVIF y de vídeos a WebM (VP9 + Opus) en el mismo lote.
 - Botones Archivos/Carpeta/Quitar/Quitar todo.
 - Carpeta de salida, mantener subcarpetas, sobrescribir.
 - Calidad 1–100, esfuerzo 0–6, sin pérdida, recodificar el formato destino.

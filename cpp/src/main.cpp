@@ -80,7 +80,7 @@ using Microsoft::WRL::ComPtr;
 namespace fs = std::filesystem;
 
 static const wchar_t* APP_NAME = L"Conversor WebP";
-static const wchar_t* APP_VERSION = L"2.10.0";
+static const wchar_t* APP_VERSION = L"2.11.0";
 
 // ---------------------------------------------------------------------------
 //  Utilidades generales
@@ -162,6 +162,23 @@ static bool es_imagen(const fs::path& p) {
         L".tga", L".pcx", L".dds", L".ppm", L".pgm", L".pbm"};
     return exts.count(ext_lower(p)) > 0;
 }
+
+static bool es_video(const fs::path& p) {
+    static const std::set<std::wstring> exts = {
+        L".mp4", L".m4v", L".mov", L".mkv", L".avi", L".wmv", L".flv",
+        L".webm", L".mpeg", L".mpg", L".mpe", L".m2v", L".ts", L".m2ts",
+        L".mts", L".3gp", L".3g2", L".ogv", L".vob", L".asf", L".f4v",
+        L".rm", L".rmvb"};
+    return exts.count(ext_lower(p)) > 0;
+}
+
+static bool es_media(const fs::path& p) {
+    return es_imagen(p) || es_video(p);
+}
+
+static std::wstring buscar_ffprobe(const std::wstring& explicito = L"");
+static bool dimensiones_video(const fs::path& p, const std::wstring& explicito,
+                              UINT& ancho, UINT& alto);
 
 static std::wstring fmt_kb(double kb) {
     wchar_t buf[64];
@@ -1510,7 +1527,7 @@ static std::wstring aplicar_patron(const std::wstring& patron, IWICImagingFactor
     UINT ancho = 0, alto = 0;
     bool necesita_dim = patron.find(L"{ancho}") != std::wstring::npos ||
                         patron.find(L"{alto}") != std::wstring::npos;
-    if (necesita_dim) {
+    if (necesita_dim && formato != L"WEBM") {
         bool ok = dimensiones_wic(factory, src.wstring(), ancho, alto);
         if (!ok || ancho == 0 || alto == 0) {
             Bitmap tmp;
@@ -1520,6 +1537,8 @@ static std::wstring aplicar_patron(const std::wstring& patron, IWICImagingFactor
                 alto = tmp.h;
             }
         }
+    } else if (necesita_dim && formato == L"WEBM") {
+        dimensiones_video(src, L"", ancho, alto);
     }
     if (maxdim > 0 && (int)std::max(ancho, alto) > maxdim) {
         double escala = (double)maxdim / (double)std::max(ancho, alto);
@@ -1536,14 +1555,15 @@ static std::wstring aplicar_patron(const std::wstring& patron, IWICImagingFactor
     reemplazar(L"{nombre}", rel.stem().wstring());
     reemplazar(L"{ancho}", std::to_wstring(ancho));
     reemplazar(L"{alto}", std::to_wstring(alto));
-    reemplazar(L"{formato}", formato == L"AVIF" ? L"avif" : L"webp");
+    reemplazar(L"{formato}", formato == L"AVIF" ? L"avif" : (formato == L"WEBM" ? L"webm" : L"webp"));
     reemplazar(L"{calidad}", std::to_wstring(calidad));
     reemplazar(L"{fecha}", fecha_compacta());
     if (texto.find(L"{hash}") != std::wstring::npos)
         reemplazar(L"{hash}", sha1_hex(src).substr(0, 10));
 
     std::wstring nombre = nombre_seguro(texto, rel.stem().wstring());
-    return (rel.parent_path() / (nombre + (formato == L"AVIF" ? L".avif" : L".webp"))).wstring();
+    std::wstring ext = formato == L"AVIF" ? L".avif" : (formato == L"WEBM" ? L".webm" : L".webp");
+    return (rel.parent_path() / (nombre + ext)).wstring();
 }
 
 static std::vector<uint8_t> codificar_webp(const Bitmap& bmp, int calidad, int metodo,
@@ -1743,7 +1763,7 @@ struct Options {
     bool beep = true;
     bool csv = false;
     std::wstring salida;
-    std::wstring zip_nombre = L"imagenes_2.10.0-cpp.zip";
+    std::wstring zip_nombre = L"imagenes_2.11.0-cpp.zip";
     std::wstring patron;
     std::wstring formato = L"WEBP";
     bool dry_run = false;
@@ -1752,6 +1772,7 @@ struct Options {
     bool apagar = false;
     bool preservar_fecha = false;
     int jobs = 0;
+    std::wstring ffmpeg;  // ruta explicita a ffmpeg.exe (opcional)
 };
 
 struct Preset {
@@ -2270,6 +2291,7 @@ enum {
     ID_ADD_ARCHIVE = 3901, ID_PATTERN_HELP = 3902, ID_SCROLL_ORIGEN = 3904,
     ID_TEMA = 3910, ID_PAUSA = 3911, ID_RETRY = 3912,
     ID_ORIGEN_UP = 3913, ID_ORIGEN_DOWN = 3914, ID_FECHA = 3915,
+    ID_MENU_FFMPEG = 3916,
     ID_SECTION_ORIGEN = 1105, ID_LBL_EXTRACTOR = 1106,
     ID_HIST_BASE = 40000, ID_HIST_CLEAR = 40050
 };
@@ -2373,7 +2395,9 @@ static bool escribir_registro(HKEY raiz, const std::wstring& subclave,
 static bool instalar_menu_contextual(bool instalar) {
     static const wchar_t* extensiones[] = {
         L".jpg", L".jpeg", L".png", L".bmp", L".gif", L".tif", L".tiff",
-        L".ico", L".webp", L".avif", L".heic", L".heif"
+        L".ico", L".webp", L".avif", L".heic", L".heif",
+        L".mp4", L".m4v", L".mov", L".mkv", L".avi", L".wmv", L".flv",
+        L".webm", L".mpeg", L".mpg", L".ts", L".m2ts", L".mts", L".3gp", L".ogv"
     };
     std::wstring exe = ruta_ejecutable();
     std::wstring comando = L"\"" + exe + L"\" \"%1\"";
@@ -2386,7 +2410,7 @@ static bool instalar_menu_contextual(bool instalar) {
             RegDeleteTreeW(HKEY_CURRENT_USER, base.c_str());
             continue;
         }
-        ok = escribir_registro(HKEY_CURRENT_USER, base, nullptr, L"Convertir a WebP con Conversor WebP") && ok;
+        ok = escribir_registro(HKEY_CURRENT_USER, base, nullptr, L"Convertir con Conversor WebP") && ok;
         ok = escribir_registro(HKEY_CURRENT_USER, base, L"Icon", L"\"" + exe + L"\",0") && ok;
         ok = escribir_registro(HKEY_CURRENT_USER, base + L"\\command", nullptr, comando) && ok;
     }
@@ -3060,6 +3084,9 @@ static void cargar_config() {
     wchar_t formato[16] = L"WEBP";
     GetPrivateProfileStringW(L"opciones", L"formato", L"WEBP", formato, 16, g_ini.c_str());
     g_opt.formato = (_wcsicmp(formato, L"AVIF") == 0) ? L"AVIF" : L"WEBP";
+    wchar_t ffmpeg[MAX_PATH] = L"";
+    GetPrivateProfileStringW(L"opciones", L"ffmpeg", L"", ffmpeg, MAX_PATH, g_ini.c_str());
+    g_opt.ffmpeg = ffmpeg;
 
     // Presets propios
     inicializar_presets();
@@ -3132,6 +3159,7 @@ static void guardar_config() {
     WritePrivateProfileStringW(L"opciones", L"fecha", g_opt.preservar_fecha ? L"1" : L"0", destino.c_str());
     WritePrivateProfileStringW(L"opciones", L"tema", g_oscuro ? L"1" : L"0", destino.c_str());
     WritePrivateProfileStringW(L"opciones", L"dpi", g_dpi_config.c_str(), destino.c_str());
+    WritePrivateProfileStringW(L"opciones", L"ffmpeg", g_opt.ffmpeg.c_str(), destino.c_str());
     WritePrivateProfileStringW(L"opciones", L"salida", g_opt.salida.c_str(), destino.c_str());
     WritePrivateProfileStringW(L"opciones", L"zipnombre", g_opt.zip_nombre.c_str(), destino.c_str());
     WritePrivateProfileStringW(L"opciones", L"patron", g_opt.patron.c_str(), destino.c_str());
@@ -3296,7 +3324,8 @@ static void anadir_origen(const std::wstring& ruta) {
         fs::path base = fs::is_directory(p) ? p : p.parent_path();
         std::wstring nombre = fs::is_directory(p) ? p.filename().wstring() : p.stem().wstring();
         if (nombre.empty()) nombre = L"salida";
-        std::wstring salida = (base / (nombre + L"_webp")).wstring();
+        std::wstring sufijo = es_video(p) ? L"_webm" : L"_webp";
+        std::wstring salida = (base / (nombre + sufijo)).wstring();
         SetWindowTextW(g_edit_salida, salida.c_str());
     }
 }
@@ -3355,6 +3384,7 @@ struct Tarea {
     fs::path src;
     fs::path rel;
     fs::path dst;
+    bool video = false;
 };
 
 static bool es_comprimido(const fs::path& p) {
@@ -3405,6 +3435,75 @@ static bool ejecutar_oculto(const std::wstring& comando) {
     return espera != WAIT_TIMEOUT && codigo == 0;
 }
 
+static int ejecutar_con_log(const std::wstring& comando, const fs::path& log,
+                            bool& cancelado) {
+    cancelado = false;
+    SECURITY_ATTRIBUTES sa{};
+    sa.nLength = sizeof(sa);
+    sa.bInheritHandle = TRUE;
+    HANDLE salida = CreateFileW(log.c_str(), GENERIC_WRITE,
+                                FILE_SHARE_READ | FILE_SHARE_WRITE, &sa, CREATE_ALWAYS,
+                                FILE_ATTRIBUTE_NORMAL, nullptr);
+    if (salida == INVALID_HANDLE_VALUE) return -1;
+    HANDLE entrada = CreateFileW(L"NUL", GENERIC_READ,
+                                 FILE_SHARE_READ | FILE_SHARE_WRITE, &sa, OPEN_EXISTING,
+                                 FILE_ATTRIBUTE_NORMAL, nullptr);
+    STARTUPINFOW si{};
+    si.cb = sizeof(si);
+    si.dwFlags = STARTF_USESTDHANDLES;
+    si.hStdInput = entrada;
+    si.hStdOutput = salida;
+    si.hStdError = salida;
+    PROCESS_INFORMATION pi{};
+    std::wstring cmd = comando;
+    BOOL creado = CreateProcessW(nullptr, cmd.data(), nullptr, nullptr, TRUE,
+                                 CREATE_NO_WINDOW, nullptr, nullptr, &si, &pi);
+    CloseHandle(salida);
+    if (entrada != INVALID_HANDLE_VALUE) CloseHandle(entrada);
+    if (!creado) return -1;
+
+    HANDLE trabajo = CreateJobObjectW(nullptr, nullptr);
+    if (trabajo) {
+        JOBOBJECT_EXTENDED_LIMIT_INFORMATION limite{};
+        limite.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
+        SetInformationJobObject(trabajo, JobObjectExtendedLimitInformation, &limite,
+                                sizeof(limite));
+        AssignProcessToJobObject(trabajo, pi.hProcess);
+    }
+
+    DWORD codigo = 1;
+    for (;;) {
+        DWORD espera = WaitForSingleObject(pi.hProcess, 200);
+        if (espera == WAIT_OBJECT_0) break;
+        if (g_cancelar) {
+            cancelado = true;
+            if (trabajo)
+                TerminateJobObject(trabajo, 1);
+            else
+                TerminateProcess(pi.hProcess, 1);
+            WaitForSingleObject(pi.hProcess, 5000);
+            break;
+        }
+    }
+    GetExitCodeProcess(pi.hProcess, &codigo);
+    CloseHandle(pi.hProcess);
+    CloseHandle(pi.hThread);
+    if (trabajo) CloseHandle(trabajo);
+    return (int)codigo;
+}
+
+static std::wstring leer_cola_log(const fs::path& log, size_t maximo = 1600) {
+    std::ifstream f(log, std::ios::binary);
+    if (!f) return L"";
+    std::string datos((std::istreambuf_iterator<char>(f)),
+                      std::istreambuf_iterator<char>());
+    if (datos.size() > maximo) datos = datos.substr(datos.size() - maximo);
+    std::wstring texto = a_wstring(datos.c_str());
+    while (!texto.empty() && (texto.back() == L'\r' || texto.back() == L'\n'))
+        texto.pop_back();
+    return texto;
+}
+
 static std::wstring buscar_extractor() {
     const wchar_t* candidatos[] = {
         L"7z.exe", L"7za.exe",
@@ -3427,6 +3526,102 @@ static std::wstring buscar_extractor() {
         if (fs::exists(local)) return local.wstring();
     }
     return L"";
+}
+
+static std::wstring buscar_herramienta_ffmpeg(const std::wstring& nombre,
+                                              const std::wstring& explicito) {
+    std::wstring archivo = nombre + L".exe";
+    auto probar = [&](const fs::path& p) -> std::wstring {
+        std::error_code ec;
+        if (fs::is_regular_file(p, ec)) return p.wstring();
+        return L"";
+    };
+    if (!explicito.empty()) {
+        fs::path p(explicito);
+        std::error_code ec;
+        if (fs::is_directory(p, ec)) p /= archivo;
+        std::wstring r = probar(p);
+        if (!r.empty()) return r;
+    }
+    wchar_t env[MAX_PATH] = L"";
+    DWORD n = GetEnvironmentVariableW(L"CONVERSOR_FFMPEG", env, MAX_PATH);
+    if (n > 0 && n < MAX_PATH) {
+        fs::path p(env);
+        std::error_code ec;
+        if (fs::is_directory(p, ec)) p /= archivo;
+        std::wstring r = probar(p);
+        if (!r.empty()) return r;
+    }
+    std::wstring exe = ruta_ejecutable();
+    std::vector<fs::path> raices;
+    if (!exe.empty()) raices.push_back(fs::path(exe).parent_path());
+    raices.push_back(fs::current_path());
+    for (auto& raiz : raices) {
+        for (const wchar_t* sub : {L"", L"bin", L"tools", L"tools\\ffmpeg",
+                                   L"ffmpeg", L"ffmpeg\\bin"}) {
+            fs::path p = sub[0] ? raiz / sub / archivo : raiz / archivo;
+            std::wstring r = probar(p);
+            if (!r.empty()) return r;
+        }
+    }
+    wchar_t encontrado[MAX_PATH];
+    n = SearchPathW(nullptr, archivo.c_str(), nullptr, MAX_PATH, encontrado, nullptr);
+    if (n > 0 && n < MAX_PATH) return encontrado;
+    return L"";
+}
+
+static std::wstring buscar_ffmpeg(const std::wstring& explicito = L"") {
+    return buscar_herramienta_ffmpeg(L"ffmpeg", explicito);
+}
+
+static std::wstring buscar_ffprobe(const std::wstring& explicito) {
+    std::wstring ffmpeg = buscar_ffmpeg(explicito);
+    if (!ffmpeg.empty()) {
+        fs::path hermano = fs::path(ffmpeg).parent_path() / L"ffprobe.exe";
+        std::error_code ec;
+        if (fs::is_regular_file(hermano, ec)) return hermano.wstring();
+    }
+    return buscar_herramienta_ffmpeg(L"ffprobe", explicito);
+}
+
+static bool dimensiones_video(const fs::path& p, const std::wstring& explicito,
+                              UINT& ancho, UINT& alto) {
+    ancho = alto = 0;
+    std::wstring probe = buscar_ffprobe(explicito);
+    if (probe.empty()) return false;
+    auto citar = [](const std::wstring& s) { return L"\"" + s + L"\""; };
+    fs::path log = fs::temp_directory_path() /
+                   (L"cw_ffprobe_" + std::to_wstring(GetCurrentProcessId()) + L"_" +
+                    std::to_wstring(GetTickCount64()) + L".log");
+    std::wstring cmd = citar(probe) +
+                       L" -v error -select_streams v:0 -show_entries stream=width,height"
+                       L" -of csv=p=0 " +
+                       citar(p.wstring());
+    bool cancelado = false;
+    int codigo = ejecutar_con_log(cmd, log, cancelado);
+    bool ok = false;
+    if (codigo == 0 && !cancelado) {
+        std::ifstream f(log, std::ios::binary);
+        std::string linea;
+        while (std::getline(f, linea)) {
+            size_t coma = linea.find(',');
+            if (coma == std::string::npos) continue;
+            try {
+                unsigned long w = std::stoul(linea.substr(0, coma));
+                unsigned long h = std::stoul(linea.substr(coma + 1));
+                if (w > 0 && h > 0) {
+                    ancho = (UINT)w;
+                    alto = (UINT)h;
+                    ok = true;
+                    break;
+                }
+            } catch (...) {
+            }
+        }
+    }
+    std::error_code ec;
+    fs::remove(log, ec);
+    return ok;
 }
 
 static fs::path extraer_comprimido(const fs::path& archivo, int indice,
@@ -3483,17 +3678,17 @@ static fs::path extraer_comprimido(const fs::path& archivo, int indice,
         return {};
     }
 
-    bool hay_imagen = false;
+    bool hay_media = false;
     for (fs::recursive_directory_iterator it(destino,
              fs::directory_options::skip_permission_denied, ec), fin;
          it != fin; it.increment(ec)) {
         if (ec) { ec.clear(); continue; }
         std::error_code ec2;
-        if (it->is_regular_file(ec2) && es_imagen(it->path())) { hay_imagen = true; break; }
+        if (it->is_regular_file(ec2) && es_media(it->path())) { hay_media = true; break; }
     }
-    if (!hay_imagen) {
+    if (!hay_media) {
         fs::remove_all(destino, ec);
-        logfn(L"El comprimido " + archivo.filename().wstring() + L" no contiene imagenes.");
+        logfn(L"El comprimido " + archivo.filename().wstring() + L" no contiene imagenes ni videos.");
         return {};
     }
     {
@@ -3511,16 +3706,19 @@ static bool preparar_tareas(IWICImagingFactory* factory, const Options& opt,
     std::set<std::wstring> usados;
     std::set<std::wstring> vistos;
     auto anadir = [&](const fs::path& p, const fs::path& rel) {
-        if (!es_imagen(p)) return;
-        std::wstring ext_destino = opt.formato == L"AVIF" ? L".avif" : L".webp";
+        bool video = es_video(p);
+        if (!video && !es_imagen(p)) return;
+        std::wstring ext_destino = video ? L".webm"
+                                          : (opt.formato == L"AVIF" ? L".avif" : L".webp");
         if (ext_lower(p) == ext_destino && !opt.reencode) return;
         std::error_code ec_abs;
         std::wstring clave_src = lower(fs::absolute(p, ec_abs).wstring());
         if (vistos.count(clave_src)) return;
         vistos.insert(clave_src);
         fs::path rel_final = opt.mantener ? rel : rel.filename();
+        std::wstring formato_patron = video ? L"WEBM" : opt.formato;
         std::wstring rel_patron = aplicar_patron(opt.patron, factory, p, rel_final,
-                                                 opt.max_dim, opt.calidad, opt.formato);
+                                                 opt.max_dim, opt.calidad, formato_patron);
         fs::path dst = fs::path(opt.salida) / rel_patron;
         if (lower(dst.extension().wstring()) != ext_destino) dst.replace_extension(ext_destino);
         std::wstring clave = lower(dst.wstring());
@@ -3545,7 +3743,7 @@ static bool preparar_tareas(IWICImagingFactory* factory, const Options& opt,
             logfn(L"OMITIDA  " + rel_final.wstring() + L"  (ya existe)");
             return;
         }
-        tareas.push_back({p, rel_final, dst});
+        tareas.push_back({p, rel_final, dst, video});
     };
 
     int n_comprimidos = 0;
@@ -3586,7 +3784,7 @@ static bool preparar_tareas(IWICImagingFactory* factory, const Options& opt,
         } else if (fs::is_regular_file(p, ec)) {
             anadir(p, p.filename());
         } else {
-            logfn(L"OMITIDA  " + p.filename().wstring() + L"  (no es imagen ni comprimido)");
+            logfn(L"OMITIDA  " + p.filename().wstring() + L"  (no es imagen, video ni comprimido)");
         }
     }
     return true;
@@ -3673,6 +3871,110 @@ static bool procesar_imagen(IWICImagingFactory* factory, const Tarea& t, const O
     return true;
 }
 
+static std::wstring citar_arg(const std::wstring& valor) {
+    return L"\"" + valor + L"\"";
+}
+
+static bool procesar_video(const Tarea& t, const Options& opt, Row& fila,
+                           std::wstring& error) {
+    std::error_code ec;
+    uintmax_t tam_in = fs::file_size(t.src, ec);
+    fila.archivo = fs::relative(t.dst, opt.salida, ec).wstring();
+    if (ec || fila.archivo.empty()) fila.archivo = t.dst.filename().wstring();
+    fila.origen = t.src.filename().wstring();
+    fila.kb_in = (double)tam_in / 1024.0;
+
+    if (opt.dry_run) {
+        fila.kb_out = 0;
+        fila.ahorro = 0;
+        fila.estado = L"analizada";
+        fila.ruta = t.src.wstring();
+        fila.nota = L"video: se convertiria a WebM (peso no estimado)";
+        return true;
+    }
+
+    std::wstring ffmpeg = buscar_ffmpeg(opt.ffmpeg);
+    if (ffmpeg.empty()) {
+        error = L"FFmpeg no encontrado. Instalalo, copia ffmpeg.exe junto al programa "
+                L"o usa --ffmpeg. Descarga: https://www.gyan.dev/ffmpeg/builds/";
+        return false;
+    }
+
+    fs::create_directories(t.dst.parent_path(), ec);
+    fs::path parcial = t.dst;
+    parcial += L".part";
+    fs::remove(parcial, ec);
+
+    int calidad = std::clamp(opt.calidad, 1, 100);
+    int metodo = std::clamp(opt.metodo, 0, 6);
+    int crf = (int)std::lround(63.0 - (calidad - 1) * 39.0 / 99.0);
+    crf = std::clamp(crf, 15, 63);
+    int cpu = std::clamp(8 - (int)std::lround(metodo * 0.75), 2, 8);
+
+    std::wstring filtros = L"scale=trunc(iw/2)*2:trunc(ih/2)*2";
+    if (opt.max_dim > 0) {
+        int d = std::max(2, opt.max_dim);
+        filtros = L"scale=w='min(iw," + std::to_wstring(d) + L")':h='min(ih," +
+                  std::to_wstring(d) +
+                  L")':force_original_aspect_ratio=decrease," + filtros;
+    }
+
+    std::wstring cmd = citar_arg(ffmpeg) +
+                       L" -nostdin -hide_banner -loglevel error -y -i " +
+                       citar_arg(t.src.wstring()) +
+                       L" -map 0:v:0 -map 0:a? -c:v libvpx-vp9 -row-mt 1"
+                       L" -deadline good -cpu-used " + std::to_wstring(cpu);
+    if (opt.sin_perdida)
+        cmd += L" -lossless 1 -b:v 0";
+    else
+        cmd += L" -crf " + std::to_wstring(crf) + L" -b:v 0";
+    cmd += L" -pix_fmt yuv420p -vf " + citar_arg(filtros) +
+           L" -c:a libopus -b:a 96k -map_metadata 0 -f webm " +
+           citar_arg(parcial.wstring());
+
+    fs::path log = parcial;
+    log += L".log";
+    bool cancelado = false;
+    int codigo = ejecutar_con_log(cmd, log, cancelado);
+    std::wstring detalle = leer_cola_log(log);
+    fs::remove(log, ec);
+
+    if (cancelado) {
+        fs::remove(parcial, ec);
+        error = L"cancelado";
+        return false;
+    }
+    if (codigo != 0) {
+        fs::remove(parcial, ec);
+        if (detalle.empty())
+            error = L"FFmpeg fallo (codigo " + std::to_wstring(codigo) +
+                    L"). Comprueba que ffmpeg.exe funcione.";
+        else
+            error = L"FFmpeg fallo: " + detalle;
+        return false;
+    }
+    if (!fs::exists(parcial, ec)) {
+        error = L"FFmpeg termino pero no creo el WebM";
+        return false;
+    }
+    if (!reemplazar_archivo(parcial, t.dst)) {
+        fs::remove(parcial, ec);
+        error = L"no se pudo mover el WebM generado";
+        return false;
+    }
+    if (opt.preservar_fecha) copiar_fecha(t.src, t.dst);
+
+    uintmax_t tam_out = fs::file_size(t.dst, ec);
+    fila.kb_out = (double)tam_out / 1024.0;
+    fila.ahorro = fila.kb_in > 0 ? (1.0 - fila.kb_out / fila.kb_in) * 100.0 : 0;
+    fila.estado = L"convertida";
+    fila.ruta = t.dst.wstring();
+    fila.nota = opt.sin_perdida ? L"VP9 sin perdida" : (L"VP9 CRF " + std::to_wstring(crf));
+    if (opt.objetivo_kb > 0)
+        fila.nota += L"; el peso maximo no se aplica a videos";
+    return true;
+}
+
 static void hilo_conversion(Options opt_trabajo, std::vector<std::wstring> origenes_trabajo) {
     normalizar_opciones(opt_trabajo);
     HRESULT hr_com = CoInitializeEx(nullptr, COINIT_MULTITHREADED);
@@ -3702,7 +4004,13 @@ static void hilo_conversion(Options opt_trabajo, std::vector<std::wstring> orige
     {
         Evento e; e.tipo = Evento::PROGRESO; e.a = 0; e.b = total; emitir(std::move(e));
     }
-    emitir_log(L"Imagenes a convertir: " + std::to_wstring(total));
+    emitir_log(L"Archivos a convertir: " + std::to_wstring(total));
+    bool hay_videos = false;
+    for (auto& t : tareas) hay_videos = hay_videos || t.video;
+    if (hay_videos && !opt_trabajo.dry_run && buscar_ffmpeg(opt_trabajo.ffmpeg).empty())
+        emitir_log(L"Aviso: FFmpeg no encontrado. Los videos fallaran. Copia ffmpeg.exe "
+                   L"junto al programa o usa --ffmpeg. Descarga: "
+                   L"https://www.gyan.dev/ffmpeg/builds/");
     if (total_bytes > 0) {
         wchar_t tam_txt[64];
         swprintf_s(tam_txt, L"Tamano total: %.2f MB", total_bytes / (1024.0 * 1024.0));
@@ -3758,10 +4066,16 @@ static void hilo_conversion(Options opt_trabajo, std::vector<std::wstring> orige
             std::wstring error;
             bool correcta = false;
             try {
-                correcta = fabrica_hilo.Get() != nullptr &&
-                           procesar_imagen(fabrica_hilo.Get(), t, opt_trabajo, fila, datos, error);
-                if (!correcta && error.empty()) error = L"no se pudo crear la factoria WIC";
-                if (correcta && !opt_trabajo.dry_run) {
+                if (t.video) {
+                    correcta = procesar_video(t, opt_trabajo, fila, error);
+                } else {
+                    correcta = fabrica_hilo.Get() != nullptr &&
+                               procesar_imagen(fabrica_hilo.Get(), t, opt_trabajo, fila,
+                                               datos, error);
+                    if (!correcta && error.empty())
+                        error = L"no se pudo crear la factoria WIC";
+                }
+                if (correcta && !opt_trabajo.dry_run && !t.video) {
                     std::error_code ec2;
                     fs::create_directories(t.dst.parent_path(), ec2);
                     fs::path parcial = t.dst;
@@ -3793,6 +4107,7 @@ static void hilo_conversion(Options opt_trabajo, std::vector<std::wstring> orige
                 error = L"excepcion desconocida";
             }
             if (!correcta) {
+                if (g_cancelar) break;
                 fila.estado = L"fallo";
                 if (fila.archivo.empty()) fila.archivo = t.dst.filename().wstring();
                 {
@@ -3809,7 +4124,7 @@ static void hilo_conversion(Options opt_trabajo, std::vector<std::wstring> orige
                 std::lock_guard<std::mutex> lock(mutex_resultados);
                 convertidas++;
                 entrada += fila.kb_in * 1024.0;
-                salida += (double)datos.size();
+                salida += t.video ? fila.kb_out * 1024.0 : (double)datos.size();
                 filas.push_back(fila);
                 if (!opt_trabajo.dry_run) producidas.push_back(t.dst);
             }
@@ -3945,8 +4260,10 @@ static void hilo_vigilante(std::wstring carpeta, Options opt,
             std::error_code ec;
             if (!it->is_regular_file(ec)) continue;
             fs::path src = it->path();
-            if (!es_imagen(src)) continue;
-            std::wstring ext_destino = opt.formato == L"AVIF" ? L".avif" : L".webp";
+            bool video = es_video(src);
+            if (!video && !es_imagen(src)) continue;
+            std::wstring ext_destino = video ? L".webm"
+                                             : (opt.formato == L"AVIF" ? L".avif" : L".webp");
             if (ext_lower(src) == ext_destino && !opt.reencode) continue;
 
             std::wstring clave = lower(fs::absolute(src, ec).wstring());
@@ -3967,8 +4284,9 @@ static void hilo_vigilante(std::wstring carpeta, Options opt,
             fs::path rel = fs::relative(src, carpeta, ec);
             if (ec || rel.empty()) rel = src.filename();
             if (!opt.mantener) rel = rel.filename();
+            std::wstring formato_patron = video ? L"WEBM" : opt.formato;
             std::wstring rel_patron = aplicar_patron(opt.patron, factory.Get(), src, rel,
-                                                     opt.max_dim, opt.calidad, opt.formato);
+                                                     opt.max_dim, opt.calidad, formato_patron);
             fs::path dst = fs::path(opt.salida) / rel_patron;
             if (lower(dst.extension().wstring()) != ext_destino) dst.replace_extension(ext_destino);
             fs::path base_dst = dst;
@@ -3986,14 +4304,17 @@ static void hilo_vigilante(std::wstring carpeta, Options opt,
             }
             destinos.insert(lower(dst.wstring()));
 
-            Tarea t{src, rel, dst};
+            Tarea t{src, rel, dst, video};
             Row fila;
             std::vector<uint8_t> datos;
             std::wstring error;
             bool correcta = false;
             try {
-                correcta = procesar_imagen(factory.Get(), t, opt, fila, datos, error);
-                if (correcta) {
+                if (video) {
+                    correcta = procesar_video(t, opt, fila, error);
+                } else {
+                    correcta = procesar_imagen(factory.Get(), t, opt, fila, datos, error);
+                    if (correcta) {
                     std::error_code ec_w;
                     fs::create_directories(dst.parent_path(), ec_w);
                     fs::path parcial = dst;
@@ -4015,6 +4336,7 @@ static void hilo_vigilante(std::wstring carpeta, Options opt,
                         fs::remove(parcial, ec_limpieza);
                         correcta = false;
                         error = L"no se pudo escribir el archivo";
+                    }
                     }
                 }
             } catch (const std::exception& ex) {
@@ -4105,7 +4427,7 @@ static void iniciar_vigilante_ui() {
          it != fin; it.increment(ec)) {
         if (ec) { ec.clear(); continue; }
         std::error_code ec2;
-        if (!it->is_regular_file(ec2) || !es_imagen(it->path())) continue;
+        if (!it->is_regular_file(ec2) || !es_media(it->path())) continue;
         vistos.insert(lower(fs::absolute(it->path(), ec2).wstring()));
     }
 
@@ -5248,18 +5570,18 @@ static void actualizar_tooltip() {
 }
 
 static void crear_tooltips() {
-    g_tip_drop_texto = L"Arrastra aquí imágenes, carpetas o comprimidos desde el Explorador.";
+    g_tip_drop_texto = L"Arrastra aquí imágenes, vídeos, carpetas o comprimidos desde el Explorador.";
     auto add = [&](HWND control, const wchar_t* texto) {
         if (!control) return;
         g_tips[control] = texto;
     };
 
-    add(GetDlgItem(g_hwnd, ID_ADD_FILES), L"Añade una o varias imágenes al lote.");
+    add(GetDlgItem(g_hwnd, ID_ADD_FILES), L"Añade una o varias imágenes o vídeos al lote.");
     add(GetDlgItem(g_hwnd, ID_ADD_FOLDER), L"Añade una carpeta completa, incluidas sus subcarpetas.");
     add(GetDlgItem(g_hwnd, ID_REMOVE), L"Quita de la lista las entradas seleccionadas (tecla Supr).");
     add(GetDlgItem(g_hwnd, ID_CLEAR), L"Vacía la lista de origen sin tocar tus archivos.");
     add(g_lista_origen, L"Orígenes añadidos. Selecciona varios con Ctrl o Mayús y pulsa Supr para quitarlos.");
-    add(g_lbl_count, L"Resumen de carpetas, comprimidos e imágenes añadidos.");
+    add(g_lbl_count, L"Resumen de carpetas, comprimidos, imágenes y vídeos añadidos.");
     add(g_edit_salida, L"Carpeta donde se guardarán los archivos convertidos.");
     add(GetDlgItem(g_hwnd, ID_BROWSE), L"Elige la carpeta de salida.");
     add(g_btn_archive, L"Añade archivos .zip, .rar o .7z y convierte su contenido.");
@@ -5270,10 +5592,10 @@ static void crear_tooltips() {
     add(g_check_sobrescribir, L"Activado reemplaza archivos existentes; desactivado los omite.");
     add(g_check_zip, L"Crea además un ZIP con todos los archivos generados.");
     add(g_edit_zip, L"Nombre del ZIP que se creará en la carpeta de salida.");
-    add(g_combo_formato, L"Formato de salida: WebP (compatible) o AVIF (pesa menos).");
+    add(g_combo_formato, L"Formato de salida de imágenes: WebP o AVIF. Los vídeos se convierten a WebM.");
     add(g_check_csv, L"Guarda un CSV con el peso original, final y el ahorro de cada archivo.");
     add(g_edit_patron, L"Patrón de nombre. Vacío conserva el original. Ej.: {nombre}_{ancho}x{alto}.");
-    add(g_check_dry, L"Calcula el peso estimado sin escribir ninguna imagen.");
+    add(g_check_dry, L"Calcula el peso estimado sin escribir ningún archivo.");
     add(g_check_fecha, L"Conserva la fecha de modificación original en el archivo convertido.");
     add(g_combo_preset, L"Aplica una combinación guardada de calidad y tamaño.");
     add(g_btn_save_preset, L"Guarda los ajustes actuales como preset propio.");
@@ -5282,7 +5604,7 @@ static void crear_tooltips() {
     add(g_lbl_calidad, L"Valor de calidad actual.");
     add(g_combo_metodo, L"Esfuerzo 0-6: más esfuerzo comprime mejor pero tarda más.");
     add(g_check_lossless, L"Sin pérdida: fidelidad exacta, archivos más grandes.");
-    add(g_check_reencode, L"Vuelve a convertir archivos que ya están en el formato de destino.");
+    add(g_check_reencode, L"Vuelve a convertir archivos que ya están en el formato de destino (.webp, .avif o .webm).");
     add(g_check_flatten, L"Rellena la transparencia con un color sólido.");
     add(g_btn_color, L"Elige el color de fondo al aplanar la transparencia.");
     add(g_combo_dim, L"Reduce el lado mayor a este tamaño; nunca amplía imágenes pequeñas.");
@@ -5378,11 +5700,11 @@ static void dibujar_cards(HDC dc, RECT rc) {
     RECT r2{zona_drop.left, dpx(132), zona_drop.right, dpx(152)};
     HFONT fuente_vieja =
         (HFONT)SelectObject(dc, g_drop_hot ? g_font_drop_hot : g_font_drop);
-    DrawTextW(dc, L"Arrastra aqui tus imagenes, carpetas o comprimidos .zip / .rar", -1,
+    DrawTextW(dc, L"Arrastra aqui tus imagenes, videos, carpetas o comprimidos .zip / .rar", -1,
               &r1, DT_CENTER | DT_SINGLELINE | DT_VCENTER);
     SelectObject(dc, g_font_muted);
     SetTextColor(dc, g_pal.muted);
-    DrawTextW(dc, L"Archivos, carpetas, .zip, .rar o .7z  ·  tambien puedes hacer clic aqui", -1,
+    DrawTextW(dc, L"Archivos, videos, carpetas, .zip, .rar o .7z  ·  tambien puedes hacer clic aqui", -1,
               &r2, DT_CENTER | DT_SINGLELINE | DT_VCENTER);
     SelectObject(dc, fuente_vieja);
 }
@@ -5736,6 +6058,7 @@ static std::vector<BloqueAcerca> bloques_acerca() {
 
     h1(L"Qué hace");
     li(L"Convierte JPG, PNG, BMP, TIFF, GIF, ICO, WebP, AVIF y HEIC/HEIF a formato WebP.");
+    li(L"Convierte vídeos MP4, MOV, MKV, AVI, WebM y similares a WebM (VP9 + Opus) con FFmpeg.");
     li(L"Trabaja con imágenes sueltas, carpetas completas y comprimidos .zip / .rar / .7z.");
     li(L"Arrastra y suelta desde el Explorador de Windows en cualquier punto de la ventana.");
     li(L"Guarda el resultado en la carpeta que elijas y, si quieres, lo empaqueta en un .zip.");
@@ -5746,14 +6069,14 @@ static std::vector<BloqueAcerca> bloques_acerca() {
     li(L"Calidad 1-100 (85 por defecto): más calidad, más peso. 85-92 es lo ideal para web.");
     li(L"Esfuerzo 0-6 (6 por defecto): cuanto más esfuerzo, archivos más pequeños.");
     li(L"Sin pérdida (lossless): fidelidad exacta al original, archivos más grandes.");
-    li(L"Recodificar también los .webp / .avif: por defecto se saltan los del formato destino.");
+    li(L"Recodificar también los .webp / .avif / .webm: por defecto se saltan los del formato destino.");
     li(L"Aplanar transparencia sobre un color: rellena el fondo alfa de los PNG.");
     li(L"Mantener subcarpetas del origen: reproduce la estructura de carpetas original.");
     li(L"Sobrescribir archivos existentes: si se desactiva, los ya convertidos se omiten.");
     li(L"Empaquetar el resultado en .zip: crea un ZIP con todos los archivos generados.");
     li(L"Lado máximo: reduce a 2560, 1920, 1600, 1200, 800 o 512 px sin ampliar las pequeñas.");
     li(L"Peso máximo: ajusta la calidad automáticamente para no superar los KB indicados.");
-    li(L"Formato de salida: WebP o AVIF (AVIF suele pesar menos con la misma calidad).");
+    li(L"Formato de salida de imágenes: WebP o AVIF (AVIF suele pesar menos). Los vídeos se convierten a WebM.");
     li(L"Informe CSV: deja en la carpeta de salida una tabla con peso original, final y ahorro.");
     li(L"Aviso sonoro al terminar: tono agudo si todo fue bien, grave si hubo errores.");
     li(L"Apagar al terminar: apaga el equipo tras una conversión correcta, con cuenta atrás cancelable.");
@@ -5772,6 +6095,7 @@ static std::vector<BloqueAcerca> bloques_acerca() {
     h2(L"Qué se conserva");
     li(L"La orientación de las fotos (etiqueta EXIF), para que no salgan giradas.");
     li(L"La transparencia de PNG, GIF y WebP, salvo que se active el aplanado.");
+    li(L"En vídeo, el audio se conserva y se recodifica a Opus 96 kbps.");
     li(L"El perfil de color ICC, si la imagen lo lleva incrustado.");
     li(L"Los GIF animados se convierten usando el primer fotograma (se avisa en el registro).");
     li(L"Los metadatos EXIF y la ubicación GPS no se copian, para que los archivos pesen menos.");
@@ -5784,7 +6108,9 @@ static std::vector<BloqueAcerca> bloques_acerca() {
     h2(L"Modo consola");
     code(L"ConversorWebPC.exe <origen...> -o <carpeta> [-q 85] [-m 6] [--zip salida.zip]");
     p(L"Opciones: --format avif, --max-dim 1920, --max-kb 150, --pattern {nombre}_{ancho}, "
-      L"--dry-run, --flat --bg \"#ffffff\", --csv, --lossless, --no-recursive, --no-overwrite.");
+      L"--dry-run, --flat --bg \"#ffffff\", --csv, --lossless, --no-recursive, --no-overwrite, "
+      L"--ffmpeg C:\\ruta\\ffmpeg.exe.");
+    p(L"Los vídeos se convierten a WebM (VP9 + Opus) automáticamente; necesitan FFmpeg.");
     p(L"Sin -o, el programa abre la ventana con los archivos ya cargados (útil para 'Enviar a').");
 
     h2(L"Entorno de este equipo");
@@ -5799,11 +6125,15 @@ static std::vector<BloqueAcerca> bloques_acerca() {
     li(extractor.empty() ? L"Extractor de comprimidos: ninguno (solo .zip)."
                          : L"Extractor de comprimidos: " +
                                fs::path(extractor).filename().wstring() + L".");
+    std::wstring ffmpeg = buscar_ffmpeg();
+    li(ffmpeg.empty() ? L"FFmpeg para vídeo: no encontrado (copia ffmpeg.exe junto al programa)."
+                      : L"FFmpeg para vídeo: " +
+                            fs::path(ffmpeg).filename().wstring() + L".");
 
     h2(L"Consejos");
     li(L"Para un lote grande, deja esfuerzo 6 y vete a hacer otra cosa: puedes cancelar cuando quieras.");
     li(L"Si repites una conversión, desactiva 'Sobrescribir' para reanudar sin repetir trabajo.");
-    li(L"El ZIP del resultado no sustituye a los WebP: ambos quedan en la carpeta de salida.");
+    li(L"El ZIP del resultado no sustituye a los archivos convertidos: ambos quedan en la carpeta de salida.");
     li(L"El manual completo, con todas las opciones explicadas, está en Ayuda - Manual de uso (F1).");
 
     b.push_back({L"\rConversor WebP " + std::wstring(APP_VERSION) +
@@ -6213,7 +6543,7 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
 
             // Cabecera
             etiqueta(L"Conversor WebP", 16, 17, 300, 30, 1400, g_font_title);
-            etiqueta(L"v2.10.0", 200, 29, 120, 18, 1401, g_font_muted);
+            etiqueta(L"v2.11.0", 200, 29, 120, 18, 1401, g_font_muted);
             etiqueta(L"JPG · PNG · BMP · TIFF · GIF · ICO  →  WebP / AVIF", 560, 23, 390, 20,
                      1402, g_font_muted, SS_RIGHT);
             boton(L"", 958, 20, 26, 26, ID_TEMA, BS_OWNERDRAW);
@@ -6268,7 +6598,7 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             SendMessageW(g_combo_formato, CB_ADDSTRING, 0, (LPARAM)L"AVIF");
             SendMessageW(g_combo_formato, CB_SETCURSEL,
                          g_opt.formato == L"AVIF" ? 1 : 0, 0);
-            etiqueta(L"AVIF pesa menos", 224, 465, 180, 18, 1104, g_font_muted);
+            etiqueta(L"AVIF pesa menos · vídeos → WebM", 224, 465, 260, 18, 1104, g_font_muted);
             g_check_csv = check(L"Guardar informe CSV en la carpeta de salida", 28, 497, 430, 20,
                                 ID_CSV, g_opt.csv);
             etiqueta(L"Nombre de salida", 28, 524, 100, 20, 1103);
@@ -6301,7 +6631,7 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             SendMessageW(g_combo_metodo, CB_SETCURSEL, g_opt.metodo, 0);
             g_check_lossless = check(L"Sin perdida (lossless)", 513, 390, 300, 20,
                                      ID_LOSSLESS, g_opt.sin_perdida);
-            g_check_reencode = check(L"Recodificar tambien los .webp / .avif", 513, 413, 300, 20,
+            g_check_reencode = check(L"Recodificar tambien los .webp / .avif / .webm", 513, 413, 300, 20,
                                      ID_REENCODE, g_opt.reencode);
             g_check_flatten = check(L"Aplanar transparencia sobre", 513, 434, 220, 20,
                                     ID_FLATTEN, g_opt.flatten);
@@ -6320,7 +6650,7 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             etiqueta(L"KB por imagen", 684, 491, 120, 18, 1205, g_font_muted);
 
             // Acciones
-            g_btn_convertir = boton(L"Convertir a WebP", 16, 630, 160, 42, ID_START, BS_OWNERDRAW);
+            g_btn_convertir = boton(L"Convertir ahora", 16, 630, 160, 42, ID_START, BS_OWNERDRAW);
             SendMessageW(g_btn_convertir, WM_SETFONT, (WPARAM)g_font_start, TRUE);
             g_btn_cancelar = boton(L"Cancelar", 192, 619, 82, 32, ID_CANCEL);
             EnableWindow(g_btn_cancelar, FALSE);
@@ -6460,12 +6790,13 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             switch (id) {
                 case ID_MENU_MANUAL: desc = L"Abre el manual de uso en el navegador."; break;
                 case ID_MENU_ABOUT: desc = L"Informacion de version y alcance de esta edicion C++."; break;
-                case ID_MENU_CONTEXT_ON: desc = L"Anade 'Convertir a WebP' al menu contextual del Explorador (HKCU)."; break;
+                case ID_MENU_CONTEXT_ON: desc = L"Anade 'Convertir con Conversor WebP' al menu contextual del Explorador (HKCU)."; break;
                 case ID_MENU_CONTEXT_OFF: desc = L"Quita las entradas del menu contextual creadas por el programa."; break;
                 case ID_MENU_SENDTO_ON: desc = L"Crea un acceso directo en la carpeta Enviar a."; break;
                 case ID_MENU_SENDTO_OFF: desc = L"Borra el acceso directo de la carpeta Enviar a."; break;
                 case ID_MENU_UPDATE: desc = L"Comprueba si hay una version mas reciente publicada."; break;
-                case ID_MENU_WATCH: desc = L"Vigila una carpeta y convierte automaticamente las imagenes nuevas."; break;
+                case ID_MENU_WATCH: desc = L"Vigila una carpeta y convierte automaticamente las imagenes y videos nuevos."; break;
+                case ID_MENU_FFMPEG: desc = L"Abre la pagina de descarga de FFmpeg, necesario para convertir videos."; break;
                 case ID_MENU_PREVIEW: desc = L"Compara el original con el WebP resultante antes de convertir."; break;
                 case ID_HIST_CLEAR: desc = L"Borra la lista de los ultimos trabajos guardados."; break;
                 default:
@@ -6511,9 +6842,7 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
                 SetTextColor(di->hDC, RGB(255, 255, 255));
                 HFONT vieja = (HFONT)SelectObject(di->hDC, g_font_start);
                 RECT r = di->rcItem;
-                const wchar_t* texto_boton =
-                    (g_combo_formato && SendMessageW(g_combo_formato, CB_GETCURSEL, 0, 0) == 1)
-                        ? L"Convertir a AVIF" : L"Convertir a WebP";
+                const wchar_t* texto_boton = L"Convertir ahora";
                 DrawTextW(di->hDC, texto_boton, -1, &r,
                           DT_CENTER | DT_VCENTER | DT_SINGLELINE);
                 SelectObject(di->hDC, vieja);
@@ -6595,9 +6924,10 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
                         dlg->GetOptions(&opts);
                         dlg->SetOptions(opts | FOS_ALLOWMULTISELECT | FOS_FILEMUSTEXIST);
                         COMDLG_FILTERSPEC filtros[] = {
-                            {L"Imagenes", L"*.jpg;*.jpeg;*.jfif;*.png;*.bmp;*.gif;*.tif;*.tiff;*.ico;*.webp;*.avif;*.heic;*.heif;*.tga;*.pcx;*.dds;*.ppm;*.pgm;*.pbm"},
+                            {L"Imagenes y videos", L"*.jpg;*.jpeg;*.jfif;*.png;*.bmp;*.gif;*.tif;*.tiff;*.ico;*.webp;*.avif;*.heic;*.heif;*.tga;*.pcx;*.dds;*.ppm;*.pgm;*.pbm;*.mp4;*.m4v;*.mov;*.mkv;*.avi;*.wmv;*.flv;*.webm;*.mpeg;*.mpg;*.ts;*.m2ts;*.mts;*.3gp;*.ogv"},
+                            {L"Videos", L"*.mp4;*.m4v;*.mov;*.mkv;*.avi;*.wmv;*.flv;*.webm;*.mpeg;*.mpg;*.ts;*.m2ts;*.mts;*.3gp;*.ogv"},
                             {L"Todos", L"*.*"}};
-                        dlg->SetFileTypes(2, filtros);
+                        dlg->SetFileTypes(3, filtros);
                         if (SUCCEEDED(dlg->Show(hwnd))) {
                             IShellItemArray* items = nullptr;
                             if (SUCCEEDED(dlg->GetResults(&items))) {
@@ -6906,6 +7236,11 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
                     return 0;
                 case ID_MENU_WATCH:
                     iniciar_vigilante_ui();
+                    return 0;
+                case ID_MENU_FFMPEG:
+                    ShellExecuteW(nullptr, L"open",
+                                  L"https://www.gyan.dev/ffmpeg/builds/", nullptr,
+                                  nullptr, SW_SHOWNORMAL);
                     return 0;
                 case ID_MENU_PREVIEW:
                     abrir_vista_previa();
@@ -7344,7 +7679,9 @@ static int ejecutar_cli(const std::vector<std::wstring>& args) {
             wprintf(L"  --max-kb N        peso maximo por imagen\n");
             wprintf(L"  --lossless        sin perdida\n");
             wprintf(L"  --pattern PATRON  patron de nombre ({nombre} {ancho} {alto} {fecha} {hash})\n");
-            wprintf(L"  --format FORMATO  webp (defecto) o avif\n");
+            wprintf(L"  --format FORMATO  webp (defecto) o avif para imagenes\n");
+            wprintf(L"  --ffmpeg RUTA     ruta a ffmpeg.exe para convertir videos a WebM\n");
+            wprintf(L"  Los videos (MP4, MOV, MKV, AVI, WebM...) se convierten siempre a WebM VP9/Opus.\n");
             wprintf(L"  --dry-run         analizar sin escribir archivos\n");
             wprintf(L"  --flat            aplanar transparencia\n");
             wprintf(L"  --bg #RRGGBB      color de fondo al aplanar (ffffff)\n");
@@ -7373,6 +7710,7 @@ static int ejecutar_cli(const std::vector<std::wstring>& args) {
             sig(v);
             opt.formato = (_wcsicmp(v.c_str(), L"avif") == 0) ? L"AVIF" : L"WEBP";
         }
+        else if (a == L"--ffmpeg") sig(opt.ffmpeg);
         else if (a == L"--dry-run") opt.dry_run = true;
         else if (a == L"--flat") opt.flatten = true;
         else if (a == L"--bg") {
@@ -7591,7 +7929,7 @@ int wmain(int argc, wchar_t** argv) {
     wc.hIconSm = icono_pequeno;
     RegisterClassExW(&wc);
 
-    g_hwnd = CreateWindowExW(0, wc.lpszClassName, L"Conversor WebP 2.10.0",
+    g_hwnd = CreateWindowExW(0, wc.lpszClassName, L"Conversor WebP 2.11.0",
                              WS_OVERLAPPEDWINDOW,
                              CW_USEDEFAULT, CW_USEDEFAULT, dpx(1016), dpx(900), nullptr, nullptr, inst, nullptr);
     if (!g_hwnd) return 1;
@@ -7616,6 +7954,7 @@ int wmain(int argc, wchar_t** argv) {
     AppendMenuW(herramientas, MF_SEPARATOR, 0, nullptr);
     AppendMenuW(herramientas, MF_STRING, ID_MENU_WATCH, L"Vigilar una carpeta");
     AppendMenuW(herramientas, MF_STRING, ID_MENU_PREVIEW, L"Vista previa del seleccionado\tCtrl+P");
+    AppendMenuW(herramientas, MF_STRING, ID_MENU_FFMPEG, L"Descargar FFmpeg para video...");
     AppendMenuW(herramientas, MF_SEPARATOR, 0, nullptr);
     AppendMenuW(herramientas, MF_STRING, ID_ORIGEN_UP, L"Subir origen\tCtrl+Arriba");
     AppendMenuW(herramientas, MF_STRING, ID_ORIGEN_DOWN, L"Bajar origen\tCtrl+Abajo");

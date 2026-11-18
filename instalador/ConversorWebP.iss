@@ -2,7 +2,7 @@
 ; Compilar con:  "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" instalador\ConversorWebP.iss
 
 #define MyAppName "Conversor WebP"
-#define MyAppVersion "2.10.0"
+#define MyAppVersion "2.11.0"
 #define MyAppPublisher "zeronet75"
 #define MyAppURL "https://github.com/zeronet75/ConversorWebP"
 #define MyAppExeName "ConversorWebP.exe"
@@ -41,6 +41,8 @@ Name: "desktopicon"; Description: "Crear un acceso directo en el escritorio"; Gr
 
 [Files]
 Source: "..\dist\{#MyAppExeName}"; DestDir: "{app}"; Flags: ignoreversion
+Source: "..\dist\ffmpeg.exe"; DestDir: "{app}"; Flags: ignoreversion skipifsourcedoesntexist
+Source: "..\dist\ffprobe.exe"; DestDir: "{app}"; Flags: ignoreversion skipifsourcedoesntexist
 Source: "..\MANUAL_DE_USO.html"; DestDir: "{app}"; Flags: ignoreversion
 Source: "..\LEEME.txt"; DestDir: "{app}"; Flags: ignoreversion
 Source: "..\LICENSE"; DestDir: "{app}"; Flags: ignoreversion

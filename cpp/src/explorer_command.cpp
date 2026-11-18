@@ -55,14 +55,14 @@ public:
     }
 
     IFACEMETHODIMP GetTitle(IShellItemArray*, LPWSTR* titulo) override {
-        return SHStrDupW(L"Convertir a WebP con Conversor WebP", titulo);
+        return SHStrDupW(L"Convertir con Conversor WebP", titulo);
     }
     IFACEMETHODIMP GetIcon(IShellItemArray*, LPWSTR* icono) override {
         if (icono) *icono = nullptr;
         return S_FALSE;
     }
     IFACEMETHODIMP GetToolTip(IShellItemArray*, LPWSTR* texto) override {
-        return SHStrDupW(L"Convierte las imagenes seleccionadas a WebP o AVIF", texto);
+        return SHStrDupW(L"Convierte imagenes a WebP/AVIF y videos a WebM", texto);
     }
     IFACEMETHODIMP GetCanonicalName(GUID* guid) override {
         if (!guid) return E_POINTER;
