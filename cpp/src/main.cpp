@@ -76,7 +76,7 @@ using Microsoft::WRL::ComPtr;
 namespace fs = std::filesystem;
 
 static const wchar_t* APP_NAME = L"Conversor WebP";
-static const wchar_t* APP_VERSION = L"2.6.4";
+static const wchar_t* APP_VERSION = L"2.6.5";
 
 // ---------------------------------------------------------------------------
 //  Utilidades generales
@@ -162,6 +162,19 @@ static std::wstring fmt_kb(double kb) {
     wchar_t buf[64];
     swprintf_s(buf, L"%.1f KB", kb);
     return buf;
+}
+
+static std::string csv_campo(const std::string& valor) {
+    if (valor.find_first_of(";\"\r\n") == std::string::npos) return valor;
+    std::string salida;
+    salida.reserve(valor.size() + 2);
+    salida.push_back('"');
+    for (char c : valor) {
+        if (c == '"') salida.push_back('"');
+        salida.push_back(c);
+    }
+    salida.push_back('"');
+    return salida;
 }
 
 static std::wstring nombre_seguro(std::wstring nombre, const std::wstring& defecto) {
@@ -1226,7 +1239,7 @@ struct Options {
     bool beep = true;
     bool csv = false;
     std::wstring salida;
-    std::wstring zip_nombre = L"imagenes_2.6.4-cpp.zip";
+    std::wstring zip_nombre = L"imagenes_2.6.5-cpp.zip";
     std::wstring patron;
     std::wstring formato = L"WEBP";
     bool dry_run = false;
@@ -1699,6 +1712,8 @@ static std::atomic<bool> g_corriendo{false};
 static std::atomic<bool> g_cancelar{false};
 static std::mutex g_mutex_eventos;
 static std::deque<Evento> g_eventos;
+static std::atomic<bool> g_modo_cli{false};
+static std::mutex g_mutex_consola;
 static UINT_PTR g_timer = 0;
 
 static Options g_opt;
@@ -1827,6 +1842,11 @@ static std::string http_get(const std::wstring& url, std::wstring& error) {
     uc.dwExtraInfoLength = (DWORD)-1;
     if (!WinHttpCrackUrl(url.c_str(), 0, 0, &uc)) {
         error = L"URL no valida";
+        return {};
+    }
+    if (!uc.lpszHostName || !uc.lpszUrlPath ||
+        (uc.dwExtraInfoLength && !uc.lpszExtraInfo)) {
+        error = L"URL incompleta";
         return {};
     }
     std::wstring host(uc.lpszHostName, uc.dwHostNameLength);
@@ -2015,6 +2035,11 @@ static bool descargar_archivo(const std::wstring& url, const fs::path& destino,
     uc.dwExtraInfoLength = (DWORD)-1;
     if (!WinHttpCrackUrl(url.c_str(), 0, 0, &uc)) {
         error = L"URL de descarga no valida";
+        return false;
+    }
+    if (!uc.lpszHostName || !uc.lpszUrlPath ||
+        (uc.dwExtraInfoLength && !uc.lpszExtraInfo)) {
+        error = L"URL de descarga incompleta";
         return false;
     }
     std::wstring host(uc.lpszHostName, uc.dwHostNameLength);
@@ -2254,32 +2279,44 @@ static void iniciar_descarga_actualizacion(const Evento& info) {
     int modo = info.modo;
     try {
         std::thread([url, asset, digest, modo] {
-            wchar_t temp[MAX_PATH];
-            GetTempPathW(MAX_PATH, temp);
-            fs::path destino = fs::path(temp) / L"ConversorWebP_update" / asset;
-            std::error_code ec;
-            fs::create_directories(destino.parent_path(), ec);
-            std::wstring error;
-            bool ok = descargar_archivo(url, destino, error);
-            if (ok) {
-                std::wstring hex;
-                ok = sha256_archivo(destino, hex, error);
+            try {
+                wchar_t temp[MAX_PATH];
+                GetTempPathW(MAX_PATH, temp);
+                fs::path destino = fs::path(temp) / L"ConversorWebP_update" / asset;
+                std::error_code ec;
+                fs::create_directories(destino.parent_path(), ec);
+                std::wstring error;
+                bool ok = descargar_archivo(url, destino, error);
                 if (ok) {
-                    std::wstring esperado = digest;
-                    if (esperado.rfind(L"sha256:", 0) == 0) esperado = esperado.substr(7);
-                    if (esperado.size() != 64 || _wcsicmp(hex.c_str(), esperado.c_str()) != 0) {
-                        ok = false;
-                        error = L"El archivo descargado no coincide con su SHA-256.";
+                    std::wstring hex;
+                    ok = sha256_archivo(destino, hex, error);
+                    if (ok) {
+                        std::wstring esperado = digest;
+                        if (esperado.rfind(L"sha256:", 0) == 0) esperado = esperado.substr(7);
+                        if (esperado.size() != 64 || _wcsicmp(hex.c_str(), esperado.c_str()) != 0) {
+                            ok = false;
+                            error = L"El archivo descargado no coincide con su SHA-256.";
+                        }
                     }
                 }
+                Evento ev;
+                ev.tipo = ok ? Evento::DESCARGA_LISTA : Evento::DESCARGA_ERROR;
+                ev.texto = error;
+                ev.extra = destino.wstring();
+                ev.extra2 = asset;
+                ev.modo = modo;
+                emitir(std::move(ev));
+            } catch (const std::exception& ex) {
+                Evento ev;
+                ev.tipo = Evento::DESCARGA_ERROR;
+                ev.texto = L"Error inesperado al descargar: " + a_wstring(ex.what());
+                emitir(std::move(ev));
+            } catch (...) {
+                Evento ev;
+                ev.tipo = Evento::DESCARGA_ERROR;
+                ev.texto = L"Error inesperado al descargar la actualizacion.";
+                emitir(std::move(ev));
             }
-            Evento ev;
-            ev.tipo = ok ? Evento::DESCARGA_LISTA : Evento::DESCARGA_ERROR;
-            ev.texto = error;
-            ev.extra = destino.wstring();
-            ev.extra2 = asset;
-            ev.modo = modo;
-            emitir(std::move(ev));
         }).detach();
     } catch (...) {
         g_actualizando = false;
@@ -2658,6 +2695,16 @@ static void log(const std::wstring& texto) {
 }
 
 static void emitir(Evento e) {
+    if (g_modo_cli) {
+        if (e.tipo == Evento::LOG) {
+            std::lock_guard<std::mutex> lock(g_mutex_consola);
+            wprintf(L"%s\n", e.texto.c_str());
+            fflush(stdout);
+            return;
+        }
+        if (e.tipo == Evento::PROGRESO || e.tipo == Evento::ESTADO || e.tipo == Evento::FILA)
+            return;
+    }
     std::lock_guard<std::mutex> lock(g_mutex_eventos);
     g_eventos.push_back(std::move(e));
 }
@@ -2688,6 +2735,14 @@ static void limpiar_temporales() {
         fs::remove_all(p, ec);
     }
     g_temporales.clear();
+}
+
+static bool reemplazar_archivo(const fs::path& parcial, const fs::path& destino) {
+    if (MoveFileExW(parcial.c_str(), destino.c_str(), MOVEFILE_REPLACE_EXISTING))
+        return true;
+    std::error_code ec;
+    fs::remove(parcial, ec);
+    return false;
 }
 
 static bool ejecutar_oculto(const std::wstring& comando) {
@@ -2948,6 +3003,17 @@ static void hilo_conversion(Options opt_trabajo, std::vector<std::wstring> orige
     HRESULT hr_com = CoInitializeEx(nullptr, COINIT_MULTITHREADED);
     ComPtr<IWICImagingFactory> factory;
     CoCreateInstance(CLSID_WICImagingFactory, nullptr, CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&factory));
+    if (!factory.Get()) {
+        emitir_log(L"No se pudo iniciar WIC.");
+        Evento fin;
+        fin.tipo = Evento::FIN;
+        fin.texto = L"No se pudo iniciar WIC";
+        fin.a = 0;
+        fin.b = 1;
+        emitir(std::move(fin));
+        if (SUCCEEDED(hr_com)) CoUninitialize();
+        return;
+    }
 
     std::vector<Tarea> tareas;
     int omitidas = 0;
@@ -3029,14 +3095,12 @@ static void hilo_conversion(Options opt_trabajo, std::vector<std::wstring> orige
                         out.close();
                         escrito = out.good();
                     }
-                    std::error_code ec_aux;
                     if (escrito) {
-                        fs::remove(t.dst, ec_aux);
-                        fs::rename(parcial, t.dst, ec_aux);
-                        escrito = !ec_aux;
+                        escrito = reemplazar_archivo(parcial, t.dst);
                     }
                     if (!escrito) {
-                        fs::remove(parcial, ec_aux);
+                        std::error_code ec_limpieza;
+                        fs::remove(parcial, ec_limpieza);
                         correcta = false;
                         error = L"no se pudo escribir el archivo";
                     }
@@ -3100,9 +3164,10 @@ static void hilo_conversion(Options opt_trabajo, std::vector<std::wstring> orige
         f << "\xEF\xBB\xBF";
         f << "Archivo;Origen;KB original;KB resultado;Ahorro %;Estado;Nota\r\n";
         for (auto& r : filas) {
-            f << a_utf8(r.archivo) << ";" << a_utf8(r.origen) << ";" << std::fixed << std::setprecision(1)
-              << r.kb_in << ";" << r.kb_out << ";" << r.ahorro << ";"
-              << a_utf8(r.estado) << ";" << a_utf8(r.nota) << "\r\n";
+            f << csv_campo(a_utf8(r.archivo)) << ";" << csv_campo(a_utf8(r.origen)) << ";"
+              << std::fixed << std::setprecision(1) << r.kb_in << ";" << r.kb_out << ";"
+              << r.ahorro << ";" << csv_campo(a_utf8(r.estado)) << ";"
+              << csv_campo(a_utf8(r.nota)) << "\r\n";
         }
         emitir_log(L"Informe CSV: " + csv.wstring());
     }
@@ -3175,6 +3240,12 @@ static void hilo_vigilante(std::wstring carpeta, Options opt,
     ComPtr<IWICImagingFactory> factory;
     CoCreateInstance(CLSID_WICImagingFactory, nullptr, CLSCTX_INPROC_SERVER,
                      IID_PPV_ARGS(&factory));
+    if (!factory.Get()) {
+        emitir_log(L"Vigilante: no se pudo iniciar WIC.");
+        g_watch_activo = false;
+        if (SUCCEEDED(hr_com)) CoUninitialize();
+        return;
+    }
     std::map<std::wstring, int> fallos;
     std::set<std::wstring> destinos;
     std::map<std::wstring, std::pair<uintmax_t, fs::file_time_type>> huellas;
@@ -3253,14 +3324,12 @@ static void hilo_vigilante(std::wstring carpeta, Options opt,
                         out.close();
                         escrito = out.good();
                     }
-                    std::error_code ec_aux;
                     if (escrito) {
-                        fs::remove(dst, ec_aux);
-                        fs::rename(parcial, dst, ec_aux);
-                        escrito = !ec_aux;
+                        escrito = reemplazar_archivo(parcial, dst);
                     }
                     if (!escrito) {
-                        fs::remove(parcial, ec_aux);
+                        std::error_code ec_limpieza;
+                        fs::remove(parcial, ec_limpieza);
                         correcta = false;
                         error = L"no se pudo escribir el archivo";
                     }
@@ -3359,6 +3428,7 @@ static void iniciar_vigilante_ui() {
 
     g_watch_carpeta = carpeta;
     g_watch_activo = true;
+    if (g_watch_hilo.joinable()) g_watch_hilo.join();
     g_watch_hilo = std::thread(hilo_vigilante, carpeta, opt, std::move(vistos));
     if (g_menu_herramientas)
         CheckMenuItem(g_menu_herramientas, ID_MENU_WATCH, MF_BYCOMMAND | MF_CHECKED);
@@ -3736,19 +3806,24 @@ static void vaciar_historial() {
     reconstruir_menu_historial();
 }
 
-static void programar_apagado(int segundos) {
+static bool programar_apagado(int segundos, bool avisar = true) {
     wchar_t cmd[160];
     swprintf_s(cmd, L"/s /t %d /c \"Conversor WebP\"", segundos);
+    wchar_t sistema[MAX_PATH] = L"C:\\Windows\\System32";
+    GetSystemDirectoryW(sistema, MAX_PATH);
+    fs::path shutdown = fs::path(sistema) / L"shutdown.exe";
     STARTUPINFOW si{};
     si.cb = sizeof(si);
     PROCESS_INFORMATION pi{};
-    if (!CreateProcessW(L"C:\\Windows\\System32\\shutdown.exe", cmd, nullptr, nullptr, FALSE,
+    if (!CreateProcessW(shutdown.c_str(), cmd, nullptr, nullptr, FALSE,
                         CREATE_NO_WINDOW, nullptr, nullptr, &si, &pi)) {
-        MessageBoxW(g_hwnd, L"No se pudo programar el apagado.", APP_NAME, MB_ICONERROR);
-        return;
+        if (avisar)
+            MessageBoxW(g_hwnd, L"No se pudo programar el apagado.", APP_NAME, MB_ICONERROR);
+        return false;
     }
     CloseHandle(pi.hProcess);
     CloseHandle(pi.hThread);
+    return true;
 }
 
 static HWND g_apagado_hwnd = nullptr;
@@ -4017,6 +4092,12 @@ static void abrir_vista_previa() {
     ComPtr<IWICImagingFactory> factory;
     CoCreateInstance(CLSID_WICImagingFactory, nullptr, CLSCTX_INPROC_SERVER,
                      IID_PPV_ARGS(&factory));
+    if (!factory.Get()) {
+        SetWindowTextW(g_status, L"Listo.");
+        MessageBoxW(g_hwnd, L"No se pudo iniciar el decodificador de imagenes (WIC).",
+                    APP_NAME, MB_ICONERROR);
+        return;
+    }
 
     Bitmap original;
     std::wstring error;
@@ -5240,7 +5321,7 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
 
             // Cabecera
             etiqueta(L"Conversor WebP", 16, 17, 300, 30, 1400, g_font_title);
-            etiqueta(L"v2.6.4", 200, 29, 120, 18, 1401, g_font_muted);
+            etiqueta(L"v2.6.5", 200, 29, 120, 18, 1401, g_font_muted);
             etiqueta(L"JPG · PNG · BMP · TIFF · GIF · ICO  →  WebP / AVIF", 560, 23, 390, 20,
                      1402, g_font_muted, SS_RIGHT);
             boton(L"", 958, 20, 26, 26, ID_TEMA, BS_OWNERDRAW);
@@ -6204,14 +6285,21 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
                         EnableWindow(g_btn_convertir, TRUE);
                         EnableWindow(g_btn_cancelar, FALSE);
                         SetWindowTextW(g_status, e.texto.c_str());
+                        bool exito = e.b == 0 && !g_cancelar;
                         wchar_t extra[256];
                         swprintf_s(extra, L"%s\n\nTamano: %.2f MB -> %.2f MB",
                                    e.texto.c_str(), e.fila.kb_in / 1024.0, e.fila.kb_out / 1024.0);
-                        MessageBoxW(hwnd, extra, APP_NAME, MB_ICONINFORMATION);
+                        MessageBoxW(hwnd, extra, APP_NAME,
+                                    exito ? MB_ICONINFORMATION : MB_ICONWARNING);
                         if (g_opt.beep) {
-                            std::thread([] {
-                                Beep(880, 120);
-                                Beep(1320, 160);
+                            std::thread([exito] {
+                                if (exito) {
+                                    Beep(880, 120);
+                                    Beep(1320, 160);
+                                } else {
+                                    Beep(440, 200);
+                                    Beep(330, 280);
+                                }
                             }).detach();
                         }
                         if (!g_opt.dry_run && e.a > 0) registrar_historial(e.a);
@@ -6244,11 +6332,11 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
 
         case WM_DESTROY:
             detener_vigilante(false);
+            g_cancelar = true;
+            if (g_hilo.joinable()) g_hilo.join();
             limpiar_temporales();
             if (g_tip_hwnd) DestroyWindow(g_tip_hwnd);
             if (g_timer) KillTimer(hwnd, 1);
-            if (g_hilo.joinable()) g_hilo.join();
-            g_cancelar = true;
             PostQuitMessage(0);
             return 0;
     }
@@ -6261,6 +6349,7 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
 static int ejecutar_cli(const std::vector<std::wstring>& args) {
     Options opt;
     std::vector<std::wstring> origenes;
+    int apagar_delay = 60;
     for (size_t i = 0; i < args.size(); i++) {
         std::wstring a = args[i];
         auto sig = [&](std::wstring& dst) {
@@ -6284,7 +6373,9 @@ static int ejecutar_cli(const std::vector<std::wstring>& args) {
             wprintf(L"  --zip NOMBRE      crear ZIP\n");
             wprintf(L"  --csv             guardar informe CSV\n");
             wprintf(L"  --no-overwrite    omitir existentes\n");
-            wprintf(L"  --no-recursive    no mantener subcarpetas\n\n");
+            wprintf(L"  --no-recursive    no mantener subcarpetas\n");
+            wprintf(L"  --shutdown        apagar el equipo al terminar correctamente\n");
+            wprintf(L"  --shutdown-delay N  segundos antes de apagar (60)\n\n");
             return 0;
         }
         if (a == L"-o" || a == L"--output") sig(opt.salida);
@@ -6327,6 +6418,12 @@ static int ejecutar_cli(const std::vector<std::wstring>& args) {
         else if (a == L"--csv") opt.csv = true;
         else if (a == L"--no-overwrite") opt.sobrescribir = false;
         else if (a == L"--no-recursive") opt.mantener = false;
+        else if (a == L"--shutdown") opt.apagar = true;
+        else if (a == L"--shutdown-delay") {
+            std::wstring v;
+            sig(v);
+            apagar_delay = std::clamp(_wtoi(v.c_str()), 10, 86400);
+        }
         else if (!a.empty() && a[0] != L'-') origenes.push_back(a);
     }
     if (opt.salida.empty() || origenes.empty()) {
@@ -6342,17 +6439,27 @@ static int ejecutar_cli(const std::vector<std::wstring>& args) {
         std::lock_guard<std::mutex> lock(g_mutex_eventos);
         g_eventos.clear();
     }
+    g_modo_cli = true;
     hilo_conversion_seguro(g_opt, g_origenes);
+    g_modo_cli = false;
     int fallidas = 0;
+    int convertidas = 0;
     {
         std::lock_guard<std::mutex> lock(g_mutex_eventos);
         for (auto& e : g_eventos) {
             if (e.tipo == Evento::LOG) wprintf(L"%s\n", e.texto.c_str());
             else if (e.tipo == Evento::FIN) {
                 wprintf(L"\n%s\n", e.texto.c_str());
+                convertidas = e.a;
                 fallidas = e.b;
             }
         }
+    }
+    if (opt.apagar && convertidas > 0 && fallidas == 0 && !opt.dry_run && !g_cancelar) {
+        if (programar_apagado(apagar_delay, false))
+            wprintf(L"Apagado programado en %d s. Para cancelar: shutdown /a\n", apagar_delay);
+        else
+            wprintf(L"ERROR: no se pudo programar el apagado.\n");
     }
     wprintf(L"\n");
     return fallidas > 0 ? 1 : 0;
@@ -6443,7 +6550,7 @@ int wmain(int argc, wchar_t** argv) {
     wc.hIconSm = icono_pequeno;
     RegisterClassExW(&wc);
 
-    g_hwnd = CreateWindowExW(0, wc.lpszClassName, L"Conversor WebP 2.6.4",
+    g_hwnd = CreateWindowExW(0, wc.lpszClassName, L"Conversor WebP 2.6.5",
                              WS_OVERLAPPEDWINDOW,
                              CW_USEDEFAULT, CW_USEDEFAULT, 1016, 900, nullptr, nullptr, inst, nullptr);
     if (!g_hwnd) return 1;

@@ -6,6 +6,23 @@ Todos los cambios relevantes del proyecto. Formato basado en
 
 ---
 
+## [2.6.5] — 2026-11-18
+
+### Corregido
+
+- **Python:** al cambiar de tema se conservan las rutas de la tabla, por lo que el doble clic sigue abriendo el archivo.
+- **Python:** la vista previa se genera en segundo plano, se limpia al cerrar con la X y al cambiar de tema.
+- **Python:** un `config.json` con historial corrupto ya no impide arrancar.
+- **Python:** límite de tamaño y número de archivos al descomprimir.
+- **C++:** el CSV escapa correctamente campos con `;`, comillas o saltos de línea.
+- **C++:** la sobrescritura de imágenes usa sustitución atómica y no pierde el archivo anterior si falla.
+- **C++:** al cerrar durante una conversión se espera al hilo antes de borrar los temporales.
+- **C++:** el CLI muestra el registro en tiempo real y admite `--shutdown` y `--shutdown-delay`.
+- **C++:** el pitido y el icono final distinguen éxito de fallo.
+- **C++:** comprobaciones defensivas de WIC, URL de descarga y errores del actualizador.
+
+---
+
 ## [2.6.4] — 2026-11-18
 
 ### Corregido
@@ -258,6 +275,7 @@ Todos los cambios relevantes del proyecto. Formato basado en
 - Conservación de transparencia, perfil ICC y orientación EXIF.
 - Modo consola básico.
 
+[2.6.5]: #265--2026-11-18
 [2.6.4]: #264--2026-11-18
 [2.6.3]: #263--2026-11-18
 [2.6.2]: #262--2026-11-18

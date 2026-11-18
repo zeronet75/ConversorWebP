@@ -77,7 +77,7 @@ except Exception:  # pragma: no cover - la app sigue funcionando sin arrastrar
 
 
 APP_NAME = "Conversor WebP"
-APP_VERSION = "2.6.4"
+APP_VERSION = "2.6.5"
 
 try:  # soporte HEIC/HEIF (iPhone) si pillow-heif esta instalado
     import pillow_heif
@@ -94,6 +94,14 @@ IMAGE_EXTS = {
     ".dds", ".webp", ".heic", ".heif",
 }
 ARCHIVE_EXTS = {".zip", ".rar", ".7z"}
+MAX_EXTRACCION_BYTES = 4 * 1024**3
+MAX_EXTRACCION_ARCHIVOS = 200_000
+
+
+class ErrorExtraccionSegura(RuntimeError):
+    """El comprimido supera limites de seguridad; no se intenta con otra herramienta."""
+
+
 DIMENSIONES = ["Sin cambio", "2560", "1920", "1600", "1200", "800", "512"]
 
 # Presets incluidos (nombre -> ajustes de imagen)
@@ -245,19 +253,65 @@ def extract_with_tool(tool: Path, archive: Path, dest: Path) -> None:
         raise RuntimeError(f"{tool.name} no pudo extraer: {detalle}")
 
 
+def _comprobar_tamano_extraido(dest: Path) -> None:
+    """Evita que un comprimido descomprima mas de lo razonable."""
+    total = 0
+    archivos = 0
+    try:
+        for p in dest.rglob("*"):
+            if not p.is_file():
+                continue
+            archivos += 1
+            if archivos > MAX_EXTRACCION_ARCHIVOS:
+                raise ErrorExtraccionSegura(
+                    f"El comprimido contiene mas de {MAX_EXTRACCION_ARCHIVOS} archivos."
+                )
+            total += p.stat().st_size
+            if total > MAX_EXTRACCION_BYTES:
+                raise ErrorExtraccionSegura(
+                    "El comprimido supera el limite de "
+                    f"{MAX_EXTRACCION_BYTES // (1024**3)} GB descomprimido."
+                )
+    except OSError:
+        return
+
+
 def extract_zip_builtin(archive: Path, dest: Path) -> None:
     dest_abs = dest.resolve()
+    total_declarado = 0
+    total_real = 0
     with zipfile.ZipFile(archive) as z:
-        for info in z.infolist():
+        infos = z.infolist()
+        if len(infos) > MAX_EXTRACCION_ARCHIVOS:
+            raise ErrorExtraccionSegura(
+                f"El ZIP contiene mas de {MAX_EXTRACCION_ARCHIVOS} entradas."
+            )
+        for info in infos:
             nombre = info.filename.replace("\\", "/")
             if not nombre or nombre.endswith("/"):
                 continue
+            total_declarado += max(0, info.file_size)
+            if total_declarado > MAX_EXTRACCION_BYTES:
+                raise ErrorExtraccionSegura(
+                    "El ZIP supera el limite de "
+                    f"{MAX_EXTRACCION_BYTES // (1024**3)} GB descomprimido."
+                )
             objetivo = (dest / nombre).resolve()
             if dest_abs not in objetivo.parents and objetivo != dest_abs:
-                raise RuntimeError(f"Ruta no permitida dentro del ZIP: {nombre}")
+                raise ErrorExtraccionSegura(f"Ruta no permitida dentro del ZIP: {nombre}")
             objetivo.parent.mkdir(parents=True, exist_ok=True)
             with z.open(info) as origen, open(objetivo, "wb") as salida:
-                shutil.copyfileobj(origen, salida, 1024 * 1024)
+                while True:
+                    trozo = origen.read(1024 * 1024)
+                    if not trozo:
+                        break
+                    total_real += len(trozo)
+                    if total_real > MAX_EXTRACCION_BYTES:
+                        raise ErrorExtraccionSegura(
+                            "El ZIP supera el limite de "
+                            f"{MAX_EXTRACCION_BYTES // (1024**3)} GB descomprimido."
+                        )
+                    salida.write(trozo)
 
 
 def extract_archive(archive: Path, dest: Path) -> None:
@@ -266,7 +320,10 @@ def extract_archive(archive: Path, dest: Path) -> None:
     if archive.suffix.lower() == ".zip":
         try:
             extract_zip_builtin(archive, dest)
+            _comprobar_tamano_extraido(dest)
             return
+        except ErrorExtraccionSegura:
+            raise
         except Exception as e:  # noqa: BLE001
             error_zip = e  # ZIP cifrado o compresion rara: se intenta con 7-Zip
     tool = find_extractor()
@@ -281,6 +338,7 @@ def extract_archive(archive: Path, dest: Path) -> None:
             "Los .zip funcionan sin instalar nada."
         )
     extract_with_tool(tool, archive, dest)
+    _comprobar_tamano_extraido(dest)
 
 
 def is_image(path: Path) -> bool:
@@ -324,6 +382,20 @@ def nombre_seguro(nombre: str, defecto: str) -> tuple[str, bool]:
         sufijo = Path(limpio).suffix[:20]
         limpio = limpio[: 200 - len(sufijo)] + sufijo
     return limpio, limpio != original
+
+
+def _historial_valido(h: object) -> bool:
+    """Comprueba la forma minima de una entrada de historial."""
+    if not isinstance(h, dict):
+        return False
+    fuentes = h.get("sources")
+    if not isinstance(fuentes, list) or not all(isinstance(p, str) for p in fuentes):
+        return False
+    if not isinstance(h.get("output_dir", ""), str):
+        return False
+    if not isinstance(h.get("ajustes", {}), dict):
+        return False
+    return True
 
 
 def _ps_quote(texto: str) -> str:
@@ -432,10 +504,6 @@ def _asset_para_modo(modo: str, version: str) -> str:
     if modo == "portable":
         return f"ConversorWebP-Portable-{v}.zip"
     return "ConversorWebP.exe"
-
-
-def _ps_quote(texto: str) -> str:
-    return str(texto).replace("'", "''")
 
 
 def _crear_script_actualizacion(archivo: Path, modo: str) -> Path:
@@ -1869,6 +1937,9 @@ class App(BaseTk):  # type: ignore[misc,valid-type]
         self._after_menu: str | None = None
         self._apagado_win: tk.Toplevel | None = None
         self._apagado_lanzado = False
+        self._preview_win: tk.Toplevel | None = None
+        self._preview_temp: Path | None = None
+        self._preview_generando = False
 
         self._dpi_setup()
         self._build_style()
@@ -1925,6 +1996,12 @@ class App(BaseTk):  # type: ignore[misc,valid-type]
                 APP_NAME, "Espera a que termine el trabajo en curso para cambiar el tema."
             )
             return
+        if self._preview_generando:
+            messagebox.showinfo(
+                APP_NAME, "Espera a que termine la vista previa para cambiar el tema."
+            )
+            return
+        self._cerrar_vista_previa()
         self.oscuro = not self.oscuro
         aplicar_paleta(self.oscuro)
         self._save_config()
@@ -1942,11 +2019,19 @@ class App(BaseTk):  # type: ignore[misc,valid-type]
             prog_val = float(self.progress.cget("value"))
             prog_max = float(self.progress.cget("maximum"))
             for iid in self.tabla.get_children():
-                filas.append((self.tabla.item(iid, "values"), self.tabla.item(iid, "tags")))
+                filas.append(
+                    (
+                        self.tabla.item(iid, "values"),
+                        self.tabla.item(iid, "tags"),
+                        self._rutas_filas.get(iid, ""),
+                    )
+                )
         except Exception:  # noqa: BLE001
             pass
         self._tooltips = []
         for w in list(self.winfo_children()):
+            if isinstance(w, tk.Toplevel):
+                continue
             try:
                 w.destroy()
             except Exception:  # noqa: BLE001
@@ -1978,8 +2063,11 @@ class App(BaseTk):  # type: ignore[misc,valid-type]
             self.log.insert("end", log_texto)
             self.log.configure(state="disabled")
             self.log.see("end")
-        for valores, tags in filas:
-            self.tabla.insert("", "end", values=valores, tags=tags)
+        for valores, tags, ruta in filas:
+            nuevo = self.tabla.insert("", "end", values=valores, tags=tags)
+            if ruta:
+                self._rutas_filas[nuevo] = ruta
+        self._contador_filas = len(filas)
         self._dibujar_icono_tema()
         self.after(80, self._aplicar_tema_windows)
 
@@ -3335,45 +3423,106 @@ class App(BaseTk):  # type: ignore[misc,valid-type]
                 "(no un comprimido). Anade una imagen primero.",
             )
             return
+        if self._preview_generando:
+            messagebox.showinfo(
+                APP_NAME, "Espera a que termine la vista previa que ya esta en curso."
+            )
+            return
+        if self._preview_win is not None and self._preview_win.winfo_exists():
+            self._cerrar_vista_previa()
 
         temporal = Path(tempfile.mkdtemp(prefix="conversor_preview_"))
         ext = ".avif" if self.formato.get().upper() == "AVIF" else ".webp"
         destino = temporal / ("vista_previa" + ext)
         job = self._crear_job([origen], temporal, zip_activo=False)
         job.csv_report = False
-        try:
-            convert_one(origen, destino, job)
-            with Image.open(origen) as original:
-                original.load()
-                tam_original = original.size
-                imagen_original = original.convert("RGB")
-            with Image.open(destino) as convertida:
-                convertida.load()
-                tam_convertida = convertida.size
-                imagen_convertida = convertida.convert("RGB")
-        except Exception as e:  # noqa: BLE001
+        self._preview_temp = temporal
+        self._preview_generando = True
+        self.lbl_status.configure(text="Generando vista previa...")
+
+        def tarea() -> None:
+            try:
+                convert_one(origen, destino, job)
+                with Image.open(origen) as original:
+                    original.load()
+                    tam_original = original.size
+                    imagen_original = original.convert("RGB")
+                with Image.open(destino) as convertida:
+                    convertida.load()
+                    tam_convertida = convertida.size
+                    imagen_convertida = convertida.convert("RGB")
+                peso_in = origen.stat().st_size / 1024
+                peso_out = destino.stat().st_size / 1024
+                ahorro = (1 - peso_out / peso_in) * 100 if peso_in else 0
+                self.queue.put(
+                    (
+                        "preview_ready",
+                        {
+                            "origen": origen,
+                            "temporal": temporal,
+                            "formato": job.formato,
+                            "imagen_original": imagen_original,
+                            "imagen_convertida": imagen_convertida,
+                            "tam_original": tam_original,
+                            "tam_convertida": tam_convertida,
+                            "peso_in": peso_in,
+                            "peso_out": peso_out,
+                            "ahorro": ahorro,
+                        },
+                    )
+                )
+            except Exception as e:  # noqa: BLE001
+                self.queue.put(("preview_error", (str(temporal), str(e))))
+
+        threading.Thread(target=tarea, daemon=True).start()
+
+    def _cerrar_vista_previa(self) -> None:
+        """Cierra la vista previa y elimina su carpeta temporal."""
+        temporal = self._preview_temp
+        self._preview_temp = None
+        ventana = self._preview_win
+        self._preview_win = None
+        self._preview_generando = False
+        if temporal is not None:
             shutil.rmtree(temporal, ignore_errors=True)
-            messagebox.showerror(APP_NAME, f"No se pudo generar la vista previa:\n{e}")
+        if ventana is not None:
+            try:
+                if ventana.winfo_exists():
+                    ventana.destroy()
+            except tk.TclError:
+                pass
+
+    def _mostrar_vista_previa(self, dato: dict) -> None:
+        self._preview_generando = False
+        temporal = Path(dato["temporal"])
+        if self._closing:
+            shutil.rmtree(temporal, ignore_errors=True)
+            self._preview_temp = None
             return
 
+        origen = Path(dato["origen"])
         ventana = tk.Toplevel(self)
+        self._preview_win = ventana
+        self._preview_temp = temporal
         ventana.title(f"Vista previa · {origen.name}")
         ventana.configure(bg=BG)
         ventana.transient(self)
         cont = ttk.Frame(ventana, padding=14)
         cont.pack(fill="both", expand=True)
 
-        mini_a = self._miniatura(imagen_original, 380, 320)
-        mini_b = self._miniatura(imagen_convertida, 380, 320)
+        mini_a = self._miniatura(dato["imagen_original"], 380, 320)
+        mini_b = self._miniatura(dato["imagen_convertida"], 380, 320)
         lbl_a = tk.Label(cont, image=mini_a, bg=CARD, relief="flat")
         lbl_a.grid(row=0, column=0, padx=8, pady=8)
         lbl_b = tk.Label(cont, image=mini_b, bg=CARD, relief="flat")
         lbl_b.grid(row=0, column=1, padx=8, pady=8)
         ventana._miniaturas = (mini_a, mini_b)  # type: ignore[attr-defined]
 
-        peso_in = origen.stat().st_size / 1024
-        peso_out = destino.stat().st_size / 1024
-        ahorro = (1 - peso_out / peso_in) * 100 if peso_in else 0
+        tam_original = dato["tam_original"]
+        tam_convertida = dato["tam_convertida"]
+        peso_in = float(dato["peso_in"])
+        peso_out = float(dato["peso_out"])
+        ahorro = float(dato["ahorro"])
         ttk.Label(
             cont,
             text=f"Original\n{tam_original[0]}x{tam_original[1]} px\n{peso_in:.1f} KB",
@@ -3383,18 +3532,29 @@ class App(BaseTk):  # type: ignore[misc,valid-type]
         ttk.Label(
             cont,
             text=(
-                f"Resultado {job.formato}\n{tam_convertida[0]}x{tam_convertida[1]} px\n"
+                f"Resultado {dato['formato']}\n"
+                f"{tam_convertida[0]}x{tam_convertida[1]} px\n"
                 f"{peso_out:.1f} KB  ({ahorro:.1f} % menos)"
             ),
             style="TLabel",
             justify="center",
         ).grid(row=1, column=1, pady=(0, 8))
 
-        ttk.Button(
-            cont,
-            text="Cerrar",
-            command=lambda: (shutil.rmtree(temporal, ignore_errors=True), ventana.destroy()),
-        ).grid(row=2, column=0, columnspan=2, pady=(6, 0))
+        def cerrar() -> None:
+            if self._preview_temp == temporal:
+                self._preview_temp = None
+                shutil.rmtree(temporal, ignore_errors=True)
+            self._preview_win = None
+            try:
+                ventana.destroy()
+            except tk.TclError:
+                pass
+
+        ttk.Button(cont, text="Cerrar", command=cerrar).grid(
+            row=2, column=0, columnspan=2, pady=(6, 0)
+        )
+        ventana.protocol("WM_DELETE_WINDOW", cerrar)
+        self.lbl_status.configure(text="Vista previa lista.")
 
     def _center(self) -> None:
         self.update_idletasks()
@@ -3663,9 +3823,14 @@ class App(BaseTk):  # type: ignore[misc,valid-type]
             menu.add_command(label="(sin conversiones todavia)", state="disabled")
             return
         for i, h in enumerate(self.historial):
-            nombres = ", ".join(Path(p).name for p in h.get("sources", [])[:2])
-            if len(h.get("sources", [])) > 2:
-                nombres += f" +{len(h['sources']) - 2}"
+            fuentes = h.get("sources", [])
+            if not isinstance(fuentes, list):
+                fuentes = []
+            nombres = ", ".join(
+                Path(p).name for p in fuentes[:2] if isinstance(p, str)
+            )
+            if len(fuentes) > 2:
+                nombres += f" +{len(fuentes) - 2}"
             etiqueta = f"{h.get('fecha', '')}  ·  {nombres}  ({h.get('converted', 0)} img)"
             menu.add_command(label=etiqueta[:95], command=lambda i=i: self._repetir_historial(i))
         menu.add_separator()
@@ -3675,7 +3840,10 @@ class App(BaseTk):  # type: ignore[misc,valid-type]
         if not (0 <= indice < len(self.historial)):
             return
         h = self.historial[indice]
-        self.sources = [Path(p) for p in h.get("sources", []) if Path(p).exists()]
+        fuentes = h.get("sources", [])
+        if not isinstance(fuentes, list):
+            fuentes = []
+        self.sources = [Path(p) for p in fuentes if isinstance(p, str) and Path(p).exists()]
         if not self.sources:
             messagebox.showinfo(APP_NAME, "Los archivos de ese trabajo ya no existen.")
             return
@@ -4100,6 +4268,19 @@ class App(BaseTk):  # type: ignore[misc,valid-type]
                     )
                 elif tipo == "update_download_error":
                     self._fallo_actualizacion(str(dato))
+                elif tipo == "preview_ready":
+                    self._mostrar_vista_previa(dato)
+                elif tipo == "preview_error":
+                    temporal, error = dato
+                    if self._preview_temp == Path(temporal):
+                        self._preview_temp = None
+                    shutil.rmtree(Path(temporal), ignore_errors=True)
+                    self._preview_generando = False
+                    if not self._closing:
+                        self.lbl_status.configure(text="Listo.")
+                        messagebox.showerror(
+                            APP_NAME, f"No se pudo generar la vista previa:\n{error}"
+                        )
                 elif tipo == "done":
                     self._finish(dato)
         except queue.Empty:
@@ -4295,6 +4476,7 @@ class App(BaseTk):  # type: ignore[misc,valid-type]
         if event is not None and event.widget is not self:
             return
         self._closing = True
+        self._cerrar_vista_previa()
         if self._after_id is not None:
             try:
                 self.after_cancel(self._after_id)
@@ -4401,7 +4583,7 @@ class App(BaseTk):  # type: ignore[misc,valid-type]
 
         historial = data.get("historial")
         if isinstance(historial, list):
-            self.historial = [h for h in historial if isinstance(h, dict)][:10]
+            self.historial = [h for h in historial if _historial_valido(h)][:10]
         else:
             self.historial = []
 

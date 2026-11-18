@@ -7,6 +7,7 @@ import sys
 import tempfile
 import threading
 import unittest
+import zipfile
 from pathlib import Path
 
 from PIL import Image
@@ -116,6 +117,41 @@ class TestHEIC(Base):
         res = self.ejecutar(cw.Job(sources=[ruta], output_dir=self.tmp / "out"))
         self.assertEqual(res.converted, 1)
         self.assertTrue((self.tmp / "out" / "foto.webp").exists())
+
+
+class TestRobustez(Base):
+    def test_historial_valido(self):
+        self.assertFalse(cw._historial_valido({"sources": 5}))
+        self.assertFalse(cw._historial_valido({"sources": ["a"], "ajustes": 5}))
+        self.assertTrue(
+            cw._historial_valido(
+                {"sources": ["a"], "output_dir": "x", "ajustes": {}}
+            )
+        )
+
+    def test_zip_limite(self):
+        zip_path = self.tmp / "bomba.zip"
+        with zipfile.ZipFile(zip_path, "w") as z:
+            z.writestr("a.txt", "A" * 100)
+        destino = self.tmp / "destino"
+        destino.mkdir()
+        anterior = cw.MAX_EXTRACCION_BYTES
+        cw.MAX_EXTRACCION_BYTES = 10
+        try:
+            with self.assertRaises(cw.ErrorExtraccionSegura):
+                cw.extract_zip_builtin(zip_path, destino)
+        finally:
+            cw.MAX_EXTRACCION_BYTES = anterior
+
+    def test_zip_traversal(self):
+        zip_path = self.tmp / "traversal.zip"
+        with zipfile.ZipFile(zip_path, "w") as z:
+            z.writestr("../fuera.txt", "X")
+        destino = self.tmp / "destino2"
+        destino.mkdir()
+        with self.assertRaises(cw.ErrorExtraccionSegura):
+            cw.extract_zip_builtin(zip_path, destino)
+        self.assertFalse((self.tmp / "fuera.txt").exists())
 
 
 if __name__ == "__main__":
