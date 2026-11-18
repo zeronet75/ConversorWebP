@@ -1399,6 +1399,7 @@ struct Options {
     bool flatten = false;
     COLORREF color = RGB(255, 255, 255);
     bool apagar = false;
+    bool preservar_fecha = false;
 };
 
 struct Preset {
@@ -1434,6 +1435,7 @@ static std::wstring serializar_opciones(const Options& o) {
       << L"|flatten=" << (o.flatten ? 1 : 0)
       << L"|color=" << (unsigned long)o.color
       << L"|apagar=" << (o.apagar ? 1 : 0)
+      << L"|fecha=" << (o.preservar_fecha ? 1 : 0)
       << L"|salida=" << o.salida
       << L"|zipnombre=" << o.zip_nombre
       << L"|patron=" << o.patron
@@ -1481,6 +1483,7 @@ static Options deserializar_opciones(const std::wstring& texto) {
         else if (clave == L"flatten") o.flatten = _wtoi(valor.c_str()) != 0;
         else if (clave == L"color") o.color = (COLORREF)wcstoul(valor.c_str(), nullptr, 10);
         else if (clave == L"apagar") o.apagar = _wtoi(valor.c_str()) != 0;
+        else if (clave == L"fecha") o.preservar_fecha = _wtoi(valor.c_str()) != 0;
         else if (clave == L"salida") o.salida = valor;
         else if (clave == L"zipnombre") o.zip_nombre = valor;
         else if (clave == L"patron") o.patron = valor;
@@ -1567,6 +1570,7 @@ static HWND g_tip_control = nullptr;
 static DWORD g_tip_inicio = 0;
 static std::wstring g_tip_texto_actual;static HWND g_edit_patron = nullptr;
 static HWND g_check_dry = nullptr;
+static HWND g_check_fecha = nullptr;
 static HWND g_check_flatten = nullptr;
 static HWND g_btn_color = nullptr;
 static HWND g_check_apagar = nullptr;
@@ -1890,7 +1894,7 @@ enum {
     ID_MENU_UPDATE, ID_MENU_WATCH, ID_MENU_PREVIEW,
     ID_ADD_ARCHIVE = 3901, ID_PATTERN_HELP = 3902, ID_SCROLL_ORIGEN = 3904,
     ID_TEMA = 3910, ID_PAUSA = 3911, ID_RETRY = 3912,
-    ID_ORIGEN_UP = 3913, ID_ORIGEN_DOWN = 3914,
+    ID_ORIGEN_UP = 3913, ID_ORIGEN_DOWN = 3914, ID_FECHA = 3915,
     ID_SECTION_ORIGEN = 1105, ID_LBL_EXTRACTOR = 1106,
     ID_HIST_BASE = 40000, ID_HIST_CLEAR = 40050
 };
@@ -2601,6 +2605,7 @@ static void cargar_config() {
     g_opt.flatten = GetPrivateProfileIntW(L"opciones", L"flatten", 0, g_ini.c_str()) != 0;
     g_opt.color = (COLORREF)GetPrivateProfileIntW(L"opciones", L"color", RGB(255, 255, 255), g_ini.c_str());
     g_opt.apagar = GetPrivateProfileIntW(L"opciones", L"apagar", 0, g_ini.c_str()) != 0;
+    g_opt.preservar_fecha = GetPrivateProfileIntW(L"opciones", L"fecha", 0, g_ini.c_str()) != 0;
     std::wstring zn_defecto = L"webp_" + fecha_zip() + L".zip";
     wchar_t zn[MAX_PATH];
     GetPrivateProfileStringW(L"opciones", L"zipnombre", zn_defecto.c_str(), zn, MAX_PATH,
@@ -2680,6 +2685,7 @@ static void guardar_config() {
     swprintf_s(buf, L"%lu", (unsigned long)g_opt.color);
     WritePrivateProfileStringW(L"opciones", L"color", buf, g_ini.c_str());
     WritePrivateProfileStringW(L"opciones", L"apagar", g_opt.apagar ? L"1" : L"0", g_ini.c_str());
+    WritePrivateProfileStringW(L"opciones", L"fecha", g_opt.preservar_fecha ? L"1" : L"0", g_ini.c_str());
     WritePrivateProfileStringW(L"opciones", L"tema", g_oscuro ? L"1" : L"0", g_ini.c_str());
     WritePrivateProfileStringW(L"opciones", L"salida", g_opt.salida.c_str(), g_ini.c_str());
     WritePrivateProfileStringW(L"opciones", L"zipnombre", g_opt.zip_nombre.c_str(), g_ini.c_str());
@@ -2925,6 +2931,12 @@ static bool reemplazar_archivo(const fs::path& parcial, const fs::path& destino)
     std::error_code ec;
     fs::remove(parcial, ec);
     return false;
+}
+
+static void copiar_fecha(const fs::path& origen, const fs::path& destino) {
+    std::error_code ec;
+    auto fecha = fs::last_write_time(origen, ec);
+    if (!ec) fs::last_write_time(destino, fecha, ec);
 }
 
 static bool ejecutar_oculto(const std::wstring& comando) {
@@ -3312,6 +3324,8 @@ static void hilo_conversion(Options opt_trabajo, std::vector<std::wstring> orige
                     }
                     if (escrito) {
                         escrito = reemplazar_archivo(parcial, t.dst);
+                        if (escrito && opt_trabajo.preservar_fecha)
+                            copiar_fecha(t.src, t.dst);
                     }
                     if (!escrito) {
                         std::error_code ec_limpieza;
@@ -3541,6 +3555,8 @@ static void hilo_vigilante(std::wstring carpeta, Options opt,
                     }
                     if (escrito) {
                         escrito = reemplazar_archivo(parcial, dst);
+                        if (escrito && opt.preservar_fecha)
+                            copiar_fecha(src, dst);
                     }
                     if (!escrito) {
                         std::error_code ec_limpieza;
@@ -3696,6 +3712,7 @@ static void aplicar_opciones_controles(const Options& o, bool incluir_salida) {
     g_ui_beep = o.beep;
     if (g_check_beep) InvalidateRect(g_check_beep, nullptr, TRUE);
     if (g_check_dry) SendMessageW(g_check_dry, BM_SETCHECK, o.dry_run ? BST_CHECKED : BST_UNCHECKED, 0);
+    if (g_check_fecha) SendMessageW(g_check_fecha, BM_SETCHECK, o.preservar_fecha ? BST_CHECKED : BST_UNCHECKED, 0);
     if (g_check_flatten) SendMessageW(g_check_flatten, BM_SETCHECK, o.flatten ? BST_CHECKED : BST_UNCHECKED, 0);
     g_ui_apagar = o.apagar;
     if (g_check_apagar) InvalidateRect(g_check_apagar, nullptr, TRUE);
@@ -3744,6 +3761,7 @@ static Options leer_opciones_controles() {
     if (g_check_csv) o.csv = SendMessageW(g_check_csv, BM_GETCHECK, 0, 0) == BST_CHECKED;
     o.beep = g_ui_beep;
     if (g_check_dry) o.dry_run = SendMessageW(g_check_dry, BM_GETCHECK, 0, 0) == BST_CHECKED;
+    if (g_check_fecha) o.preservar_fecha = SendMessageW(g_check_fecha, BM_GETCHECK, 0, 0) == BST_CHECKED;
     if (g_check_flatten) o.flatten = SendMessageW(g_check_flatten, BM_GETCHECK, 0, 0) == BST_CHECKED;
     o.apagar = g_ui_apagar;
     if (g_edit_objetivo) {
@@ -4788,6 +4806,7 @@ static void crear_tooltips() {
     add(g_check_csv, L"Guarda un CSV con el peso original, final y el ahorro de cada archivo.");
     add(g_edit_patron, L"Patrón de nombre. Vacío conserva el original. Ej.: {nombre}_{ancho}x{alto}.");
     add(g_check_dry, L"Calcula el peso estimado sin escribir ninguna imagen.");
+    add(g_check_fecha, L"Conserva la fecha de modificación original en el archivo convertido.");
     add(g_combo_preset, L"Aplica una combinación guardada de calidad y tamaño.");
     add(g_btn_save_preset, L"Guarda los ajustes actuales como preset propio.");
     add(g_btn_del_preset, L"Borra el preset propio seleccionado.");
@@ -5775,8 +5794,10 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             etiqueta(L"Nombre de salida", 28, 524, 100, 20, 1103);
             g_edit_patron = edit(124, 522, 320, 24, ID_PATRON, g_opt.patron.c_str());
             g_btn_pattern_help = boton(L"?", 450, 520, 30, 24, ID_PATTERN_HELP);
-            g_check_dry = check(L"Solo analizar (no escribir archivos)", 28, 564, 300, 20,
+            g_check_dry = check(L"Solo analizar (no escribir archivos)", 28, 587, 300, 20,
                                 ID_DRY, g_opt.dry_run);
+            g_check_fecha = check(L"Conservar fecha original", 28, 564, 300, 20,
+                                  ID_FECHA, g_opt.preservar_fecha);
 
             // 3. Calidad
             etiqueta(L"3. Calidad y opciones", 513, 313, 300, 20, 1200, g_font_section);

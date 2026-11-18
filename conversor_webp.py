@@ -652,6 +652,7 @@ class Job:
     gpu_forzar: bool = False    # usar GPU aunque el lote sea pequeño
     name_pattern: str = ""      # patron de nombre; vacio = nombre original
     dry_run: bool = False       # solo analizar: no escribe archivos
+    preservar_extra: bool = False  # conservar EXIF/XMP y fecha original
 
 
 @dataclass
@@ -1056,6 +1057,13 @@ def _codificar(
 
     if icc_salida:
         opciones["icc_profile"] = icc_salida
+    if job.preservar_extra:
+        exif = im.info.get("exif")
+        xmp = im.info.get("xmp")
+        if exif:
+            opciones["exif"] = exif
+        if xmp:
+            opciones["xmp"] = xmp
 
     if job.target_kb > 0 and not job.lossless:
         datos, nota = _encode_ajustando_peso(im, formato, opciones, job.target_kb, job.quality)
@@ -1085,6 +1093,16 @@ def _codificar(
             pass
         raise
     return aviso, len(datos)
+
+
+def _aplicar_fecha(src: Path, dst: Path, job: Job) -> None:
+    if not job.preservar_extra or job.dry_run:
+        return
+    try:
+        st = src.stat()
+        os.utime(dst, (st.st_atime, st.st_mtime))
+    except OSError:
+        pass
 
 
 def _convertir_animado_webp(
@@ -1129,6 +1147,13 @@ def _convertir_animado_webp(
     icc = im.info.get("icc_profile")
     if icc:
         opciones["icc_profile"] = icc
+    if job.preservar_extra:
+        exif = im.info.get("exif")
+        xmp = im.info.get("xmp")
+        if exif:
+            opciones["exif"] = exif
+        if xmp:
+            opciones["xmp"] = xmp
     buffer = io.BytesIO()
     imagenes[0].save(buffer, "WEBP", **opciones)
     datos = buffer.getvalue()
@@ -1148,6 +1173,7 @@ def _convertir_animado_webp(
             except OSError:
                 pass
             raise
+        _aplicar_fecha(src, dst, job)
     return src.stat().st_size, tam_out, aviso
 
 
@@ -1155,6 +1181,7 @@ def convert_one(src: Path, dst: Path, job: Job) -> tuple[int, int, str]:
     """Convierte una imagen. Devuelve (bytes_in, bytes_out, aviso)."""
     resultado_gpu = convertir_jpeg_gpu(src, dst, job)
     if resultado_gpu is not None:
+        _aplicar_fecha(src, dst, job)
         return resultado_gpu
 
     aviso = ""
@@ -1218,6 +1245,7 @@ def convert_one(src: Path, dst: Path, job: Job) -> tuple[int, int, str]:
 
         aviso, tam_out = _codificar(im, dst, job, icc_salida, aviso)
 
+    _aplicar_fecha(src, dst, job)
     return src.stat().st_size, tam_out, aviso
 
 
@@ -2008,6 +2036,7 @@ class App(BaseTk):  # type: ignore[misc,valid-type]
         self.gpu_forzar_var = tk.BooleanVar(value=False)
         self.name_pattern = tk.StringVar(value="")
         self.dry_run = tk.BooleanVar(value=False)
+        self.preservar_extra = tk.BooleanVar(value=False)
         self.apagar = tk.BooleanVar(value=False)
 
         self.queue: queue.Queue = queue.Queue()
@@ -2588,6 +2617,12 @@ class App(BaseTk):  # type: ignore[misc,valid-type]
             self.csv_report,
         )
         self.chk_csv.pack(anchor="w", pady=(6, 0))
+        self.chk_extra = self._crear_check(
+            card_out,
+            "Conservar metadatos (EXIF/XMP) y fecha original",
+            self.preservar_extra,
+        )
+        self.chk_extra.pack(anchor="w", pady=(3, 0))
 
         fila_nombre = ttk.Frame(card_out, style="Card.TFrame")
         fila_nombre.pack(fill="x", pady=(6, 0))
@@ -2840,6 +2875,7 @@ class App(BaseTk):  # type: ignore[misc,valid-type]
             "entry_zip": "Nombre del ZIP que se creará en la carpeta de salida.",
             "cmb_formato": "Formato de salida: WebP (compatible) o AVIF (pesa menos).",
             "chk_csv": "Guarda un CSV con el peso original, final y el ahorro de cada archivo.",
+            "chk_extra": "Conserva EXIF/XMP (incluida la ubicación GPS) y la fecha del archivo original.",
             "entry_patron": "Patrón de nombre. Vacío conserva el original. Ej.: {nombre}_{ancho}x{alto}.",
             "btn_patron_ayuda": "Ver los marcadores disponibles para el nombre de salida.",
             "chk_dry": "Calcula el peso estimado sin escribir ninguna imagen.",
@@ -3479,6 +3515,7 @@ class App(BaseTk):  # type: ignore[misc,valid-type]
             gpu_forzar=self.gpu_forzar_var.get(),
             name_pattern=self.name_pattern.get(),
             dry_run=analizar,
+            preservar_extra=self.preservar_extra.get(),
         )
 
     def _guardar_cola(self, job: Job) -> None:
@@ -3507,6 +3544,7 @@ class App(BaseTk):  # type: ignore[misc,valid-type]
                 "dry_run": job.dry_run,
                 "beep": bool(self.beep.get()),
                 "apagar_al_terminar": bool(self.apagar.get()),
+                "preservar_extra": job.preservar_extra,
             },
         }
         try:
@@ -3597,6 +3635,7 @@ class App(BaseTk):  # type: ignore[misc,valid-type]
         self.beep.set(bool(ajustes.get("beep", True)))
         self.apagar.set(bool(ajustes.get("apagar_al_terminar", False)))
         self.zip_name.set(str(ajustes.get("zip_name", "") or ""))
+        self.preservar_extra.set(bool(ajustes.get("preservar_extra", False)))
         self._on_dry_run()
         self._on_formato()
         self._refrescar_gpu_ui()
@@ -4031,6 +4070,7 @@ class App(BaseTk):  # type: ignore[misc,valid-type]
                 "zip_name": self.zip_name.get(),
                 "formato": self.formato.get(),
                 "csv_report": bool(self.csv_report.get()),
+                "preservar_extra": bool(self.preservar_extra.get()),
             }
         )
         return datos
@@ -4052,6 +4092,8 @@ class App(BaseTk):  # type: ignore[misc,valid-type]
                 )
             if "csv_report" in datos:
                 self.csv_report.set(bool(datos["csv_report"]))
+            if "preservar_extra" in datos:
+                self.preservar_extra.set(bool(datos["preservar_extra"]))
         finally:
             self._aplicando_preset = False
         self._aplicar_ajustes(datos)
@@ -4531,6 +4573,7 @@ class App(BaseTk):  # type: ignore[misc,valid-type]
             gpu_forzar=self.gpu_forzar_var.get(),
             name_pattern=self.name_pattern.get(),
             dry_run=analizar,
+            preservar_extra=self.preservar_extra.get(),
         )
 
         self._set_running(True)
@@ -5021,6 +5064,7 @@ class App(BaseTk):  # type: ignore[misc,valid-type]
         self.gpu_forzar_var.set(booleano("gpu_forzar", False))
         self.name_pattern.set(str(data.get("name_pattern", "") or ""))
         self.dry_run.set(booleano("dry_run", False))
+        self.preservar_extra.set(booleano("preservar_extra", False))
         self.buscar_actualizaciones = booleano("buscar_actualizaciones", True)
         self.ultima_comprobacion = str(data.get("ultima_comprobacion", "") or "")
         self.apagar.set(booleano("apagar_al_terminar", False))
@@ -5095,6 +5139,7 @@ class App(BaseTk):  # type: ignore[misc,valid-type]
                     "gpu_forzar": self.gpu_forzar_var.get(),
                     "name_pattern": self.name_pattern.get(),
                     "dry_run": self.dry_run.get(),
+                    "preservar_extra": self.preservar_extra.get(),
                     "buscar_actualizaciones": self.buscar_actualizaciones,
                     "ultima_comprobacion": self.ultima_comprobacion,
                     "apagar_al_terminar": self.apagar.get(),

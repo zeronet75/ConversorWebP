@@ -138,6 +138,23 @@ class TestAnimacion(Base):
             self.assertGreater(getattr(im, "n_frames", 1), 1)
 
 
+class TestMetadatos(Base):
+    def test_conservar_exif_y_fecha(self):
+        src = self.tmp / "meta.jpg"
+        dst = self.tmp / "meta.webp"
+        imagen = Image.new("RGB", (64, 64), (10, 100, 200))
+        exif = Image.Exif()
+        exif[271] = "TestCamera"
+        imagen.save(src, exif=exif)
+        hora = 1_600_000_000
+        os.utime(src, (hora, hora))
+        job = cw.Job(sources=[src], output_dir=self.tmp, preservar_extra=True)
+        cw.convert_one(src, dst, job)
+        with Image.open(dst) as salida:
+            self.assertEqual(salida.getexif().get(271), "TestCamera")
+        self.assertAlmostEqual(dst.stat().st_mtime, hora, delta=3)
+
+
 class TestRobustez(Base):
     def test_historial_valido(self):
         self.assertFalse(cw._historial_valido({"sources": 5}))
