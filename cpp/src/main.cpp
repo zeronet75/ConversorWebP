@@ -719,6 +719,156 @@ static bool decodificar_avif(const std::wstring& ruta, Bitmap& bmp, std::wstring
     return decodificar_avif_datos(datos, bmp, error);
 }
 
+static bool decodificar_wic_animado(IWICImagingFactory* factory, const std::wstring& ruta,
+                                    std::vector<Bitmap>& frames,
+                                    std::vector<int>& duraciones,
+                                    std::wstring& error) {
+    ComPtr<IWICBitmapDecoder> decoder;
+    HRESULT hr = factory->CreateDecoderFromFilename(ruta.c_str(), nullptr, GENERIC_READ,
+                                                    WICDecodeMetadataCacheOnLoad, &decoder);
+    if (FAILED(hr)) { error = L"no se pudo abrir el archivo"; return false; }
+    UINT total = 0;
+    if (FAILED(decoder->GetFrameCount(&total)) || total < 2 || total > 1000)
+        return false;
+    for (UINT i = 0; i < total; i++) {
+        ComPtr<IWICBitmapFrameDecode> frame;
+        if (FAILED(decoder->GetFrame(i, &frame))) return false;
+        UINT w = 0, h = 0;
+        if (FAILED(frame->GetSize(&w, &h)) || w == 0 || h == 0) return false;
+        if ((uint64_t)w * h > 120000000ull) {
+            error = L"imagen animada demasiado grande";
+            return false;
+        }
+        ComPtr<IWICFormatConverter> conv;
+        if (FAILED(factory->CreateFormatConverter(&conv))) return false;
+        if (FAILED(conv->Initialize(frame.Get(), GUID_WICPixelFormat32bppBGRA,
+                                    WICBitmapDitherTypeNone, nullptr, 0.0,
+                                    WICBitmapPaletteTypeCustom)))
+            return false;
+        Bitmap bmp;
+        bmp.w = w;
+        bmp.h = h;
+        bmp.rgba.resize((size_t)w * h * 4);
+        if (FAILED(conv->CopyPixels(nullptr, w * 4, (UINT)bmp.rgba.size(),
+                                    bmp.rgba.data())))
+            return false;
+        bmp.alfa = false;
+        for (size_t px = 0; px < (size_t)w * h; px++) {
+            if (bmp.rgba[px * 4 + 3] < 255) { bmp.alfa = true; break; }
+        }
+        int duracion = 100;
+        ComPtr<IWICMetadataQueryReader> meta;
+        if (SUCCEEDED(frame->GetMetadataQueryReader(&meta))) {
+            PROPVARIANT v;
+            PropVariantInit(&v);
+            if (SUCCEEDED(meta->GetMetadataByName(L"/grctlext/Delay", &v)) &&
+                v.vt == VT_UI2 && v.uiVal > 0)
+                duracion = (int)v.uiVal * 10;
+            else if (SUCCEEDED(meta->GetMetadataByName(L"/Delay", &v)) &&
+                     v.vt == VT_UI2 && v.uiVal > 0)
+                duracion = (int)v.uiVal * 10;
+            PropVariantClear(&v);
+        }
+        frames.push_back(std::move(bmp));
+        duraciones.push_back(std::clamp(duracion, 10, 10000));
+    }
+    return frames.size() > 1;
+}
+
+static void aplanar_bitmap(Bitmap& bmp, COLORREF color) {
+    if (!bmp.alfa) return;
+    BYTE fr = GetRValue(color), fg = GetGValue(color), fb = GetBValue(color);
+    for (size_t px = 0; px < (size_t)bmp.w * bmp.h; px++) {
+        uint8_t* p = bmp.rgba.data() + px * 4;
+        unsigned a = p[3];
+        p[0] = (uint8_t)((p[0] * a + fr * (255 - a)) / 255);
+        p[1] = (uint8_t)((p[1] * a + fg * (255 - a)) / 255);
+        p[2] = (uint8_t)((p[2] * a + fb * (255 - a)) / 255);
+        p[3] = 255;
+    }
+    bmp.alfa = false;
+}
+
+static std::vector<uint8_t> codificar_webp_animado(
+    const std::vector<Bitmap>& frames, const std::vector<int>& duraciones,
+    int calidad, int metodo, bool sin_perdida, std::wstring& error) {
+    if (frames.empty()) return {};
+    int w = (int)frames[0].w, h = (int)frames[0].h;
+    WebPAnimEncoderOptions eopt;
+    if (!WebPAnimEncoderOptionsInit(&eopt)) { error = L"WebPAnimEncoderOptionsInit"; return {}; }
+    eopt.minimize_size = 1;
+    WebPAnimEncoder* enc = WebPAnimEncoderNew(w, h, &eopt);
+    if (!enc) { error = L"WebPAnimEncoderNew"; return {}; }
+    int timestamp = 0;
+    for (size_t i = 0; i < frames.size(); i++) {
+        const Bitmap& f = frames[i];
+        if ((int)f.w != w || (int)f.h != h) {
+            error = L"fotogramas con tamanos distintos";
+            WebPAnimEncoderDelete(enc);
+            return {};
+        }
+        WebPConfig config;
+        if (!WebPConfigInit(&config)) {
+            error = L"WebPConfigInit";
+            WebPAnimEncoderDelete(enc);
+            return {};
+        }
+        config.quality = (float)std::clamp(calidad, 1, 100);
+        config.method = std::clamp(metodo, 0, 6);
+        config.lossless = sin_perdida ? 1 : 0;
+        config.exact = sin_perdida ? 1 : (f.alfa ? 1 : 0);
+        config.alpha_quality = 100;
+        config.alpha_compression = 1;
+        config.alpha_filtering = 1;
+        WebPPicture pic;
+        if (!WebPPictureInit(&pic)) {
+            error = L"WebPPictureInit";
+            WebPAnimEncoderDelete(enc);
+            return {};
+        }
+        pic.width = w;
+        pic.height = h;
+        pic.use_argb = 1;
+        std::vector<uint8_t> rgb;
+        bool ok;
+        if (f.alfa) {
+            ok = WebPPictureImportRGBA(&pic, f.rgba.data(), w * 4) != 0;
+        } else {
+            rgb.resize((size_t)w * h * 3);
+            for (size_t px = 0; px < (size_t)w * h; px++) {
+                rgb[px * 3 + 0] = f.rgba[px * 4 + 0];
+                rgb[px * 3 + 1] = f.rgba[px * 4 + 1];
+                rgb[px * 3 + 2] = f.rgba[px * 4 + 2];
+            }
+            ok = WebPPictureImportRGB(&pic, rgb.data(), w * 3) != 0;
+        }
+        if (!ok || !WebPAnimEncoderAdd(enc, &pic, timestamp, &config)) {
+            error = L"fallo al anadir fotograma WebP";
+            WebPPictureFree(&pic);
+            WebPAnimEncoderDelete(enc);
+            return {};
+        }
+        WebPPictureFree(&pic);
+        timestamp += duraciones[i];
+    }
+    if (!WebPAnimEncoderAdd(enc, nullptr, timestamp, nullptr)) {
+        error = L"fallo al cerrar la animacion WebP";
+        WebPAnimEncoderDelete(enc);
+        return {};
+    }
+    WebPData data;
+    WebPDataInit(&data);
+    if (!WebPAnimEncoderAssemble(enc, &data) || !data.bytes || data.size == 0) {
+        error = L"fallo al ensamblar la animacion WebP";
+        WebPAnimEncoderDelete(enc);
+        return {};
+    }
+    std::vector<uint8_t> salida(data.bytes, data.bytes + data.size);
+    WebPDataClear(&data);
+    WebPAnimEncoderDelete(enc);
+    return salida;
+}
+
 static bool decodificar_imagen(IWICImagingFactory* factory, const std::wstring& ruta,
                                Bitmap& bmp, std::wstring& error) {
     std::wstring ext = lower(fs::path(ruta).extension().wstring());
@@ -2972,6 +3122,38 @@ static bool procesar_imagen(IWICImagingFactory* factory, const Tarea& t, const O
     if (bmp.frames > 1)
         nota_anim = L"animada (" + std::to_wstring(bmp.frames) +
                     L" fotogramas), se usa el primero";
+
+    if (bmp.frames > 1 && opt.formato == L"WEBP") {
+        std::vector<Bitmap> fotogramas;
+        std::vector<int> duraciones;
+        if (decodificar_wic_animado(factory, t.src.wstring(), fotogramas, duraciones,
+                                    error)) {
+            std::vector<Bitmap> finales;
+            finales.reserve(fotogramas.size());
+            for (auto& frame : fotogramas) {
+                Bitmap reducido;
+                if (!redimensionar_lanczos(frame, opt.max_dim, reducido, error))
+                    return false;
+                if (opt.flatten) aplanar_bitmap(reducido, opt.color);
+                finales.push_back(std::move(reducido));
+            }
+            auto datos_anim = codificar_webp_animado(finales, duraciones, opt.calidad,
+                                                     opt.metodo, opt.sin_perdida, error);
+            if (datos_anim.empty()) return false;
+            datos = std::move(datos_anim);
+            double kb_in = (double)tam_in / 1024.0;
+            double kb_out = (double)datos.size() / 1024.0;
+            fila.kb_in = kb_in;
+            fila.kb_out = kb_out;
+            fila.ahorro = kb_in > 0 ? (1.0 - kb_out / kb_in) * 100.0 : 0;
+            fila.estado = opt.dry_run ? L"analizada" : L"convertida";
+            fila.ruta = opt.dry_run ? t.src.wstring() : t.dst.wstring();
+            fila.nota = L"animada (" + std::to_wstring(finales.size()) + L" fotogramas)";
+            if (opt.objetivo_kb > 0)
+                fila.nota += L"; el peso maximo no se aplica a animados";
+            return true;
+        }
+    }
 
     Bitmap final;
     if (!redimensionar_lanczos(bmp, opt.max_dim, final, error)) return false;

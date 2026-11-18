@@ -119,6 +119,25 @@ class TestHEIC(Base):
         self.assertTrue((self.tmp / "out" / "foto.webp").exists())
 
 
+class TestAnimacion(Base):
+    def test_gif_animado_a_webp(self):
+        src = self.tmp / "anim.gif"
+        frames = [Image.new("RGB", (80, 60), (i * 60, 40, 120)) for i in range(3)]
+        frames[0].save(
+            src,
+            save_all=True,
+            append_images=frames[1:],
+            duration=[100, 120, 140],
+            loop=0,
+        )
+        dst = self.tmp / "anim.webp"
+        job = cw.Job(sources=[src], output_dir=self.tmp, quality=80, method=4)
+        _entrada, _salida, aviso = cw.convert_one(src, dst, job)
+        self.assertIn("animada", aviso)
+        with Image.open(dst) as im:
+            self.assertGreater(getattr(im, "n_frames", 1), 1)
+
+
 class TestRobustez(Base):
     def test_historial_valido(self):
         self.assertFalse(cw._historial_valido({"sources": 5}))

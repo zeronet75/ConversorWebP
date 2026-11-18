@@ -1087,6 +1087,70 @@ def _codificar(
     return aviso, len(datos)
 
 
+def _convertir_animado_webp(
+    src: Path, dst: Path, job: Job, im: Image.Image
+) -> tuple[int, int, str]:
+    """Convierte un GIF/WebP animado a WebP animado."""
+    fotogramas = getattr(im, "n_frames", 1)
+    duraciones: list[int] = []
+    imagenes: list[Image.Image] = []
+    tiene_alfa = False
+    for i in range(fotogramas):
+        im.seek(i)
+        frame = im.convert("RGBA")
+        if job.max_dimension and max(frame.size) > job.max_dimension:
+            frame.thumbnail((job.max_dimension, job.max_dimension), Image.LANCZOS)
+        if frame.getchannel("A").getextrema()[0] < 255:
+            tiene_alfa = True
+        imagenes.append(frame)
+        duraciones.append(max(10, int(im.info.get("duration", 100) or 100)))
+    if job.flatten:
+        fondo_rgb = hex_to_rgb(job.background)
+        planas: list[Image.Image] = []
+        for frame in imagenes:
+            fondo = Image.new("RGB", frame.size, fondo_rgb)
+            fondo.paste(frame, mask=frame.getchannel("A"))
+            planas.append(fondo)
+        imagenes = planas
+        tiene_alfa = False
+    elif not tiene_alfa:
+        imagenes = [frame.convert("RGB") for frame in imagenes]
+    opciones: dict = {
+        "quality": job.quality,
+        "method": job.method,
+        "lossless": job.lossless,
+        "duration": duraciones,
+        "loop": int(im.info.get("loop", 0) or 0),
+        "save_all": True,
+        "append_images": imagenes[1:],
+    }
+    if tiene_alfa and not job.lossless:
+        opciones["exact"] = True
+    icc = im.info.get("icc_profile")
+    if icc:
+        opciones["icc_profile"] = icc
+    buffer = io.BytesIO()
+    imagenes[0].save(buffer, "WEBP", **opciones)
+    datos = buffer.getvalue()
+    aviso = f"animada ({fotogramas} fotogramas)"
+    if job.target_kb > 0:
+        aviso += "; el peso maximo no se aplica a animados"
+    tam_out = len(datos)
+    if not job.dry_run:
+        dst.parent.mkdir(parents=True, exist_ok=True)
+        temporal = dst.with_name(dst.name + ".tmp")
+        try:
+            temporal.write_bytes(datos)
+            os.replace(temporal, dst)
+        except Exception:
+            try:
+                temporal.unlink(missing_ok=True)
+            except OSError:
+                pass
+            raise
+    return src.stat().st_size, tam_out, aviso
+
+
 def convert_one(src: Path, dst: Path, job: Job) -> tuple[int, int, str]:
     """Convierte una imagen. Devuelve (bytes_in, bytes_out, aviso)."""
     resultado_gpu = convertir_jpeg_gpu(src, dst, job)
@@ -1096,8 +1160,10 @@ def convert_one(src: Path, dst: Path, job: Job) -> tuple[int, int, str]:
     aviso = ""
     with Image.open(src) as im:
         fotogramas = getattr(im, "n_frames", 1)
+        if fotogramas > 1 and str(job.formato).upper() != "AVIF":
+            return _convertir_animado_webp(src, dst, job, im)
         if fotogramas > 1:
-            aviso = f"animada ({fotogramas} fotogramas), se usa el primero"
+            aviso = f"animada ({fotogramas} fotogramas), AVIF usa el primero"
         im.seek(0)
         im.load()
 
