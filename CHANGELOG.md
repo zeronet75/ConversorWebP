@@ -6,6 +6,21 @@ Todos los cambios relevantes del proyecto. Formato basado en
 
 ---
 
+## [2.9.1] — 2026-11-18
+
+### Añadido
+
+- **Menú contextual moderno de Windows 11** mediante la DLL COM `ConversorWebPContext.dll`.
+- Tarea opcional en el instalador C++ y scripts `INSTALAR_MENU_MODERNO.bat` / `QUITAR_MENU_MODERNO.bat` para la versión portable.
+- La extensión solo lanza `ConversorWebPC.exe` con las rutas seleccionadas; no contiene lógica de conversión.
+
+### Pendiente
+
+- Traducción completa al inglés.
+- DPI nítido por monitor; se mantiene el escalado GDI.
+
+---
+
 ## [2.9.0] — 2026-11-18
 
 ### Añadido
@@ -328,6 +343,7 @@ Todos los cambios relevantes del proyecto. Formato basado en
 - Conservación de transparencia, perfil ICC y orientación EXIF.
 - Modo consola básico.
 
+[2.9.1]: #291--2026-11-18
 [2.9.0]: #290--2026-11-18
 [2.8.0]: #280--2026-11-18
 [2.7.0]: #270--2026-11-18

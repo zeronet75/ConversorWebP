@@ -1,5 +1,5 @@
 param(
-    [string]$Version = "2.9.0"
+    [string]$Version = "2.9.1"
 )
 
 $ErrorActionPreference = "Stop"
@@ -22,11 +22,15 @@ foreach ($extra in @("LEEME.txt", "ConversorWebPC.exe.manifest")) {
     $ruta = Join-Path $bin $extra
     if (Test-Path $ruta) { Copy-Item $ruta $stage }
 }
-foreach ($dll in @("7zr.exe")) {
+foreach ($dll in @("7zr.exe", "ConversorWebPContext.dll")) {
     $ruta = Join-Path $bin $dll
     if (Test-Path $ruta) { Copy-Item $ruta $stage }
 }
 Copy-Item (Join-Path $root "README.md") (Join-Path $stage "LEEME_C++.md")
+foreach ($script in @("INSTALAR_MENU_MODERNO.bat", "QUITAR_MENU_MODERNO.bat")) {
+    $ruta = Join-Path $root "installer\$script"
+    if (Test-Path $ruta) { Copy-Item $ruta $stage }
+}
 if (Test-Path (Join-Path $root "BENCHMARK.md")) {
     Copy-Item (Join-Path $root "BENCHMARK.md") $stage
 }

@@ -1,9 +1,9 @@
 ; Instalador de Conversor WebP C++ (Inno Setup 6)
 ; Compilar con: ISCC.exe installer\ConversorWebPC.iss
-; Genera dist\ConversorWebPC-2.9.0-setup.exe
+; Genera dist\ConversorWebPC-2.9.1-setup.exe
 
 #define MiApp "Conversor WebP C++"
-#define MiVersion "2.9.0"
+#define MiVersion "2.9.1"
 #define MiExe "ConversorWebPC.exe"
 
 [Setup]
@@ -29,6 +29,7 @@ Name: "spanish"; MessagesFile: "compiler:Languages\Spanish.isl"
 
 [Tasks]
 Name: "contextmenu"; Description: "Anadir 'Convertir a WebP' al menu contextual"; GroupDescription: "Integracion con Windows:"; Flags: unchecked
+Name: "modernmenu"; Description: "Menu contextual moderno de Windows 11"; GroupDescription: "Integracion con Windows:"; Flags: unchecked
 Name: "sendto"; Description: "Crear acceso en 'Enviar a'"; GroupDescription: "Integracion con Windows:"; Flags: unchecked
 Name: "desktopicon"; Description: "Crear un acceso directo en el escritorio"; GroupDescription: "Accesos directos:"; Flags: unchecked
 
@@ -39,6 +40,7 @@ Source: "..\bin\icon.ico"; DestDir: "{app}"; Flags: ignoreversion
 Source: "..\bin\7zr.exe"; DestDir: "{app}"; Flags: ignoreversion skipifsourcedoesntexist
 Source: "..\bin\LEEME.txt"; DestDir: "{app}"; Flags: ignoreversion
 Source: "..\bin\ConversorWebPC.exe.manifest"; DestDir: "{app}"; Flags: ignoreversion skipifsourcedoesntexist
+Source: "..\bin\ConversorWebPContext.dll"; DestDir: "{app}"; Flags: ignoreversion skipifsourcedoesntexist
 Source: "..\README.md"; DestDir: "{app}"; DestName: "LEEME_C++.md"; Flags: ignoreversion isreadme
 Source: "..\BENCHMARK.md"; DestDir: "{app}"; Flags: ignoreversion skipifsourcedoesntexist
 
@@ -50,9 +52,11 @@ Name: "{autodesktop}\{#MiApp}"; Filename: "{app}\{#MiExe}"; Tasks: desktopicon
 
 [Run]
 Filename: "{app}\{#MiExe}"; Parameters: "--install-context"; Tasks: contextmenu; Flags: runhidden nowait
+Filename: "{sys}\regsvr32.exe"; Parameters: "/s ""{app}\ConversorWebPContext.dll"""; Tasks: modernmenu; Flags: runhidden
 Filename: "{app}\{#MiExe}"; Parameters: "--install-sendto"; Tasks: sendto; Flags: runhidden nowait
 Filename: "{app}\{#MiExe}"; Description: "Iniciar {#MiApp}"; Flags: nowait postinstall skipifsilent
 
 [UninstallRun]
 Filename: "{app}\{#MiExe}"; Parameters: "--uninstall-context"; RunOnceId: "QuitarContexto"; Flags: runhidden
+Filename: "{sys}\regsvr32.exe"; Parameters: "/s /u ""{app}\ConversorWebPContext.dll"""; RunOnceId: "QuitarMenuModerno"; Flags: runhidden
 Filename: "{app}\{#MiExe}"; Parameters: "--uninstall-sendto"; RunOnceId: "QuitarSendTo"; Flags: runhidden

@@ -40,6 +40,9 @@ cl /nologo /std:c++20 /EHsc /O2 /MT /DUNICODE /D_UNICODE /utf-8 /wd5033 ^
    shell32.lib user32.lib gdi32.lib advapi32.lib uxtheme.lib propsys.lib
 if errorlevel 1 exit /b 1
 
+call "%RAIZ%build_explorer.bat"
+if errorlevel 1 exit /b 1
+
 copy /y "%RAIZ%MANUAL_DE_USO.html" "%RAIZ%bin\" >nul
 copy /y "%RAIZ%..\icon.ico" "%RAIZ%bin\" >nul
 if exist "%RAIZ%third_party\tools\7zr.exe" copy /y "%RAIZ%third_party\tools\7zr.exe" "%RAIZ%bin\" >nul
