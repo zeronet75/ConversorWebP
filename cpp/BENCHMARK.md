@@ -4,9 +4,9 @@ Fecha: 17/11/2026. Equipo: Windows 11 Pro, Intel Xeon E5-1680 v3 (8 núcleos / 1
 64 GB de RAM y NVIDIA RTX 3060. Las pruebas de conversión son **CPU**, con
 `--no-gpu` en Python para comparar en igualdad de condiciones.
 
-- C++: `ConversorWebPC.exe` 2.6.0, libwebp 1.6.0, libavif 1.4.2 + libaom y **pool de
+- C++: `ConversorWebPC.exe` 2.6.1, libwebp 1.6.0, libavif 1.4.2 + libaom y **pool de
   hasta 8 hilos** (una factoría WIC por trabajador).
-- Python: `conversor_webp.py` 2.6.0, Pillow 13.0.0 (libwebp 1.6.0) y el `.exe` onefile
+- Python: `conversor_webp.py` 2.6.1, Pillow 13.0.0 (libwebp 1.6.0) y el `.exe` onefile
   de PyInstaller. Python también convierte en paralelo (hasta 8 trabajadores).
 - Caché caliente. Arranque: 5 ejecuciones. Conversión: 3 ejecuciones (se muestra la
   media). Los tiempos de Python incluyen su arranque; el C++ también.

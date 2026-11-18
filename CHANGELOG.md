@@ -6,6 +6,27 @@ Todos los cambios relevantes del proyecto. Formato basado en
 
 ---
 
+## [2.6.1] — 2026-11-18
+
+### Añadido
+
+- **Edición C++ (Win32)** con la misma interfaz y funciones que la versión Python, incluida en `cpp/`.
+- Icono de la aplicación en la ventana, la barra de tareas y el propio ejecutable.
+- Selector de color de aplanado visible y clicable en ambas ediciones.
+- Ventana C++ maximizable y redimensionable, sin ventana de consola.
+- Manual y «Acerca de» propios de C++, sin referencias a GPU.
+
+### Corregido
+
+- Nombres de salida únicos cuando coinciden varios originales (ambas ediciones).
+- Deduplicación de orígenes repetidos y escritura atómica de las imágenes.
+- ZIP en streaming en C++ y sin recompresión en Python; validación de límites y errores.
+- Vigilante de carpeta con reintentos y espera a que el archivo esté estable.
+- Configuración, presets e historial validados y acotados.
+- Comprobación de actualizaciones asíncrona y tooltips seguros al destruir controles.
+
+---
+
 ## [2.6.0] — 2026-11-17
 
 ### Añadido
@@ -202,6 +223,7 @@ Todos los cambios relevantes del proyecto. Formato basado en
 - Conservación de transparencia, perfil ICC y orientación EXIF.
 - Modo consola básico.
 
+[2.6.1]: #261--2026-11-18
 [2.6.0]: #260--2026-11-17
 [2.5.1]: #251--2026-11-17
 [2.5.0]: #250--2026-11-17
