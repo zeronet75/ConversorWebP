@@ -5025,7 +5025,7 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
                     abrir_vista_previa();
                     return 0;
                 case ID_MENU_UPDATE:
-                    comprobar_actualizaciones();
+                    comprobar_actualizaciones(true);
                     return 0;
                 case ID_PATTERN_HELP:
                     MessageBoxW(hwnd,
@@ -5474,11 +5474,10 @@ int wmain(int argc, wchar_t** argv) {
     AppendMenuW(herramientas, MF_SEPARATOR, 0, nullptr);
     AppendMenuW(herramientas, MF_STRING, ID_MENU_WATCH, L"Vigilar una carpeta");
     AppendMenuW(herramientas, MF_STRING, ID_MENU_PREVIEW, L"Vista previa del seleccionado\tCtrl+P");
-    AppendMenuW(herramientas, MF_SEPARATOR, 0, nullptr);
-    AppendMenuW(herramientas, MF_STRING, ID_MENU_UPDATE, L"Buscar actualizaciones...");
     HMENU ayuda = CreatePopupMenu();
     AppendMenuW(ayuda, MF_STRING, ID_MENU_MANUAL, L"Manual de uso\tF1");
     AppendMenuW(ayuda, MF_SEPARATOR, 0, nullptr);
+    AppendMenuW(ayuda, MF_STRING, ID_MENU_UPDATE, L"Buscar actualizaciones...");
     AppendMenuW(ayuda, MF_STRING, ID_MENU_ABOUT, L"Acerca de Conversor WebP (C++)");
     AppendMenuW(menu, MF_POPUP, (UINT_PTR)herramientas, L"Herramientas");
     AppendMenuW(menu, MF_POPUP, (UINT_PTR)g_menu_hist, L"Historial");
