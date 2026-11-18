@@ -653,6 +653,7 @@ class Job:
     name_pattern: str = ""      # patron de nombre; vacio = nombre original
     dry_run: bool = False       # solo analizar: no escribe archivos
     preservar_extra: bool = False  # conservar EXIF/XMP y fecha original
+    jobs: int = 0               # 0 = automatico; >0 = maximo de hilos
 
 
 @dataclass
@@ -1458,6 +1459,8 @@ def run_job(
             )
 
         trabajadores = min(8, max(2, os.cpu_count() or 4))
+        if job.jobs > 0:
+            trabajadores = min(32, max(1, job.jobs))
         paralelo = len(tareas) >= 4 and trabajadores > 1
 
         def esperar_pausa() -> bool:
@@ -5202,6 +5205,13 @@ def run_cli(argv: list[str]) -> int:
     parser.add_argument("--format", dest="formato", default="webp", type=str.lower,
                         choices=["webp", "avif"], help="Formato de salida (webp o avif)")
     parser.add_argument("--csv", action="store_true", help="Guardar informe CSV en la salida")
+    parser.add_argument("--json", action="store_true", help="Salida final en JSON")
+    parser.add_argument("--quiet", action="store_true", help="Ocultar el progreso por archivo")
+    parser.add_argument("--jobs", type=int, default=0,
+                        help="Maximo de conversiones en paralelo (0 = automatico)")
+    parser.add_argument("--preset", default="", help="Aplicar un preset incluido por nombre")
+    parser.add_argument("--keep-metadata", action="store_true",
+                        help="Conservar EXIF/XMP y la fecha original")
     parser.add_argument("--gpu", action="store_true",
                         help="Forzar la GPU (aunque el lote sea pequeno)")
     parser.add_argument("--no-gpu", action="store_true", help="Desactivar la aceleracion GPU")
@@ -5230,7 +5240,22 @@ def run_cli(argv: list[str]) -> int:
         csv_report=bool(args.csv),
         usar_gpu=bool(args.gpu) and not args.no_gpu,
         gpu_forzar=bool(args.gpu) and not args.no_gpu,
+        preservar_extra=bool(args.keep_metadata),
+        jobs=max(0, min(32, args.jobs)),
     )
+    if args.preset:
+        preset = PRESETS_BUILTIN.get(args.preset)
+        if preset is None:
+            _say(f"ERROR: preset desconocido: {args.preset}")
+            return 2
+        job.quality = max(1, min(100, int(preset.get("quality", job.quality))))
+        job.method = max(0, min(6, int(preset.get("method", job.method))))
+        job.lossless = bool(preset.get("lossless", job.lossless))
+        job.flatten = bool(preset.get("flatten", job.flatten))
+        job.background = str(preset.get("background", job.background))
+        job.reencode_webp = bool(preset.get("reencode_webp", job.reencode_webp))
+        job.max_dimension = max(0, int(preset.get("max_dimension", job.max_dimension)))
+        job.target_kb = max(0, int(preset.get("target_kb", job.target_kb)))
     try:
         job.output_dir.mkdir(parents=True, exist_ok=True)
     except Exception as e:  # noqa: BLE001
@@ -5239,22 +5264,18 @@ def run_cli(argv: list[str]) -> int:
 
     def emit(tipo, dato):
         if tipo == "log":
-            _say(dato[1])
+            if not args.quiet and not args.json:
+                _say(dato[1])
         elif tipo == "done":
             emit.result = dato
         elif tipo == "plan":
-            _say(f"Imagenes a convertir: {dato}")
+            if not args.quiet and not args.json:
+                _say(f"Imagenes a convertir: {dato}")
 
     emit.result = Result()
     run_job(job, emit, threading.Event())
     res = emit.result
-    _say("-" * 60)
-    _say(f"Convertidas: {res.converted}  Omitidas: {res.skipped}  Fallidas: {len(res.failed)}")
-    if res.bytes_in:
-        ahorro = (1 - res.bytes_out / res.bytes_in) * 100
-        _say(f"{res.bytes_in / 1048576:.2f} MB -> {res.bytes_out / 1048576:.2f} MB (ahorro {ahorro:.1f} %)")
-    if res.zip_path:
-        _say(f"ZIP: {res.zip_path}")
+    apagado = False
     if args.shutdown and res.converted and not res.failed and not res.cancelled:
         retardo = max(10, args.shutdown_delay)
         try:
@@ -5263,9 +5284,37 @@ def run_cli(argv: list[str]) -> int:
                 creationflags=_no_window_flags(),
                 check=False,
             )
-            _say(f"Apagado programado en {retardo} s. Para cancelar: shutdown /a")
+            apagado = True
         except Exception as e:  # noqa: BLE001
-            _say(f"ERROR: no se pudo programar el apagado: {e}")
+            if not args.json:
+                _say(f"ERROR: no se pudo programar el apagado: {e}")
+    if args.json:
+        resumen = {
+            "version": APP_VERSION,
+            "converted": res.converted,
+            "skipped": res.skipped,
+            "failed": len(res.failed),
+            "failed_files": [str(p) for p, _ in res.failed],
+            "bytes_in": res.bytes_in,
+            "bytes_out": res.bytes_out,
+            "cancelled": res.cancelled,
+            "dry_run": res.dry_run,
+            "zip": str(res.zip_path) if res.zip_path else None,
+            "csv": str(res.csv_path) if res.csv_path else None,
+            "shutdown_scheduled": apagado,
+        }
+        print(json.dumps(resumen, ensure_ascii=False))
+    else:
+        if not args.quiet:
+            _say("-" * 60)
+        _say(f"Convertidas: {res.converted}  Omitidas: {res.skipped}  Fallidas: {len(res.failed)}")
+        if res.bytes_in:
+            ahorro = (1 - res.bytes_out / res.bytes_in) * 100
+            _say(f"{res.bytes_in / 1048576:.2f} MB -> {res.bytes_out / 1048576:.2f} MB (ahorro {ahorro:.1f} %)")
+        if res.zip_path:
+            _say(f"ZIP: {res.zip_path}")
+        if apagado:
+            _say(f"Apagado programado en {max(10, args.shutdown_delay)} s. Para cancelar: shutdown /a")
     return 0 if not res.failed else 1
 
 

@@ -1400,6 +1400,7 @@ struct Options {
     COLORREF color = RGB(255, 255, 255);
     bool apagar = false;
     bool preservar_fecha = false;
+    int jobs = 0;
 };
 
 struct Preset {
@@ -1436,6 +1437,7 @@ static std::wstring serializar_opciones(const Options& o) {
       << L"|color=" << (unsigned long)o.color
       << L"|apagar=" << (o.apagar ? 1 : 0)
       << L"|fecha=" << (o.preservar_fecha ? 1 : 0)
+      << L"|jobs=" << o.jobs
       << L"|salida=" << o.salida
       << L"|zipnombre=" << o.zip_nombre
       << L"|patron=" << o.patron
@@ -1454,6 +1456,7 @@ static void normalizar_opciones(Options& o) {
         if (!valido) o.max_dim = 0;
     }
     o.objetivo_kb = std::clamp(o.objetivo_kb, 0, 1000000);
+    o.jobs = std::clamp(o.jobs, 0, 32);
     o.formato = (_wcsicmp(o.formato.c_str(), L"AVIF") == 0) ? L"AVIF" : L"WEBP";
     if (o.zip_nombre.empty()) o.zip_nombre = L"webp.zip";
     if (o.patron.size() > 512) o.patron.resize(512);
@@ -1484,6 +1487,7 @@ static Options deserializar_opciones(const std::wstring& texto) {
         else if (clave == L"color") o.color = (COLORREF)wcstoul(valor.c_str(), nullptr, 10);
         else if (clave == L"apagar") o.apagar = _wtoi(valor.c_str()) != 0;
         else if (clave == L"fecha") o.preservar_fecha = _wtoi(valor.c_str()) != 0;
+        else if (clave == L"jobs") o.jobs = _wtoi(valor.c_str());
         else if (clave == L"salida") o.salida = valor;
         else if (clave == L"zipnombre") o.zip_nombre = valor;
         else if (clave == L"patron") o.patron = valor;
@@ -1531,6 +1535,7 @@ struct Evento {
     std::wstring extra2;
     std::wstring extra3;
     int a = 0, b = 0;
+    int c = 0;
     int modo = 0;
     Row fila;
 };
@@ -1873,6 +1878,7 @@ static std::atomic<bool> g_pausa{false};
 static std::mutex g_mutex_eventos;
 static std::deque<Evento> g_eventos;
 static std::atomic<bool> g_modo_cli{false};
+static std::atomic<bool> g_cli_quiet{false};
 static std::mutex g_mutex_consola;
 static UINT_PTR g_timer = 0;
 
@@ -2885,9 +2891,11 @@ static void log(const std::wstring& texto) {
 static void emitir(Evento e) {
     if (g_modo_cli) {
         if (e.tipo == Evento::LOG) {
-            std::lock_guard<std::mutex> lock(g_mutex_consola);
-            wprintf(L"%s\n", e.texto.c_str());
-            fflush(stdout);
+            if (!g_cli_quiet) {
+                std::lock_guard<std::mutex> lock(g_mutex_consola);
+                wprintf(L"%s\n", e.texto.c_str());
+                fflush(stdout);
+            }
             return;
         }
         if (e.tipo == Evento::PROGRESO || e.tipo == Evento::ESTADO || e.tipo == Evento::FILA)
@@ -3272,6 +3280,8 @@ static void hilo_conversion(Options opt_trabajo, std::vector<std::wstring> orige
     std::atomic<int> siguiente{0};
     std::atomic<int> hechas{0};
     int n_hilos = std::min(8, std::max(1, total));
+    if (opt_trabajo.jobs > 0)
+        n_hilos = std::min(32, std::max(1, opt_trabajo.jobs));
 
     auto marcar_progreso = [&]() {
         std::lock_guard<std::mutex> lock(mutex_progreso);
@@ -3423,6 +3433,7 @@ static void hilo_conversion(Options opt_trabajo, std::vector<std::wstring> orige
     fin.texto = resumen;
     fin.a = convertidas;
     fin.b = fallidas;
+    fin.c = omitidas;
     fin.fila.kb_in = entrada / 1024.0;
     fin.fila.kb_out = salida / 1024.0;
     emitir(std::move(fin));
@@ -6816,6 +6827,9 @@ static int ejecutar_cli(const std::vector<std::wstring>& args) {
     Options opt;
     std::vector<std::wstring> origenes;
     int apagar_delay = 60;
+    bool json = false;
+    bool quiet = false;
+    std::wstring preset;
     for (size_t i = 0; i < args.size(); i++) {
         std::wstring a = args[i];
         auto sig = [&](std::wstring& dst) {
@@ -6841,7 +6855,12 @@ static int ejecutar_cli(const std::vector<std::wstring>& args) {
             wprintf(L"  --no-overwrite    omitir existentes\n");
             wprintf(L"  --no-recursive    no mantener subcarpetas\n");
             wprintf(L"  --shutdown        apagar el equipo al terminar correctamente\n");
-            wprintf(L"  --shutdown-delay N  segundos antes de apagar (60)\n\n");
+            wprintf(L"  --shutdown-delay N  segundos antes de apagar (60)\n");
+            wprintf(L"  --json            salida final en JSON\n");
+            wprintf(L"  --quiet           ocultar el progreso por archivo\n");
+            wprintf(L"  --jobs N          maximo de conversiones en paralelo\n");
+            wprintf(L"  --preset NOMBRE   aplicar un preset incluido\n");
+            wprintf(L"  --keep-date       conservar la fecha original\n\n");
             return 0;
         }
         if (a == L"-o" || a == L"--output") sig(opt.salida);
@@ -6885,6 +6904,15 @@ static int ejecutar_cli(const std::vector<std::wstring>& args) {
         else if (a == L"--no-overwrite") opt.sobrescribir = false;
         else if (a == L"--no-recursive") opt.mantener = false;
         else if (a == L"--shutdown") opt.apagar = true;
+        else if (a == L"--json") json = true;
+        else if (a == L"--quiet") quiet = true;
+        else if (a == L"--keep-date") opt.preservar_fecha = true;
+        else if (a == L"--jobs") {
+            std::wstring v;
+            sig(v);
+            opt.jobs = std::clamp(_wtoi(v.c_str()), 0, 32);
+        }
+        else if (a == L"--preset") sig(preset);
         else if (a == L"--shutdown-delay") {
             std::wstring v;
             sig(v);
@@ -6898,6 +6926,31 @@ static int ejecutar_cli(const std::vector<std::wstring>& args) {
     }
     opt.calidad = std::clamp(opt.calidad, 1, 100);
     opt.metodo = std::clamp(opt.metodo, 0, 6);
+    if (!preset.empty()) {
+        inicializar_presets();
+        auto it = std::find_if(g_presets.begin(), g_presets.end(),
+                               [&](const Preset& p) { return p.nombre == preset; });
+        if (it == g_presets.end()) {
+            wprintf(L"ERROR: preset desconocido: %s\n", preset.c_str());
+            return 2;
+        }
+        std::wstring salida = opt.salida;
+        bool zip = opt.zip;
+        std::wstring zip_nombre = opt.zip_nombre;
+        bool csv = opt.csv;
+        bool dry = opt.dry_run;
+        bool fecha = opt.preservar_fecha;
+        int jobs = opt.jobs;
+        Options base = it->opt;
+        base.salida = salida;
+        base.zip = zip;
+        base.zip_nombre = zip_nombre;
+        base.csv = csv;
+        base.dry_run = dry;
+        base.preservar_fecha = fecha;
+        base.jobs = jobs;
+        opt = base;
+    }
     g_opt = opt;
     g_origenes = origenes;
     g_cancelar = false;
@@ -6906,28 +6959,44 @@ static int ejecutar_cli(const std::vector<std::wstring>& args) {
         g_eventos.clear();
     }
     g_modo_cli = true;
+    g_cli_quiet = quiet || json;
     hilo_conversion_seguro(g_opt, g_origenes);
     g_modo_cli = false;
     int fallidas = 0;
     int convertidas = 0;
+    int omitidas = 0;
     {
         std::lock_guard<std::mutex> lock(g_mutex_eventos);
         for (auto& e : g_eventos) {
-            if (e.tipo == Evento::LOG) wprintf(L"%s\n", e.texto.c_str());
-            else if (e.tipo == Evento::FIN) {
-                wprintf(L"\n%s\n", e.texto.c_str());
+            if (e.tipo == Evento::LOG) {
+                if (!g_cli_quiet) wprintf(L"%s\n", e.texto.c_str());
+            } else if (e.tipo == Evento::FIN) {
+                if (!json && !quiet) wprintf(L"\n%s\n", e.texto.c_str());
                 convertidas = e.a;
                 fallidas = e.b;
+                omitidas = e.c;
             }
         }
     }
+    bool apagado = false;
     if (opt.apagar && convertidas > 0 && fallidas == 0 && !opt.dry_run && !g_cancelar) {
-        if (programar_apagado(apagar_delay, false))
-            wprintf(L"Apagado programado en %d s. Para cancelar: shutdown /a\n", apagar_delay);
-        else
-            wprintf(L"ERROR: no se pudo programar el apagado.\n");
+        apagado = programar_apagado(apagar_delay, false);
+        if (!json && !quiet) {
+            if (apagado)
+                wprintf(L"Apagado programado en %d s. Para cancelar: shutdown /a\n", apagar_delay);
+            else
+                wprintf(L"ERROR: no se pudo programar el apagado.\n");
+        }
     }
-    wprintf(L"\n");
+    if (json) {
+        wprintf(L"{\"version\":\"%s\",\"converted\":%d,\"skipped\":%d,\"failed\":%d,"
+                L"\"cancelled\":%s,\"shutdown_scheduled\":%s}\n",
+                APP_VERSION, convertidas, omitidas, fallidas,
+                g_cancelar ? L"true" : L"false", apagado ? L"true" : L"false");
+    } else {
+        if (!quiet) wprintf(L"\n");
+    }
+    g_cli_quiet = false;
     return fallidas > 0 ? 1 : 0;
 }
 
