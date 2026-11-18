@@ -30,9 +30,6 @@ Copy-Item (Join-Path $root "README.md") (Join-Path $stage "LEEME_C++.md")
 if (Test-Path (Join-Path $root "BENCHMARK.md")) {
     Copy-Item (Join-Path $root "BENCHMARK.md") $stage
 }
-if (Test-Path (Join-Path $root "docs")) {
-    Copy-Item (Join-Path $root "docs") $stage -Recurse
-}
 
 if (Test-Path $zip) { Remove-Item $zip -Force }
 Compress-Archive -Path (Join-Path $stage "*") -DestinationPath $zip -CompressionLevel Optimal

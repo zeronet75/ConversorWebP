@@ -41,7 +41,6 @@ Source: "..\bin\LEEME.txt"; DestDir: "{app}"; Flags: ignoreversion
 Source: "..\bin\ConversorWebPC.exe.manifest"; DestDir: "{app}"; Flags: ignoreversion skipifsourcedoesntexist
 Source: "..\README.md"; DestDir: "{app}"; DestName: "LEEME_C++.md"; Flags: ignoreversion isreadme
 Source: "..\BENCHMARK.md"; DestDir: "{app}"; Flags: ignoreversion skipifsourcedoesntexist
-Source: "..\docs\*"; DestDir: "{app}\docs"; Flags: ignoreversion recursesubdirs createallsubdirs skipifsourcedoesntexist
 
 [Icons]
 Name: "{group}\{#MiApp}"; Filename: "{app}\{#MiExe}"
