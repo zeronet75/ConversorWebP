@@ -74,7 +74,7 @@ using Microsoft::WRL::ComPtr;
 namespace fs = std::filesystem;
 
 static const wchar_t* APP_NAME = L"Conversor WebP";
-static const wchar_t* APP_VERSION = L"2.6.1";
+static const wchar_t* APP_VERSION = L"2.6.2";
 
 // ---------------------------------------------------------------------------
 //  Utilidades generales
@@ -1224,7 +1224,7 @@ struct Options {
     bool beep = true;
     bool csv = false;
     std::wstring salida;
-    std::wstring zip_nombre = L"imagenes_2.6.1-cpp.zip";
+    std::wstring zip_nombre = L"imagenes_2.6.2-cpp.zip";
     std::wstring patron;
     std::wstring formato = L"WEBP";
     bool dry_run = false;
@@ -1353,10 +1353,14 @@ struct Row {
 };
 
 struct Evento {
-    enum Tipo { LOG, PROGRESO, ESTADO, FILA, FIN, ACTUALIZACION } tipo;
+    enum Tipo { LOG, PROGRESO, ESTADO, FILA, FIN, ACTUALIZACION, DESCARGA,
+                DESCARGA_LISTA, DESCARGA_ERROR } tipo;
     std::wstring texto;
     std::wstring extra;
+    std::wstring extra2;
+    std::wstring extra3;
     int a = 0, b = 0;
+    int modo = 0;
     Row fila;
 };
 
@@ -1676,15 +1680,356 @@ static std::string extraer_json_texto(const std::string& cuerpo, const std::stri
 static void emitir(Evento e);
 
 static std::atomic<bool> g_update_en_curso{false};
+static std::atomic<bool> g_actualizando{false};
+
+static int modo_actualizacion() {
+    std::wstring exe = ruta_ejecutable();
+    if (exe.empty()) return 3;
+    fs::path dir = fs::path(exe).parent_path();
+    std::error_code ec;
+    if (fs::exists(dir / L"unins000.exe", ec)) return 1;              // instalado con Inno
+    if (fs::exists(dir / L"7zr.exe", ec) ||
+        fs::exists(dir / L"ConversorWebPC.exe.manifest", ec)) return 2;  // portable
+    return 3;                                                          // exe suelto
+}
+
+static std::wstring version_sin_v(std::wstring v) {
+    if (!v.empty() && (v[0] == L'v' || v[0] == L'V')) v.erase(0, 1);
+    return v;
+}
+
+static std::wstring asset_para_modo(int modo, const std::wstring& version) {
+    if (modo == 1) return L"ConversorWebPC-" + version + L"-setup.exe";
+    if (modo == 2) return L"ConversorWebPC-" + version + L"-cpp-portable.zip";
+    return L"ConversorWebPC.exe";
+}
+
+static bool buscar_asset_json(const std::string& json, const std::string& nombre,
+                              std::wstring& url, std::wstring& digest) {
+    size_t p = json.find("\"name\": \"" + nombre + "\"");
+    if (p == std::string::npos)
+        p = json.find("\"name\":\"" + nombre + "\"");
+    if (p == std::string::npos) return false;
+    size_t siguiente = json.find("\"name\"", p + 8);
+    size_t q = json.find("\"browser_download_url\"", p);
+    if (q == std::string::npos) return false;
+    if (siguiente != std::string::npos && q > siguiente) return false;
+    size_t dos_puntos = json.find(':', q);
+    if (dos_puntos == std::string::npos) return false;
+    size_t c = json.find('"', dos_puntos + 1);
+    size_t f = (c == std::string::npos) ? std::string::npos : json.find('"', c + 1);
+    if (c == std::string::npos || f == std::string::npos) return false;
+    std::string u = json.substr(c + 1, f - c - 1);
+    if (u.rfind("https://github.com/", 0) != 0) return false;
+    url.assign(u.begin(), u.end());
+    size_t d = json.rfind("\"digest\"", q);
+    if (d == std::string::npos || d < p)
+        d = json.find("\"digest\"", q);
+    if (d != std::string::npos && (siguiente == std::string::npos || d < siguiente)) {
+        size_t dd = json.find(':', d);
+        size_t dc = (dd == std::string::npos) ? std::string::npos : json.find('"', dd + 1);
+        size_t df = (dc == std::string::npos) ? std::string::npos : json.find('"', dc + 1);
+        if (dc != std::string::npos && df != std::string::npos) {
+            std::string dig = json.substr(dc + 1, df - dc - 1);
+            if (dig.rfind("sha256:", 0) == 0)
+                digest.assign(dig.begin(), dig.end());
+        }
+    }
+    return true;
+}
+
+static bool descargar_archivo(const std::wstring& url, const fs::path& destino,
+                              std::wstring& error) {
+    URL_COMPONENTS uc{};
+    uc.dwStructSize = sizeof(uc);
+    uc.dwHostNameLength = (DWORD)-1;
+    uc.dwUrlPathLength = (DWORD)-1;
+    uc.dwExtraInfoLength = (DWORD)-1;
+    if (!WinHttpCrackUrl(url.c_str(), 0, 0, &uc)) {
+        error = L"URL de descarga no valida";
+        return false;
+    }
+    std::wstring host(uc.lpszHostName, uc.dwHostNameLength);
+    std::wstring ruta(uc.lpszUrlPath, uc.dwUrlPathLength);
+    if (uc.dwExtraInfoLength) ruta.append(uc.lpszExtraInfo, uc.dwExtraInfoLength);
+
+    struct CerrarHandle {
+        HINTERNET h;
+        ~CerrarHandle() { if (h) WinHttpCloseHandle(h); }
+    };
+    std::wstring agente = L"ConversorWebPC/" + std::wstring(APP_VERSION);
+    CerrarHandle sesion{WinHttpOpen(agente.c_str(),
+                                    WINHTTP_ACCESS_TYPE_DEFAULT_PROXY,
+                                    WINHTTP_NO_PROXY_NAME, WINHTTP_NO_PROXY_BYPASS, 0)};
+    if (!sesion.h) { error = L"WinHttpOpen"; return false; }
+    DWORD politica = WINHTTP_OPTION_REDIRECT_POLICY_ALWAYS;
+    WinHttpSetOption(sesion.h, WINHTTP_OPTION_REDIRECT_POLICY, &politica, sizeof(politica));
+    WinHttpSetTimeouts(sesion.h, 5000, 5000, 10000, 30000);
+
+    CerrarHandle conexion{WinHttpConnect(sesion.h, host.c_str(), uc.nPort, 0)};
+    if (!conexion.h) { error = L"No se pudo conectar con GitHub"; return false; }
+    DWORD flags = (uc.nScheme == INTERNET_SCHEME_HTTPS) ? WINHTTP_FLAG_SECURE : 0;
+    CerrarHandle peticion{WinHttpOpenRequest(conexion.h, L"GET", ruta.c_str(), nullptr,
+                                            WINHTTP_NO_REFERER, WINHTTP_DEFAULT_ACCEPT_TYPES,
+                                            flags)};
+    if (!peticion.h) { error = L"No se pudo crear la peticion de descarga"; return false; }
+    WinHttpAddRequestHeaders(peticion.h, L"User-Agent: ConversorWebP", (DWORD)-1,
+                             WINHTTP_ADDREQ_FLAG_ADD);
+
+    if (!WinHttpSendRequest(peticion.h, WINHTTP_NO_ADDITIONAL_HEADERS, 0,
+                            WINHTTP_NO_REQUEST_DATA, 0, 0, 0) ||
+        !WinHttpReceiveResponse(peticion.h, nullptr)) {
+        error = L"Fallo de red al descargar la actualizacion";
+        return false;
+    }
+    DWORD codigo = 0, tam_codigo = sizeof(codigo);
+    WinHttpQueryHeaders(peticion.h, WINHTTP_QUERY_STATUS_CODE | WINHTTP_QUERY_FLAG_NUMBER,
+                        WINHTTP_HEADER_NAME_BY_INDEX, &codigo, &tam_codigo,
+                        WINHTTP_NO_HEADER_INDEX);
+    if (codigo != 200) {
+        error = L"GitHub respondio HTTP " + std::to_wstring(codigo);
+        return false;
+    }
+
+    unsigned long long total = 0;
+    wchar_t texto_largo[64]{};
+    DWORD tam_largo = sizeof(texto_largo);
+    if (WinHttpQueryHeaders(peticion.h, WINHTTP_QUERY_CONTENT_LENGTH,
+                            WINHTTP_HEADER_NAME_BY_INDEX, texto_largo, &tam_largo,
+                            WINHTTP_NO_HEADER_INDEX))
+        total = _wcstoui64(texto_largo, nullptr, 10);
+
+    std::ofstream salida(destino, std::ios::binary | std::ios::trunc);
+    if (!salida) { error = L"No se pudo crear el archivo temporal"; return false; }
+
+    unsigned long long recibidos = 0;
+    int ultimo_pct = -1;
+    for (;;) {
+        DWORD disponibles = 0;
+        if (!WinHttpQueryDataAvailable(peticion.h, &disponibles) || disponibles == 0)
+            break;
+        std::vector<char> trozo(disponibles);
+        DWORD leidos = 0;
+        if (!WinHttpReadData(peticion.h, trozo.data(), disponibles, &leidos) || leidos == 0) {
+            error = L"Fallo al leer la descarga";
+            salida.close();
+            return false;
+        }
+        salida.write(trozo.data(), (std::streamsize)leidos);
+        if (!salida) {
+            error = L"No se pudo escribir la actualizacion";
+            salida.close();
+            return false;
+        }
+        recibidos += leidos;
+        int pct = total ? (int)((recibidos * 100) / total) : -1;
+        if (pct < 0 || pct == 100 || pct - ultimo_pct >= 2) {
+            ultimo_pct = pct;
+            Evento ev;
+            ev.tipo = Evento::DESCARGA;
+            ev.a = pct;
+            emitir(std::move(ev));
+        }
+    }
+    salida.close();
+    if (!salida) { error = L"No se pudo cerrar el archivo descargado"; return false; }
+    if (recibidos == 0) { error = L"La descarga quedo vacia"; return false; }
+    return true;
+}
+
+static bool sha256_archivo(const fs::path& ruta, std::wstring& hex, std::wstring& error) {
+    BCRYPT_ALG_HANDLE alg = nullptr;
+    BCRYPT_HASH_HANDLE hash = nullptr;
+    DWORD objeto_len = 0, hash_len = 0, res = 0;
+    std::vector<BYTE> objeto, digest;
+    if (BCryptOpenAlgorithmProvider(&alg, BCRYPT_SHA256_ALGORITHM, nullptr, 0) < 0) {
+        error = L"No se pudo iniciar SHA-256";
+        return false;
+    }
+    BCryptGetProperty(alg, BCRYPT_OBJECT_LENGTH, (PUCHAR)&objeto_len, sizeof(objeto_len), &res, 0);
+    BCryptGetProperty(alg, BCRYPT_HASH_LENGTH, (PUCHAR)&hash_len, sizeof(hash_len), &res, 0);
+    objeto.resize(objeto_len);
+    digest.resize(hash_len);
+    bool ok = BCryptCreateHash(alg, &hash, objeto.data(), objeto_len, nullptr, 0, 0) >= 0;
+    if (ok) {
+        std::ifstream f(ruta, std::ios::binary);
+        if (!f) {
+            ok = false;
+            error = L"No se pudo abrir la actualizacion descargada";
+        } else {
+            std::vector<char> buf(1 << 20);
+            while (f) {
+                f.read(buf.data(), (std::streamsize)buf.size());
+                std::streamsize n = f.gcount();
+                if (n > 0 && BCryptHashData(hash, (PUCHAR)buf.data(), (ULONG)n, 0) < 0) {
+                    ok = false;
+                    error = L"Fallo al calcular SHA-256";
+                    break;
+                }
+            }
+            if (ok && !f.eof()) {
+                ok = false;
+                error = L"Fallo al leer la actualizacion";
+            }
+        }
+        if (ok && BCryptFinishHash(hash, digest.data(), hash_len, 0) < 0) {
+            ok = false;
+            error = L"Fallo al finalizar SHA-256";
+        }
+        BCryptDestroyHash(hash);
+    } else {
+        error = L"No se pudo calcular SHA-256";
+    }
+    BCryptCloseAlgorithmProvider(alg, 0);
+    if (!ok) return false;
+    hex.clear();
+    for (BYTE b : digest) {
+        wchar_t par[3];
+        swprintf_s(par, L"%02x", b);
+        hex += par;
+    }
+    return true;
+}
+
+static std::wstring ps_cadena(const std::wstring& s) {
+    std::wstring r;
+    for (wchar_t c : s) {
+        if (c == L'\'') r += L"''";
+        else r += c;
+    }
+    return r;
+}
+
+static bool lanzar_actualizador(const std::wstring& archivo, int modo, std::wstring& error) {
+    std::wstring exe = ruta_ejecutable();
+    if (exe.empty() || !fs::exists(archivo)) {
+        error = L"No se encontro el archivo de actualizacion";
+        return false;
+    }
+    fs::path dir_exe = fs::path(exe).parent_path();
+    wchar_t temp[MAX_PATH];
+    GetTempPathW(MAX_PATH, temp);
+    fs::path dir_temp = fs::path(temp) / L"ConversorWebP_update";
+    std::error_code ec;
+    fs::create_directories(dir_temp, ec);
+    fs::path ps1 = dir_temp / (L"actualizar_" + std::to_wstring(GetCurrentProcessId()) + L".ps1");
+    fs::path log = dir_temp / L"actualizar.log";
+
+    std::wostringstream ps;
+    ps << L"$ErrorActionPreference = 'Stop'\r\n";
+    ps << L"$log = '" << ps_cadena(log.wstring()) << L"'\r\n";
+    ps << L"function Registrar([string]$m) { Add-Content -LiteralPath $log -Value $m -Encoding UTF8 }\r\n";
+    ps << L"try {\r\n";
+    ps << L"  $proceso = Get-Process -Id " << GetCurrentProcessId() << L" -ErrorAction SilentlyContinue\r\n";
+    ps << L"  if ($proceso) { $proceso.WaitForExit(60000) | Out-Null }\r\n";
+    ps << L"  Start-Sleep -Milliseconds 900\r\n";
+    if (modo == 1) {
+        ps << L"  $inst = Start-Process -FilePath '" << ps_cadena(archivo) << L"' "
+              L"-ArgumentList @('/VERYSILENT','/SUPPRESSMSGBOXES','/NORESTART',"
+              L"'/CLOSEAPPLICATIONS','/NOCANCEL') -Wait -PassThru\r\n";
+        ps << L"  if ($inst.ExitCode -ne 0) { throw ('El instalador termino con codigo ' + $inst.ExitCode) }\r\n";
+    } else if (modo == 2) {
+        ps << L"  $stage = Join-Path $env:TEMP ('ConversorWebP_stage_' + [guid]::NewGuid().ToString('N'))\r\n";
+        ps << L"  if (Test-Path -LiteralPath $stage) { Remove-Item -LiteralPath $stage -Recurse -Force }\r\n";
+        ps << L"  Add-Type -AssemblyName System.IO.Compression.FileSystem\r\n";
+        ps << L"  [System.IO.Compression.ZipFile]::ExtractToDirectory('"
+           << ps_cadena(archivo) << L"', $stage)\r\n";
+        ps << L"  $origen = $stage\r\n";
+        ps << L"  $hijos = @(Get-ChildItem -LiteralPath $stage -Force)\r\n";
+        ps << L"  if ($hijos.Count -eq 1 -and $hijos[0].PSIsContainer) { $origen = $hijos[0].FullName }\r\n";
+        ps << L"  Copy-Item -Path (Join-Path $origen '*') -Destination '"
+           << ps_cadena(dir_exe.wstring()) << L"' -Recurse -Force\r\n";
+        ps << L"  Remove-Item -LiteralPath $stage -Recurse -Force -ErrorAction SilentlyContinue\r\n";
+    } else {
+        ps << L"  Copy-Item -LiteralPath '" << ps_cadena(archivo) << L"' -Destination '"
+           << ps_cadena(exe) << L"' -Force\r\n";
+    }
+    ps << L"  Start-Process -FilePath '" << ps_cadena(exe) << L"' -WorkingDirectory '"
+       << ps_cadena(dir_exe.wstring()) << L"'\r\n";
+    ps << L"  Registrar 'ok'\r\n";
+    ps << L"} catch { Registrar ('ERROR: ' + $_.Exception.Message); exit 1 } "
+          L"finally { Remove-Item -LiteralPath $PSCommandPath -Force -ErrorAction SilentlyContinue }\r\n";
+
+    std::ofstream f(ps1, std::ios::binary | std::ios::trunc);
+    if (!f) { error = L"No se pudo crear el script de actualizacion"; return false; }
+    const char bom[] = "\xEF\xBB\xBF";
+    f.write(bom, 3);
+    std::string contenido = a_utf8(ps.str());
+    f.write(contenido.data(), (std::streamsize)contenido.size());
+    f.close();
+    if (!f) { error = L"No se pudo escribir el script de actualizacion"; return false; }
+
+    std::wstring cmd = L"powershell.exe -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File \"" +
+                       ps1.wstring() + L"\"";
+    STARTUPINFOW si{};
+    si.cb = sizeof(si);
+    PROCESS_INFORMATION pi{};
+    if (!CreateProcessW(nullptr, cmd.data(), nullptr, nullptr, FALSE, CREATE_NO_WINDOW,
+                        nullptr, nullptr, &si, &pi)) {
+        error = L"No se pudo iniciar el actualizador";
+        return false;
+    }
+    CloseHandle(pi.hProcess);
+    CloseHandle(pi.hThread);
+    return true;
+}
+
+static void iniciar_descarga_actualizacion(const Evento& info) {
+    if (g_actualizando.exchange(true)) return;
+    SetWindowTextW(g_status, L"Descargando actualizacion...");
+    SendMessageW(g_progress, PBM_SETRANGE, 0, MAKELPARAM(0, 100));
+    SendMessageW(g_progress, PBM_SETPOS, 0, 0);
+    EnableWindow(g_btn_convertir, FALSE);
+    std::wstring url = info.extra;
+    std::wstring asset = info.extra2;
+    std::wstring digest = info.extra3;
+    int modo = info.modo;
+    try {
+        std::thread([url, asset, digest, modo] {
+            wchar_t temp[MAX_PATH];
+            GetTempPathW(MAX_PATH, temp);
+            fs::path destino = fs::path(temp) / L"ConversorWebP_update" / asset;
+            std::error_code ec;
+            fs::create_directories(destino.parent_path(), ec);
+            std::wstring error;
+            bool ok = descargar_archivo(url, destino, error);
+            if (ok) {
+                std::wstring hex;
+                ok = sha256_archivo(destino, hex, error);
+                if (ok) {
+                    std::wstring esperado = digest;
+                    if (esperado.rfind(L"sha256:", 0) == 0) esperado = esperado.substr(7);
+                    if (esperado.size() != 64 || _wcsicmp(hex.c_str(), esperado.c_str()) != 0) {
+                        ok = false;
+                        error = L"El archivo descargado no coincide con su SHA-256.";
+                    }
+                }
+            }
+            Evento ev;
+            ev.tipo = ok ? Evento::DESCARGA_LISTA : Evento::DESCARGA_ERROR;
+            ev.texto = error;
+            ev.extra = destino.wstring();
+            ev.extra2 = asset;
+            ev.modo = modo;
+            emitir(std::move(ev));
+        }).detach();
+    } catch (...) {
+        g_actualizando = false;
+        EnableWindow(g_btn_convertir, TRUE);
+        SetWindowTextW(g_status, L"No se pudo iniciar la descarga.");
+    }
+}
 
 static void comprobar_actualizaciones(bool manual = false) {
     if (g_update_en_curso.exchange(true)) return;
+    int modo = modo_actualizacion();
     SetWindowTextW(g_status, L"Buscando actualizaciones...");
     try {
-        std::thread([manual] {
+        std::thread([manual, modo] {
             Evento e;
             e.tipo = Evento::ACTUALIZACION;
             e.a = manual ? 1 : 0;
+            e.modo = modo;
             try {
                 std::wstring error;
                 std::string cuerpo = http_get(
@@ -1696,18 +2041,29 @@ static void comprobar_actualizaciones(bool manual = false) {
                     if (!error.empty()) e.texto += L"\n\n" + error;
                 } else {
                     std::string etiqueta = extraer_json_texto(cuerpo, "tag_name");
-                    std::string url = extraer_json_texto(cuerpo, "html_url");
                     std::wstring wetiqueta(etiqueta.begin(), etiqueta.end());
-                    std::wstring wurl(url.begin(), url.end());
                     if (wetiqueta.empty()) {
                         e.b = 2;
                         e.texto = L"La respuesta de GitHub no incluye una version.";
                     } else if (comparar_versiones(wetiqueta, APP_VERSION) > 0) {
-                        e.b = 1;
-                        e.texto = L"Hay una version mas reciente: " + wetiqueta +
-                                  L"\n\nLa tuya es " + APP_VERSION +
-                                  L"\n\n¿Quieres abrir la pagina de descarga?";
-                        e.extra = wurl;
+                        std::wstring version = version_sin_v(wetiqueta);
+                        std::wstring asset = asset_para_modo(modo, version);
+                        std::wstring url, digest;
+                        if (!buscar_asset_json(cuerpo, a_utf8(asset), url, digest) ||
+                            digest.empty()) {
+                            e.b = 2;
+                            e.texto = L"No se encontro el archivo de actualizacion adecuado "
+                                      L"para esta instalacion.";
+                        } else {
+                            e.b = 1;
+                            e.texto = L"Hay una version nueva: " + wetiqueta +
+                                      L"\n\nLa tuya es " + APP_VERSION +
+                                      L"\n\n¿Descargar e instalar ahora?\n"
+                                      L"La aplicacion se cerrara y volvera a abrirse automaticamente.";
+                            e.extra = url;
+                            e.extra2 = asset;
+                            e.extra3 = digest;
+                        }
                     } else {
                         e.b = 0;
                         e.texto = L"Estas al dia.\n\nVersion instalada: " +
@@ -4407,7 +4763,7 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
 
             // Cabecera
             etiqueta(L"Conversor WebP", 16, 17, 300, 30, 1400, g_font_title);
-            etiqueta(L"v2.6.1", 200, 29, 120, 18, 1401, g_font_muted);
+            etiqueta(L"v2.6.2", 200, 29, 120, 18, 1401, g_font_muted);
             etiqueta(L"JPG · PNG · BMP · TIFF · GIF · ICO  →  WebP / AVIF", 560, 23, 420, 20,
                      1402, g_font_muted, SS_RIGHT);
 
@@ -4959,6 +5315,11 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
                     return 0;
                 case ID_START: {
                     if (g_corriendo) return 0;
+                    if (g_actualizando) {
+                        MessageBoxW(hwnd, L"Espera a que termine la descarga de la actualizacion.",
+                                    APP_NAME, MB_ICONINFORMATION);
+                        return 0;
+                    }
                     if (g_origenes.empty()) {
                         MessageBoxW(hwnd, L"Anade imagenes y elige una carpeta de salida.", APP_NAME, MB_ICONWARNING);
                         return 0;
@@ -5025,6 +5386,16 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
                     abrir_vista_previa();
                     return 0;
                 case ID_MENU_UPDATE:
+                    if (g_corriendo) {
+                        MessageBoxW(hwnd, L"Espera a que termine la conversion en curso.",
+                                    APP_NAME, MB_ICONINFORMATION);
+                        return 0;
+                    }
+                    if (g_actualizando) {
+                        MessageBoxW(hwnd, L"Ya se esta descargando una actualizacion.",
+                                    APP_NAME, MB_ICONINFORMATION);
+                        return 0;
+                    }
                     comprobar_actualizaciones(true);
                     return 0;
                 case ID_PATTERN_HELP:
@@ -5197,10 +5568,13 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
                         if (e.b == 1) {
                             SetWindowTextW(g_status, L"Actualizacion disponible.");
                             if (MessageBoxW(hwnd, e.texto.c_str(), APP_NAME,
-                                            MB_ICONINFORMATION | MB_YESNO) == IDYES &&
-                                !e.extra.empty())
-                                ShellExecuteW(nullptr, L"open", e.extra.c_str(), nullptr, nullptr,
-                                              SW_SHOWNORMAL);
+                                            MB_ICONINFORMATION | MB_YESNO) == IDYES) {
+                                if (!e.extra.empty() && !e.extra3.empty() && e.modo >= 1)
+                                    iniciar_descarga_actualizacion(e);
+                                else
+                                    MessageBoxW(hwnd, L"No se pudo preparar la actualizacion.",
+                                                APP_NAME, MB_ICONERROR);
+                            }
                         } else if (e.b == 2) {
                             if (e.a)
                                 MessageBoxW(hwnd, e.texto.c_str(), APP_NAME, MB_ICONWARNING);
@@ -5210,6 +5584,37 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
                                 MessageBoxW(hwnd, e.texto.c_str(), APP_NAME, MB_ICONINFORMATION);
                             SetWindowTextW(g_status, L"Estas al dia.");
                         }
+                    } else if (e.tipo == Evento::DESCARGA) {
+                        if (e.a >= 0) {
+                            SendMessageW(g_progress, PBM_SETPOS, e.a, 0);
+                            wchar_t txt[80];
+                            swprintf_s(txt, L"Descargando actualizacion... %d%%", e.a);
+                            SetWindowTextW(g_status, txt);
+                        } else {
+                            SetWindowTextW(g_status, L"Descargando actualizacion...");
+                        }
+                    } else if (e.tipo == Evento::DESCARGA_LISTA) {
+                        std::wstring error;
+                        if (lanzar_actualizador(e.extra, e.modo, error)) {
+                            SetWindowTextW(g_status, L"Reiniciando para actualizar...");
+                            PostMessageW(hwnd, WM_CLOSE, 0, 0);
+                        } else {
+                            g_actualizando = false;
+                            EnableWindow(g_btn_convertir, TRUE);
+                            SendMessageW(g_progress, PBM_SETRANGE, 0, MAKELPARAM(0, 100));
+                            SendMessageW(g_progress, PBM_SETPOS, 0, 0);
+                            SetWindowTextW(g_status, L"Listo.");
+                            MessageBoxW(hwnd, (L"No se pudo iniciar el actualizador:\n" + error).c_str(),
+                                        APP_NAME, MB_ICONERROR);
+                        }
+                    } else if (e.tipo == Evento::DESCARGA_ERROR) {
+                        g_actualizando = false;
+                        EnableWindow(g_btn_convertir, TRUE);
+                        SendMessageW(g_progress, PBM_SETRANGE, 0, MAKELPARAM(0, 100));
+                        SendMessageW(g_progress, PBM_SETPOS, 0, 0);
+                        SetWindowTextW(g_status, L"Listo.");
+                        MessageBoxW(hwnd, (L"No se pudo descargar la actualizacion:\n" + e.texto).c_str(),
+                                    APP_NAME, MB_ICONERROR);
                     } else if (e.tipo == Evento::FIN) {
                         g_corriendo = false;
                         EnableWindow(g_btn_convertir, TRUE);
@@ -5453,7 +5858,7 @@ int wmain(int argc, wchar_t** argv) {
     wc.hIconSm = icono_pequeno;
     RegisterClassExW(&wc);
 
-    g_hwnd = CreateWindowExW(0, wc.lpszClassName, L"Conversor WebP 2.6.1",
+    g_hwnd = CreateWindowExW(0, wc.lpszClassName, L"Conversor WebP 2.6.2",
                              WS_OVERLAPPEDWINDOW,
                              CW_USEDEFAULT, CW_USEDEFAULT, 1016, 900, nullptr, nullptr, inst, nullptr);
     if (!g_hwnd) return 1;

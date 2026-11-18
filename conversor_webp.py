@@ -77,7 +77,7 @@ except Exception:  # pragma: no cover - la app sigue funcionando sin arrastrar
 
 
 APP_NAME = "Conversor WebP"
-APP_VERSION = "2.6.1"
+APP_VERSION = "2.6.2"
 
 try:  # soporte HEIC/HEIF (iPhone) si pillow-heif esta instalado
     import pillow_heif
@@ -290,8 +290,8 @@ def version_tupla(texto: str) -> tuple[int, ...]:
     return tuple(int(p) for p in re.findall(r"\d+", str(texto))[:3])
 
 
-def consultar_ultima_version(timeout: int = 8) -> tuple[str, str] | None:
-    """Consulta la ultima release publicada en GitHub. Devuelve (tag, url)."""
+def consultar_ultima_version(timeout: int = 8) -> dict | None:
+    """Consulta la ultima release publicada en GitHub."""
     url = "https://api.github.com/repos/zeronet75/ConversorWebP/releases/latest"
     peticion = urllib.request.Request(
         url,
@@ -305,7 +305,23 @@ def consultar_ultima_version(timeout: int = 8) -> tuple[str, str] | None:
     etiqueta = str(datos.get("tag_name", "")).strip()
     if not etiqueta:
         return None
-    return etiqueta, str(datos.get("html_url", ""))
+    assets = []
+    for a in datos.get("assets", []):
+        if not isinstance(a, dict):
+            continue
+        assets.append(
+            {
+                "name": str(a.get("name", "")),
+                "url": str(a.get("browser_download_url", "")),
+                "digest": str(a.get("digest", "")),
+                "size": int(a.get("size", 0) or 0),
+            }
+        )
+    return {
+        "tag": etiqueta,
+        "url": str(datos.get("html_url", "")),
+        "assets": assets,
+    }
 
 
 def aplicar_patron(patron: str, src: Path, rel: Path, job: Job, ext: str) -> Path:
@@ -349,6 +365,115 @@ def aplicar_patron(patron: str, src: Path, rel: Path, job: Job, ext: str) -> Pat
     if not texto:
         texto = rel.stem
     return rel.parent / (texto + ext)
+
+
+def _modo_actualizacion() -> str | None:
+    """Indica como esta instalado el programa, o None si se ejecuta como script."""
+    if not getattr(sys, "frozen", False):
+        return None
+    carpeta = Path(sys.executable).parent
+    if (carpeta / "unins000.exe").is_file():
+        return "setup"
+    if (carpeta / "portable.txt").is_file():
+        return "portable"
+    return "exe"
+
+
+def _asset_para_modo(modo: str, version: str) -> str:
+    v = version.lstrip("vV")
+    if modo == "setup":
+        return f"ConversorWebP-Setup-{v}.exe"
+    if modo == "portable":
+        return f"ConversorWebP-Portable-{v}.zip"
+    return "ConversorWebP.exe"
+
+
+def _ps_quote(texto: str) -> str:
+    return str(texto).replace("'", "''")
+
+
+def _crear_script_actualizacion(archivo: Path, modo: str) -> Path:
+    exe = Path(sys.executable)
+    carpeta = exe.parent
+    temp = Path(tempfile.gettempdir()) / "ConversorWebP_update"
+    temp.mkdir(parents=True, exist_ok=True)
+    ps1 = temp / f"actualizar_{os.getpid()}.ps1"
+    log = temp / "actualizar.log"
+    lineas = [
+        "$ErrorActionPreference = 'Stop'",
+        f"$log = '{_ps_quote(log)}'",
+        "function Registrar([string]$m) { Add-Content -LiteralPath $log -Value $m -Encoding UTF8 }",
+        "try {",
+        f"  $proceso = Get-Process -Id {os.getpid()} -ErrorAction SilentlyContinue",
+        "  if ($proceso) { $proceso.WaitForExit(60000) | Out-Null }",
+        "  Start-Sleep -Seconds 2",
+    ]
+    if modo == "setup":
+        lineas.append(
+            f"  $inst = Start-Process -FilePath '{_ps_quote(archivo)}' "
+            "-ArgumentList @('/VERYSILENT','/SUPPRESSMSGBOXES','/NORESTART',"
+            "'/CLOSEAPPLICATIONS','/NOCANCEL') -Wait -PassThru"
+        )
+        lineas.append(
+            "  if ($inst.ExitCode -ne 0) { throw ('El instalador termino con codigo ' + $inst.ExitCode) }"
+        )
+    elif modo == "portable":
+        lineas.append(
+            "  $stage = Join-Path $env:TEMP ('ConversorWebP_stage_' + [guid]::NewGuid().ToString('N'))"
+        )
+        lineas.append(
+            "  if (Test-Path -LiteralPath $stage) { Remove-Item -LiteralPath $stage -Recurse -Force }"
+        )
+        lineas.append("  Add-Type -AssemblyName System.IO.Compression.FileSystem")
+        lineas.append(
+            f"  [System.IO.Compression.ZipFile]::ExtractToDirectory('{_ps_quote(archivo)}', $stage)"
+        )
+        lineas.append("  $origen = $stage")
+        lineas.append(
+            "  $hijos = @(Get-ChildItem -LiteralPath $stage -Force)"
+        )
+        lineas.append(
+            "  if ($hijos.Count -eq 1 -and $hijos[0].PSIsContainer) { $origen = $hijos[0].FullName }"
+        )
+        lineas.append(
+            f"  Copy-Item -Path (Join-Path $origen '*') -Destination '{_ps_quote(carpeta)}' "
+            "-Recurse -Force"
+        )
+        lineas.append(
+            "  Remove-Item -LiteralPath $stage -Recurse -Force -ErrorAction SilentlyContinue"
+        )
+    else:
+        lineas.append(
+            f"  Copy-Item -LiteralPath '{_ps_quote(archivo)}' -Destination '{_ps_quote(exe)}' -Force"
+        )
+    lineas.extend(
+        [
+            f"  Start-Process -FilePath '{_ps_quote(exe)}' -WorkingDirectory '{_ps_quote(carpeta)}'",
+            "  Registrar 'ok'",
+            "} catch { Registrar ('ERROR: ' + $_.Exception.Message); exit 1 } "
+            "finally { Remove-Item -LiteralPath $PSCommandPath -Force -ErrorAction SilentlyContinue }",
+        ]
+    )
+    contenido = "\r\n".join(lineas) + "\r\n"
+    with open(ps1, "w", encoding="utf-8-sig", newline="") as fh:
+        fh.write(contenido)
+    return ps1
+
+def _lanzar_script_actualizacion(ps1: Path) -> None:
+    subprocess.Popen(
+        [
+            "powershell.exe",
+            "-NoProfile",
+            "-ExecutionPolicy",
+            "Bypass",
+            "-WindowStyle",
+            "Hidden",
+            "-File",
+            str(ps1),
+        ],
+        creationflags=_no_window_flags(),
+        close_fds=True,
+    )
 
 
 def ruta_manual() -> Path | None:
@@ -1684,6 +1809,7 @@ class App(BaseTk):  # type: ignore[misc,valid-type]
         self._vigilante: Vigilante | None = None
         self._watch_stop = threading.Event()
         self._closing = False
+        self._actualizando = False
         self._after_id: str | None = None
         self._actualizacion: tuple[str, str] | None = None
         self._comprobando_update = False
@@ -2448,6 +2574,16 @@ class App(BaseTk):  # type: ignore[misc,valid-type]
     def _comprobar_actualizaciones(self, manual: bool = False) -> None:
         if self._comprobando_update:
             return
+        if manual and self.running:
+            messagebox.showinfo(
+                APP_NAME, "Espera a que termine la conversion en curso."
+            )
+            return
+        if manual and self._actualizando:
+            messagebox.showinfo(
+                APP_NAME, "Ya se esta descargando una actualizacion."
+            )
+            return
         self._comprobando_update = True
         if manual:
             self.lbl_status.configure(text="Buscando actualizaciones...")
@@ -2473,28 +2609,143 @@ class App(BaseTk):  # type: ignore[misc,valid-type]
             return
 
         datos = info.get("datos")
-        if not datos:
+        if not datos or not isinstance(datos, dict):
             if manual:
                 messagebox.showinfo(APP_NAME, "No hay ninguna version publicada.")
             return
 
-        etiqueta, url = datos
+        etiqueta = str(datos.get("tag", "")).strip()
+        url = str(datos.get("url", "")).strip()
         self.ultima_comprobacion = datetime.now().strftime("%Y-%m-%d %H:%M")
         self._save_config()
         if version_tupla(etiqueta) > version_tupla(APP_VERSION):
             self._actualizacion = (etiqueta, url)
             self.lbl_status.configure(text=f"Actualizacion disponible: {etiqueta}")
             self._log("info", f"Nueva version disponible: {etiqueta} -> {url}")
-            if manual and messagebox.askyesno(
+            if not manual:
+                return
+            if _modo_actualizacion() is None:
+                if messagebox.askyesno(
+                    APP_NAME,
+                    f"Hay una version nueva: {etiqueta}\n"
+                    f"Tienes instalada la {APP_VERSION}.\n\n¿Abrir la pagina de descarga?",
+                ):
+                    webbrowser.open(url)
+                return
+            if messagebox.askyesno(
                 APP_NAME,
                 f"Hay una version nueva: {etiqueta}\n"
-                f"Tienes instalada la {APP_VERSION}.\n\n¿Abrir la pagina de descarga?",
+                f"Tienes instalada la {APP_VERSION}.\n\n¿Descargar e instalar ahora?\n"
+                "La aplicacion se cerrara y volvera a abrirse automaticamente.",
             ):
-                webbrowser.open(url)
+                self._iniciar_actualizacion(datos)
         elif manual:
             messagebox.showinfo(
                 APP_NAME, f"Estas en la ultima version ({APP_VERSION})."
             )
+
+    def _iniciar_actualizacion(self, datos: dict) -> None:
+        if self._actualizando:
+            return
+        modo = _modo_actualizacion()
+        if modo is None:
+            webbrowser.open(str(datos.get("url", "")))
+            return
+        version = str(datos.get("tag", ""))
+        nombre = _asset_para_modo(modo, version)
+        asset = next(
+            (a for a in datos.get("assets", []) if a.get("name") == nombre), None
+        )
+        if not asset or not str(asset.get("url", "")).startswith(
+            "https://github.com/"
+        ):
+            messagebox.showerror(
+                APP_NAME,
+                "No se encontro el archivo de actualizacion adecuado para esta instalacion.",
+            )
+            return
+        digest = str(asset.get("digest", ""))
+        if not digest.startswith("sha256:"):
+            messagebox.showerror(
+                APP_NAME,
+                "La actualizacion no incluye una firma SHA-256; no se instalara.",
+            )
+            return
+        self._actualizando = True
+        self.btn_start.configure(state="disabled")
+        self.progress.configure(maximum=100, value=0)
+        self.lbl_status.configure(text="Descargando actualizacion...")
+        self._log("info", f"Descargando actualizacion: {nombre}")
+        threading.Thread(
+            target=self._descargar_actualizacion,
+            args=(str(asset["url"]), digest, nombre, modo),
+            daemon=True,
+        ).start()
+
+    def _descargar_actualizacion(
+        self, url: str, digest: str, nombre: str, modo: str
+    ) -> None:
+        try:
+            destino = Path(tempfile.gettempdir()) / "ConversorWebP_update" / nombre
+            destino.parent.mkdir(parents=True, exist_ok=True)
+            peticion = urllib.request.Request(
+                url, headers={"User-Agent": f"ConversorWebP/{APP_VERSION}"}
+            )
+            hash_sha = hashlib.sha256()
+            total = 0
+            leidos = 0
+            ultimo_pct = -1
+            with urllib.request.urlopen(peticion, timeout=30) as respuesta, open(
+                destino, "wb"
+            ) as salida:
+                total = int(respuesta.headers.get("Content-Length") or 0)
+                while True:
+                    trozo = respuesta.read(256 * 1024)
+                    if not trozo:
+                        break
+                    salida.write(trozo)
+                    hash_sha.update(trozo)
+                    leidos += len(trozo)
+                    pct = int(leidos * 100 / total) if total else -1
+                    if pct < 0 or pct == 100 or pct - ultimo_pct >= 2:
+                        ultimo_pct = pct
+                        self.queue.put(("update_progress", pct))
+            esperado = digest.split(":", 1)[1].lower()
+            if hash_sha.hexdigest() != esperado:
+                raise RuntimeError("El SHA-256 del archivo descargado no coincide.")
+            if leidos == 0:
+                raise RuntimeError("La descarga quedo vacia.")
+            self.queue.put(
+                ("update_downloaded", {"path": str(destino), "modo": modo})
+            )
+        except Exception as e:  # noqa: BLE001
+            self.queue.put(("update_download_error", str(e)))
+
+    def _instalar_actualizacion(self, archivo: Path, modo: str) -> None:
+        try:
+            ps1 = _crear_script_actualizacion(archivo, modo)
+            _lanzar_script_actualizacion(ps1)
+        except Exception as e:  # noqa: BLE001
+            self._fallo_actualizacion(str(e))
+            return
+        self.lbl_status.configure(text="Reiniciando para actualizar...")
+        self.after(700, self._cerrar_para_actualizar)
+
+    def _fallo_actualizacion(self, mensaje: str) -> None:
+        self._actualizando = False
+        try:
+            self.btn_start.configure(state="normal")
+            self.progress.configure(maximum=100, value=0)
+            self.lbl_status.configure(text="Listo.")
+        except Exception:  # noqa: BLE001
+            pass
+        messagebox.showerror(APP_NAME, f"No se pudo actualizar:\n{mensaje}")
+
+    def _cerrar_para_actualizar(self) -> None:
+        self._save_config()
+        self._watch_stop.set()
+        self._al_destruir()
+        self.destroy()
 
     def _auto_comprobar_update(self) -> None:
         if not self.buscar_actualizaciones:
@@ -3232,6 +3483,11 @@ class App(BaseTk):  # type: ignore[misc,valid-type]
     def _start(self) -> None:
         if self.running:
             return
+        if self._actualizando:
+            messagebox.showinfo(
+                APP_NAME, "Espera a que termine la descarga de la actualizacion."
+            )
+            return
         if not self.sources:
             messagebox.showwarning(APP_NAME, "Arrastra o anade al menos una imagen, carpeta o comprimido.")
             return
@@ -3432,6 +3688,20 @@ class App(BaseTk):  # type: ignore[misc,valid-type]
                     self._log("info", str(dato))
                 elif tipo == "update":
                     self._procesar_update(dato)
+                elif tipo == "update_progress":
+                    if isinstance(dato, int) and dato >= 0:
+                        self.progress.configure(maximum=100, value=dato)
+                        self.lbl_status.configure(
+                            text=f"Descargando actualizacion... {dato}%"
+                        )
+                    else:
+                        self.lbl_status.configure(text="Descargando actualizacion...")
+                elif tipo == "update_downloaded":
+                    self._instalar_actualizacion(
+                        Path(dato["path"]), str(dato["modo"])
+                    )
+                elif tipo == "update_download_error":
+                    self._fallo_actualizacion(str(dato))
                 elif tipo == "done":
                     self._finish(dato)
         except queue.Empty:

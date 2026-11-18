@@ -6,6 +6,19 @@ Todos los cambios relevantes del proyecto. Formato basado en
 
 ---
 
+## [2.6.2] — 2026-11-18
+
+### Añadido
+
+- **Actualización automática** desde la propia aplicación, en Python y C++.
+- Elige el archivo correcto según cómo esté instalado el programa: instalador (setup), portable (ZIP) o ejecutable suelto.
+- Descarga desde GitHub, verifica el **SHA-256** publicado por la API y aplica la actualización en el mismo directorio.
+- Un script auxiliar espera a que la aplicación se cierre, sustituye los archivos y la vuelve a abrir automáticamente.
+- Si la descarga o la verificación fallan, no se modifica nada y se muestra el error.
+- La actualización manual sigue mostrando el aviso de «estás al día» o de nueva versión.
+
+---
+
 ## [2.6.1] — 2026-11-18
 
 ### Añadido
@@ -223,6 +236,7 @@ Todos los cambios relevantes del proyecto. Formato basado en
 - Conservación de transparencia, perfil ICC y orientación EXIF.
 - Modo consola básico.
 
+[2.6.2]: #262--2026-11-18
 [2.6.1]: #261--2026-11-18
 [2.6.0]: #260--2026-11-17
 [2.5.1]: #251--2026-11-17
