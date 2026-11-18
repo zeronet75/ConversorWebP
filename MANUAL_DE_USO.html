@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Manual de uso · Conversor WebP 2.11.0</title>
+<title>Manual de uso · Conversor WebP 2.12.0</title>
 <style>
   :root{
     --azul:#1a73e8; --azul-osc:#1557b0; --texto:#1f2933; --gris:#5f6b7a;
@@ -67,7 +67,7 @@
 <div class="hoja">
 
 <header>
-  <h1>Conversor WebP 2.11.0</h1>
+  <h1>Conversor WebP 2.12.0</h1>
   <p class="sub">Manual de uso · Qué hace cada opción y cómo sacarle partido</p>
 </header>
 
@@ -94,7 +94,7 @@
 </div>
 
 <div class="nota">
-  <strong>Novedades de la versión 2.11.0:</strong> conversión de vídeos MP4, MOV, MKV, AVI, WebM y similares a <strong>WebM</strong> (VP9 + Opus) con FFmpeg, en lotes mixtos con imágenes; y DPI nítido del sistema en la edición C++ (texto y controles a resolución real, con opciones <code>auto</code>, <code>system</code> y <code>gdi</code>). Se mantienen la cola persistente con pausa, reanudación, reintento y reordenación; vista previa con calidad de prueba y peso estimado; WebP animado desde GIF/WebP; conservación opcional de metadatos EXIF/XMP y fecha original; CLI con salida JSON, modo silencioso, trabajos en paralelo y presets; actualizaciones con verificación Authenticode cuando el ejecutable esté firmado; configuración atómica en C++; aviso de espacio libre, tiempo restante e instancia única.
+  <strong>Novedades de la versión 2.12.0:</strong> FFmpeg y ffprobe incluidos en el portable y el instalador; conversión de vídeos MP4, MOV, MKV, AVI, WebM y similares a <strong>WebM</strong> (VP9 + Opus), en lotes mixtos con imágenes; y DPI nítido del sistema en la edición C++ (texto y controles a resolución real, con opciones <code>auto</code>, <code>system</code> y <code>gdi</code>). Se mantienen la cola persistente con pausa, reanudación, reintento y reordenación; vista previa con calidad de prueba y peso estimado; WebP animado desde GIF/WebP; conservación opcional de metadatos EXIF/XMP y fecha original; CLI con salida JSON, modo silencioso, trabajos en paralelo y presets; actualizaciones con verificación Authenticode cuando el ejecutable esté firmado; configuración atómica en C++; aviso de espacio libre, tiempo restante e instancia única.
   <br><br>
   <strong>Novedades de la versión 2.6.2:</strong> actualización automática desde la propia aplicación,
   edición C++ con paridad funcional, apagado opcional, tooltips, HEIC, carpeta vigilada, patrones,
@@ -343,11 +343,11 @@ OGV y otros formatos que entienda FFmpeg.</p>
   <li>El <strong>peso máximo en KB</strong> solo se aplica a imágenes.</li>
   <li>Un <code>.webm</code> de origen se omite salvo que actives <strong>Recodificar</strong>.</li>
 </ul>
-<p>Para vídeo hace falta <strong>FFmpeg</strong>. El programa lo busca en <code>PATH</code>, junto al
-ejecutable, en <code>bin\</code>, en <code>tools\</code> o en la ruta que indiques con <code>--ffmpeg</code>.
-Puedes descargarlo en <a href="https://www.gyan.dev/ffmpeg/builds/">gyan.dev</a> y copiar
-<code>ffmpeg.exe</code> (y <code>ffprobe.exe</code> si usas patrones con <code>{ancho}</code>) junto a
-<code>ConversorWebP.exe</code>. El menú <em>Herramientas → Descargar FFmpeg</em> abre esa página.</p>
+<p>El <strong>instalador</strong> y el <strong>portable</strong> incluyen <code>ffmpeg.exe</code> y
+<code>ffprobe.exe</code> en la misma carpeta. Si usas el ejecutable suelto o el código fuente, descarga
+FFmpeg en <a href="https://www.gyan.dev/ffmpeg/builds/">gyan.dev</a> y copia ambos junto a
+<code>ConversorWebP.exe</code>. También puedes indicar una ruta con <code>--ffmpeg</code>. El menú
+<em>Herramientas → Descargar FFmpeg</em> abre la página de descarga.</p>
 
 <h2 id="acciones">6. Botones de acción, progreso y registro</h2>
 <table>
@@ -606,7 +606,7 @@ muestran un aviso en la barra de estado. <em>Ayuda → Buscar actualizaciones</e
 ofrece abrir la página de descarga.</p>
 
 <p class="pie">
-  Conversor WebP 2.11.0 · Programa local para Windows · Interfaz Tkinter, conversión con Pillow, arrastre con
+  Conversor WebP 2.12.0 · Programa local para Windows · Interfaz Tkinter, conversión con Pillow, arrastre con
   TkDND, extracción con 7-Zip/WinRAR.<br>
   Este manual se abre desde el programa en <strong>Ayuda → Manual de uso</strong> y también puede abrirse
   con doble clic en cualquier navegador.

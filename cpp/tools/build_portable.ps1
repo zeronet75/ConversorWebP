@@ -1,5 +1,5 @@
 param(
-    [string]$Version = "2.11.0"
+    [string]$Version = "2.12.0"
 )
 
 $ErrorActionPreference = "Stop"
@@ -22,7 +22,7 @@ foreach ($extra in @("LEEME.txt", "ConversorWebPC.exe.manifest")) {
     $ruta = Join-Path $bin $extra
     if (Test-Path $ruta) { Copy-Item $ruta $stage }
 }
-foreach ($dll in @("7zr.exe", "ConversorWebPContext.dll", "ffmpeg.exe", "ffprobe.exe")) {
+foreach ($dll in @("7zr.exe", "ConversorWebPContext.dll", "ffmpeg.exe", "ffprobe.exe", "LICENCIA_FFMPEG.txt")) {
     $ruta = Join-Path $bin $dll
     if (Test-Path $ruta) { Copy-Item $ruta $stage }
 }

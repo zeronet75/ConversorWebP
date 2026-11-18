@@ -80,7 +80,7 @@ using Microsoft::WRL::ComPtr;
 namespace fs = std::filesystem;
 
 static const wchar_t* APP_NAME = L"Conversor WebP";
-static const wchar_t* APP_VERSION = L"2.11.0";
+static const wchar_t* APP_VERSION = L"2.12.0";
 
 // ---------------------------------------------------------------------------
 //  Utilidades generales
@@ -1763,7 +1763,7 @@ struct Options {
     bool beep = true;
     bool csv = false;
     std::wstring salida;
-    std::wstring zip_nombre = L"imagenes_2.11.0-cpp.zip";
+    std::wstring zip_nombre = L"imagenes_2.12.0-cpp.zip";
     std::wstring patron;
     std::wstring formato = L"WEBP";
     bool dry_run = false;
@@ -6543,7 +6543,7 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
 
             // Cabecera
             etiqueta(L"Conversor WebP", 16, 17, 300, 30, 1400, g_font_title);
-            etiqueta(L"v2.11.0", 200, 29, 120, 18, 1401, g_font_muted);
+            etiqueta(L"v2.12.0", 200, 29, 120, 18, 1401, g_font_muted);
             etiqueta(L"JPG · PNG · BMP · TIFF · GIF · ICO  →  WebP / AVIF", 560, 23, 390, 20,
                      1402, g_font_muted, SS_RIGHT);
             boton(L"", 958, 20, 26, 26, ID_TEMA, BS_OWNERDRAW);
@@ -7929,7 +7929,7 @@ int wmain(int argc, wchar_t** argv) {
     wc.hIconSm = icono_pequeno;
     RegisterClassExW(&wc);
 
-    g_hwnd = CreateWindowExW(0, wc.lpszClassName, L"Conversor WebP 2.11.0",
+    g_hwnd = CreateWindowExW(0, wc.lpszClassName, L"Conversor WebP 2.12.0",
                              WS_OVERLAPPEDWINDOW,
                              CW_USEDEFAULT, CW_USEDEFAULT, dpx(1016), dpx(900), nullptr, nullptr, inst, nullptr);
     if (!g_hwnd) return 1;

@@ -27,3 +27,6 @@ desktop.ini
 # Logs y temporales
 *.log
 *.tmp
+
+# FFmpeg descargado para empaquetar (no se versiona)
+third_party/ffmpeg/

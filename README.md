@@ -11,7 +11,7 @@
 </p>
 
 <p align="center">
-  <img alt="Versión" src="https://img.shields.io/badge/version-2.11.0-1a73e8">
+  <img alt="Versión" src="https://img.shields.io/badge/version-2.12.0-1a73e8">
   <img alt="Windows" src="https://img.shields.io/badge/Windows-10%20%7C%2011-0078D6">
   <img alt="Python" src="https://img.shields.io/badge/Python-3.12-3776AB">
   <img alt="Pillow" src="https://img.shields.io/badge/Pillow-13-11557C">
@@ -125,7 +125,7 @@ El programa se distribuye en dos formas:
 | Uso | Necesitas |
 |---|---|
 | Ejecutable `.exe` | Windows 10 u 11 (64 bits). Nada más para imágenes. |
-| Convertir vídeo a WebM | [FFmpeg](https://www.gyan.dev/ffmpeg/builds/) en el `PATH` o `ffmpeg.exe` junto al programa. |
+| Convertir vídeo a WebM | **Incluido** en el instalador y el portable (`ffmpeg.exe` + `ffprobe.exe`). En el ejecutable suelto o desde el código fuente, ponlos en el `PATH` o junto al programa. |
 | Código fuente | Python 3.10 o superior (probado con 3.12). |
 | Abrir `.rar` / `.7z` | [7-Zip](https://www.7-zip.org) o WinRAR instalados (los `.zip` funcionan sin nada). |
 
@@ -330,16 +330,13 @@ en WebP o AVIF. Se usa **VP9** para imagen y **Opus** para el audio:
 - El **peso máximo por imagen** no se aplica a vídeos.
 - Un `.webm` de origen se omite salvo que se active **Recodificar**.
 
-FFmpeg es necesario. El programa lo busca en este orden:
+FFmpeg se incluye en el **instalador** y en el **portable** (`ffmpeg.exe` y `ffprobe.exe` en la misma
+carpeta). Si usas el ejecutable suelto o el código fuente, descarga una build estática en
+<https://www.gyan.dev/ffmpeg/builds/> y copia `ffmpeg.exe` y `ffprobe.exe` junto a `ConversorWebP.exe`,
+o instálalos en el `PATH`. El menú **Herramientas → Descargar FFmpeg para vídeo** abre esa página.
 
-1. `--ffmpeg RUTA` o la clave `ffmpeg` de `config.ini`.
-2. La variable de entorno `CONVERSOR_FFMPEG`.
-3. `ffmpeg.exe` junto al programa, en `bin\`, en `tools\` o en `tools\ffmpeg\`.
-4. El `PATH` de Windows.
-
-Puedes descargar una build estática en <https://www.gyan.dev/ffmpeg/builds/> y copiar `ffmpeg.exe` (y
-`ffprobe.exe` para los patrones `{ancho}`/`{alto}`) junto a `ConversorWebP.exe`. El menú
-**Herramientas → Descargar FFmpeg para vídeo** abre esa página.
+El programa busca FFmpeg en este orden: `--ffmpeg` o la clave `ffmpeg` de `config.ini`, la variable
+`CONVERSOR_FFMPEG`, la carpeta del ejecutable (y `bin\`, `tools\`, `tools\ffmpeg\`) y el `PATH`.
 
 La conversión de vídeo se hace **de uno en uno** (FFmpeg ya usa varios hilos); las imágenes del mismo
 lote siguen convirtiéndose en paralelo.
@@ -647,6 +644,7 @@ ConversorWebP/
 
 Consulta [CHANGELOG.md](CHANGELOG.md). Resumen:
 
+- **2.12.0** — FFmpeg y ffprobe incluidos en el portable y el instalador de Python y C++.
 - **2.11.0** — conversión de vídeo a WebM (VP9 + Opus) con FFmpeg, en lotes mixtos.
 - **2.10.0** — DPI nítido del sistema en C++, con opciones `auto`, `system` y `gdi`.
 - **2.9.1** — menú contextual moderno de Windows 11 mediante DLL COM opcional.

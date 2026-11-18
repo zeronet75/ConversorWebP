@@ -8,8 +8,9 @@ del proyecto principal.
   tarjetas, secciones y controles que la versión Tkinter.
 - **Decodificación:** WIC (incluye HEIC/HEIF si el códec HEVC de Windows está instalado) y libavif (AVIF).
 - **Codificación:** libwebp 1.6.0 y libavif 1.4.2 con libaom 3.12.1, estáticas.
-- **Vídeo:** conversión a WebM (VP9 + Opus) mediante FFmpeg externo. Se detecta en `PATH`,
-  junto al `.exe`, en `bin\`, `tools\` o con `--ffmpeg`. También acepta vídeos en lotes mixtos.
+- **Vídeo:** conversión a WebM (VP9 + Opus) mediante FFmpeg. El instalador y el portable incluyen
+  `ffmpeg.exe` y `ffprobe.exe`; también se detecta en `PATH`, junto al `.exe`, en `bin\`, `tools\`
+  o con `--ffmpeg`. Acepta vídeos en lotes mixtos.
 - **Color:** lcms2 para validar/convertir perfiles; los perfiles RGB se incrustan en
   WebP (chunk ICCP) y AVIF.
 - **Portable:** el ejecutable no escribe en el registro; usa `config.ini` junto al

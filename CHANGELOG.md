@@ -6,6 +6,28 @@ Todos los cambios relevantes del proyecto. Formato basado en
 
 ---
 
+## [2.12.0] — 2026-11-18
+
+### Añadido
+
+- **FFmpeg incluido** en las cuatro distribuciones empaquetadas: portable y setup de Python y de C++.
+- `ffmpeg.exe`, `ffprobe.exe` y `LICENCIA_FFMPEG.txt` se instalan/descomprimen **en la misma carpeta** que el ejecutable.
+- El programa los detecta automáticamente al arrancar; ya no hay que configurar el `PATH` en esas versiones.
+- Script `tools/preparar_ffmpeg.ps1` para descargar/cachear FFmpeg y `tools/empaquetar_python.ps1` / `tools/empaquetar_cpp.ps1` para generar los paquetes completos.
+- Los paquetes incluyen el texto de la **GPLv3** de FFmpeg y el enlace al código fuente.
+
+### Notas
+
+- El ejecutable suelto (`ConversorWebP.exe`) y el código fuente siguen necesitando FFmpeg aparte.
+- El ZIP y los instaladores crecen unos 100 MB por la build estática de FFmpeg.
+
+### Pruebas
+
+- Paquetes generados y verificados: `ffmpeg.exe`, `ffprobe.exe` y licencia presentes.
+- Conversión de vídeo desde la carpeta portable y desde una instalación silenciosa del setup.
+
+---
+
 ## [2.11.0] — 2026-11-18
 
 ### Añadido
@@ -397,6 +419,7 @@ Todos los cambios relevantes del proyecto. Formato basado en
 - Conservación de transparencia, perfil ICC y orientación EXIF.
 - Modo consola básico.
 
+[2.12.0]: #2120--2026-11-18
 [2.11.0]: #2110--2026-11-18
 [2.10.0]: #2100--2026-11-18
 [2.9.1]: #291--2026-11-18

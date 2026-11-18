@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Manual de uso · Conversor WebP 2.11.0</title>
+<title>Manual de uso · Conversor WebP 2.12.0</title>
 <style>
   :root{
     --azul:#1a73e8; --azul-osc:#1557b0; --texto:#1f2933; --gris:#5f6b7a;
@@ -67,7 +67,7 @@
 <div class="hoja">
 
 <header>
-  <h1>Conversor WebP 2.11.0</h1>
+  <h1>Conversor WebP 2.12.0</h1>
   <p class="sub">Manual de uso · Qué hace cada opción y cómo sacarle partido</p>
 </header>
 
@@ -95,7 +95,7 @@
 </div>
 
 <div class="nota">
-  <strong>Novedades de la versión 2.11.0:</strong> conversión de vídeos MP4, MOV, MKV, AVI, WebM y similares a <strong>WebM</strong> (VP9 + Opus) con FFmpeg, en lotes mixtos con imágenes; y DPI nítido del sistema en la edición C++ (texto, controles y diálogos a la resolución real, con opciones <code>auto</code>, <code>system</code> y <code>gdi</code>). Se mantienen la cola persistente con pausa y reintento; vista previa con calidad de prueba y peso estimado; WebP animado; conservación opcional de fecha original; CLI con JSON, modo silencioso, trabajos en paralelo y presets; configuración atómica, espacio libre, tiempo restante e instancia única.
+  <strong>Novedades de la versión 2.12.0:</strong> FFmpeg y ffprobe incluidos en el portable y el instalador; conversión de vídeos MP4, MOV, MKV, AVI, WebM y similares a <strong>WebM</strong> (VP9 + Opus), en lotes mixtos con imágenes; y DPI nítido del sistema en la edición C++ (texto, controles y diálogos a la resolución real, con opciones <code>auto</code>, <code>system</code> y <code>gdi</code>). Se mantienen la cola persistente con pausa y reintento; vista previa con calidad de prueba y peso estimado; WebP animado; conservación opcional de fecha original; CLI con JSON, modo silencioso, trabajos en paralelo y presets; configuración atómica, espacio libre, tiempo restante e instancia única.
   <br><br>
   <strong>Novedades de la versión 2.6.2:</strong> actualización automática desde la aplicación: descarga el instalador o el portable según la instalación, verifica su SHA-256, lo aplica en el directorio actual y reinicia el programa; edición C++ nativa (Win32) con paridad funcional, icono de aplicación, selector de color visible, ventana maximizable, sin consola y correcciones de estabilidad; manual y «Acerca de» propios, apagado opcional al terminar, tooltips explicativos, HEIC, carpeta vigilada, patrones de nombre, solo analizar, tabla de resultados, vista previa, menú contextual, instalador y portable, presets de calidad, redimensionado, peso máximo por imagen,
   historial de trabajos, selección múltiple, atajos de teclado, conversión en paralelo, informe CSV,
@@ -326,11 +326,12 @@ otros formatos compatibles con FFmpeg.</p>
   <li>El <strong>peso máximo en KB</strong> solo se aplica a imágenes.</li>
   <li>Un <code>.webm</code> de origen se omite salvo que actives <strong>Recodificar</strong>.</li>
 </ul>
-<p>FFmpeg es necesario. Se busca en <code>PATH</code>, junto a <code>ConversorWebPC.exe</code>, en
-<code>bin\</code>, en <code>tools\</code>, en <code>tools\ffmpeg\</code> o en la ruta indicada por
-<code>--ffmpeg</code> o la clave <code>ffmpeg</code> de <code>config.ini</code>. Descarga una build en
-<a href="https://www.gyan.dev/ffmpeg/builds/">gyan.dev</a> y copia <code>ffmpeg.exe</code> y
-<code>ffprobe.exe</code>. El menú <em>Herramientas → Descargar FFmpeg para vídeo</em> abre la página.</p>
+<p>El <strong>instalador</strong> y el <strong>portable</strong> incluyen <code>ffmpeg.exe</code> y
+<code>ffprobe.exe</code> en la misma carpeta. Si usas el ejecutable suelto o el código fuente, descarga
+una build en <a href="https://www.gyan.dev/ffmpeg/builds/">gyan.dev</a> y copia ambos junto a
+<code>ConversorWebPC.exe</code>. También puedes indicar la ruta con <code>--ffmpeg</code> o la clave
+<code>ffmpeg</code> de <code>config.ini</code>. El menú
+<em>Herramientas → Descargar FFmpeg para vídeo</em> abre la página.</p>
 
 <h2 id="acciones">6. Botones de acción, progreso y registro</h2>
 <table>
@@ -606,7 +607,7 @@ muestran un aviso en la barra de estado. <em>Ayuda → Buscar actualizaciones</e
 ofrece abrir la página de descarga.</p>
 
 <p class="pie">
-  Conversor WebP 2.11.0 · Programa local para Windows · Interfaz Win32, conversión con WIC + libwebp/libavif,
+  Conversor WebP 2.12.0 · Programa local para Windows · Interfaz Win32, conversión con WIC + libwebp/libavif,
   arrastre nativo y extracción con 7-Zip/WinRAR.<br>
   Este manual se abre desde el programa en <strong>Ayuda → Manual de uso</strong> y también puede abrirse
   con doble clic en cualquier navegador.

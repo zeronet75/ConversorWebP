@@ -1,4 +1,4 @@
-CONVERSOR WEBP 2.11.0
+CONVERSOR WEBP 2.12.0
 ====================
 
 Aplicacion para convertir imagenes (JPG, PNG, BMP, TIFF, GIF, ICO...) a
@@ -92,10 +92,11 @@ sistema (se detecta automaticamente). Si no aparece ninguno, la esquina
 inferior derecha de la ventana mostrara "Sin 7-Zip/WinRAR: solo .zip".
 Instala 7-Zip (gratuito, https://www.7-zip.org) para habilitarlos.
 
-Para convertir videos hace falta FFmpeg. Descargalo en
-https://www.gyan.dev/ffmpeg/builds/ y copia ffmpeg.exe junto a
-ConversorWebP.exe (o anadelo al PATH). Sin FFmpeg, las imagenes siguen
-funcionando con normalidad.
+Para convertir videos, el instalador y el portable ya incluyen ffmpeg.exe y
+ffprobe.exe en la misma carpeta. Si usas el ejecutable suelto o el codigo
+fuente, descarga FFmpeg en https://www.gyan.dev/ffmpeg/builds/ y copia
+ffmpeg.exe y ffprobe.exe junto a ConversorWebP.exe (o anadelos al PATH).
+Sin FFmpeg, las imagenes siguen funcionando con normalidad.
 
 --------------------------------------------------------------------------
 NOTAS
