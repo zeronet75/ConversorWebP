@@ -1968,6 +1968,9 @@ class App(BaseTk):  # type: ignore[misc,valid-type]
         self._preview_win: tk.Toplevel | None = None
         self._preview_temp: Path | None = None
         self._preview_generando = False
+        self._preview_token = 0
+        self._preview_lbl_b = None
+        self._preview_lbl_estim = None
         self.pause_event = threading.Event()
         self._fallidos_ultimos: list[Path] = []
         self._sources_iniciales = bool(sources_iniciales)
@@ -3635,6 +3638,7 @@ class App(BaseTk):  # type: ignore[misc,valid-type]
                         {
                             "origen": origen,
                             "temporal": temporal,
+                            "job": job,
                             "formato": job.formato,
                             "imagen_original": imagen_original,
                             "imagen_convertida": imagen_convertida,
@@ -3658,6 +3662,19 @@ class App(BaseTk):  # type: ignore[misc,valid-type]
         ventana = self._preview_win
         self._preview_win = None
         self._preview_generando = False
+        self._preview_lbl_b = None
+        self._preview_lbl_estim = None
+        if ventana is not None:
+            try:
+                token = getattr(ventana, "_preview_token", None)
+                if token is not None:
+                    token[0] += 1
+                after_id = getattr(ventana, "_preview_after", None)
+                if after_id is not None and after_id[0] is not None:
+                    ventana.after_cancel(after_id[0])
+                    after_id[0] = None
+            except tk.TclError:
+                pass
         if temporal is not None:
             shutil.rmtree(temporal, ignore_errors=True)
         if ventana is not None:
@@ -3692,6 +3709,7 @@ class App(BaseTk):  # type: ignore[misc,valid-type]
         lbl_b = tk.Label(cont, image=mini_b, bg=CARD, relief="flat")
         lbl_b.grid(row=0, column=1, padx=8, pady=8)
         ventana._miniaturas = (mini_a, mini_b)  # type: ignore[attr-defined]
+        self._preview_lbl_b = lbl_b
 
         tam_original = dato["tam_original"]
         tam_convertida = dato["tam_convertida"]
@@ -3715,18 +3733,117 @@ class App(BaseTk):  # type: ignore[misc,valid-type]
             justify="center",
         ).grid(row=1, column=1, pady=(0, 8))
 
+        fila_cal = ttk.Frame(cont)
+        fila_cal.grid(row=2, column=0, columnspan=2, pady=(2, 0))
+        ttk.Label(fila_cal, text="Calidad de prueba", style="TLabel").pack(side="left")
+        calidad = tk.IntVar(value=int(dato["job"].quality))
+        escala = tk.Scale(
+            fila_cal,
+            from_=1,
+            to=100,
+            orient="horizontal",
+            variable=calidad,
+            showvalue=False,
+            length=240,
+            bg=BG,
+            troughcolor=BORDER,
+            activebackground=ACCENT_DARK,
+            highlightthickness=0,
+            bd=1,
+            sliderrelief="raised",
+        )
+        escala.pack(side="left", padx=(8, 4))
+        lbl_cal = ttk.Label(fila_cal, text=str(calidad.get()), style="TLabel", width=3)
+        lbl_cal.pack(side="left")
+        lbl_estim = ttk.Label(cont, text="", style="TLabel")
+        lbl_estim.grid(row=3, column=0, columnspan=2, pady=(2, 0))
+        lbl_estim.configure(
+            text=f"Peso actual: {peso_out:.1f} KB · calidad {int(dato['job'].quality)}"
+        )
+        self._preview_lbl_estim = lbl_estim
+        ventana._preview_token = [0]
+        ventana._preview_after = [None]
+
+        def estimar() -> None:
+            ventana._preview_after[0] = None
+            ventana._preview_token[0] += 1
+            token = ventana._preview_token[0]
+            q = max(1, min(100, int(calidad.get())))
+            lbl_cal.configure(text=str(q))
+            lbl_estim.configure(text=f"Calculando peso a calidad {q}...")
+
+            def tarea() -> None:
+                try:
+                    ext = ".avif" if str(dato["job"].formato).upper() == "AVIF" else ".webp"
+                    destino_prueba = temporal / f"prueba_{q}{ext}"
+                    job_prueba = Job(
+                        **{
+                            **dato["job"].__dict__,
+                            "quality": q,
+                            "target_kb": 0,
+                            "make_zip": False,
+                            "csv_report": False,
+                            "dry_run": False,
+                        }
+                    )
+                    convert_one(origen, destino_prueba, job_prueba)
+                    tam = destino_prueba.stat().st_size / 1024
+                    with Image.open(destino_prueba) as im:
+                        im.load()
+                        imagen = im.convert("RGB")
+                    self.queue.put(
+                        (
+                            "preview_estimate",
+                            {
+                                "token": token,
+                                "window": ventana,
+                                "quality": q,
+                                "size": tam,
+                                "image": imagen,
+                            },
+                        )
+                    )
+                except Exception as e:  # noqa: BLE001
+                    self.queue.put(
+                        (
+                            "preview_estimate_error",
+                            {"token": token, "window": ventana, "error": str(e)},
+                        )
+                    )
+
+            threading.Thread(target=tarea, daemon=True).start()
+
+        def programar(_valor=None) -> None:
+            if ventana._preview_after[0] is not None:
+                try:
+                    ventana.after_cancel(ventana._preview_after[0])
+                except tk.TclError:
+                    pass
+            ventana._preview_after[0] = ventana.after(350, estimar)
+
+        escala.configure(command=programar)
+
         def cerrar() -> None:
+            ventana._preview_token[0] += 1
+            if ventana._preview_after[0] is not None:
+                try:
+                    ventana.after_cancel(ventana._preview_after[0])
+                except tk.TclError:
+                    pass
+                ventana._preview_after[0] = None
             if self._preview_temp == temporal:
                 self._preview_temp = None
                 shutil.rmtree(temporal, ignore_errors=True)
             self._preview_win = None
+            self._preview_lbl_b = None
+            self._preview_lbl_estim = None
             try:
                 ventana.destroy()
             except tk.TclError:
                 pass
 
         ttk.Button(cont, text="Cerrar", command=cerrar).grid(
-            row=2, column=0, columnspan=2, pady=(6, 0)
+            row=4, column=0, columnspan=2, pady=(6, 0)
         )
         ventana.protocol("WM_DELETE_WINDOW", cerrar)
         self.lbl_status.configure(text="Vista previa lista.")
@@ -4525,6 +4642,33 @@ class App(BaseTk):  # type: ignore[misc,valid-type]
                         messagebox.showerror(
                             APP_NAME, f"No se pudo generar la vista previa:\n{error}"
                         )
+                elif tipo == "preview_estimate":
+                    ventana = dato.get("window")
+                    if ventana is self._preview_win and ventana is not None:
+                        token = getattr(ventana, "_preview_token", [0])
+                        if dato.get("token") == token[0] and self._preview_lbl_estim is not None:
+                            self._preview_lbl_estim.configure(
+                                text=(
+                                    f"Peso estimado: {float(dato['size']):.1f} KB "
+                                    f"· calidad {dato['quality']}"
+                                )
+                            )
+                            if self._preview_lbl_b is not None:
+                                foto = self._miniatura(dato["image"], 380, 320)
+                                self._preview_lbl_b.configure(image=foto)
+                                self._preview_lbl_b.image = foto
+                                try:
+                                    ventana._miniaturas = (ventana._miniaturas[0], foto)
+                                except Exception:  # noqa: BLE001
+                                    pass
+                elif tipo == "preview_estimate_error":
+                    ventana = dato.get("window")
+                    if ventana is self._preview_win and ventana is not None:
+                        token = getattr(ventana, "_preview_token", [0])
+                        if dato.get("token") == token[0] and self._preview_lbl_estim is not None:
+                            self._preview_lbl_estim.configure(
+                                text=f"No se pudo estimar: {dato.get('error', '')}"
+                            )
                 elif tipo == "done":
                     self._finish(dato)
         except queue.Empty:

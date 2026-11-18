@@ -4044,6 +4044,13 @@ static std::wstring g_prev_info_orig;
 static std::wstring g_prev_info_webp;
 static std::wstring g_prev_etiqueta_der = L"WebP resultante (vista reducida)";
 static HWND g_prev_hwnd = nullptr;
+static HWND g_prev_quality = nullptr;
+static HWND g_prev_quality_lbl = nullptr;
+static int g_prev_calidad = 85;
+static int g_prev_metodo = 6;
+static bool g_prev_sin_perdida = false;
+static bool g_prev_avif = false;
+#define ID_PREV_CALIDAD 5001
 
 static void pintar_damas(HDC dc, RECT r) {
     const int lado = 12;
@@ -4103,11 +4110,79 @@ static void dibujar_bitmap_escalado(HDC dc, const Bitmap& b, RECT panel) {
     DeleteDC(mem);
 }
 
+static void actualizar_preview_calidad(HWND hwnd) {
+    if (!g_prev_quality || g_prev_orig.w <= 0) return;
+    int q = (int)SendMessageW(g_prev_quality, TBM_GETPOS, 0, 0);
+    g_prev_calidad = std::clamp(q, 1, 100);
+    std::wstring error, aviso;
+    auto datos = codificar_objetivo(g_prev_orig, g_prev_calidad, g_prev_metodo,
+                                    g_prev_sin_perdida, g_prev_orig.alfa, 0,
+                                    g_prev_avif, aviso, error);
+    if (datos.empty()) return;
+    Bitmap convertida;
+    bool ok = false;
+    if (g_prev_avif) {
+        ok = decodificar_avif_datos(datos, convertida, error);
+    } else {
+        int w = 0, h = 0;
+        uint8_t* rgba = WebPDecodeRGBA(datos.data(), datos.size(), &w, &h);
+        if (rgba) {
+            convertida.w = w;
+            convertida.h = h;
+            convertida.alfa = true;
+            convertida.rgba.assign(rgba, rgba + (size_t)w * h * 4);
+            WebPFree(rgba);
+            ok = true;
+        }
+    }
+    if (!ok) return;
+    g_prev_webp = std::move(convertida);
+    wchar_t kb[64];
+    swprintf_s(kb, L"%.1f KB", (double)datos.size() / 1024.0);
+    g_prev_info_webp = std::wstring(kb) + L"  (" + std::to_wstring(g_prev_calidad) +
+                       L"%, esfuerzo " + std::to_wstring(g_prev_metodo) + L")" +
+                       (aviso.empty() ? L"" : (L"\n" + aviso));
+    InvalidateRect(hwnd, nullptr, TRUE);
+}
+
 static LRESULT CALLBACK PreviewWndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
     switch (msg) {
         case WM_CREATE:
             g_prev_hwnd = hwnd;
+            CreateWindowExW(0, L"STATIC", L"Calidad de prueba", WS_CHILD | WS_VISIBLE,
+                            20, 631, 100, 20, hwnd, nullptr, nullptr, nullptr);
+            g_prev_quality = CreateWindowExW(
+                0, TRACKBAR_CLASSW, L"", WS_CHILD | WS_VISIBLE | TBS_HORZ | TBS_AUTOTICKS,
+                120, 626, 360, 32, hwnd, (HMENU)ID_PREV_CALIDAD, nullptr, nullptr);
+            SendMessageW(g_prev_quality, TBM_SETRANGE, TRUE, MAKELPARAM(1, 100));
+            SendMessageW(g_prev_quality, TBM_SETPOS, TRUE, g_prev_calidad);
+            g_prev_quality_lbl = CreateWindowExW(
+                0, L"STATIC", L"", WS_CHILD | WS_VISIBLE, 492, 631, 80, 20, hwnd,
+                nullptr, nullptr, nullptr);
+            {
+                wchar_t q[8];
+                swprintf_s(q, L"%d", g_prev_calidad);
+                SetWindowTextW(g_prev_quality_lbl, q);
+            }
             return 0;
+        case WM_HSCROLL:
+            if ((HWND)lp == g_prev_quality) {
+                wchar_t q[8];
+                swprintf_s(q, L"%d", (int)SendMessageW(g_prev_quality, TBM_GETPOS, 0, 0));
+                SetWindowTextW(g_prev_quality_lbl, q);
+                SetTimer(hwnd, 2, 250, nullptr);
+            }
+            return 0;
+        case WM_TIMER:
+            if (wp == 2) {
+                KillTimer(hwnd, 2);
+                actualizar_preview_calidad(hwnd);
+            }
+            return 0;
+        case WM_CTLCOLORSTATIC:
+            SetBkMode((HDC)wp, TRANSPARENT);
+            SetTextColor((HDC)wp, g_pal.text);
+            return (LRESULT)g_brush_bg;
         case WM_ERASEBKGND:
             return 1;
         case WM_PAINT: {
@@ -4152,7 +4227,10 @@ static LRESULT CALLBACK PreviewWndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp
             DestroyWindow(hwnd);
             return 0;
         case WM_DESTROY:
+            KillTimer(hwnd, 2);
             g_prev_hwnd = nullptr;
+            g_prev_quality = nullptr;
+            g_prev_quality_lbl = nullptr;
             return 0;
     }
     return DefWindowProcW(hwnd, msg, wp, lp);
@@ -4250,6 +4328,10 @@ static void abrir_vista_previa() {
     g_prev_orig = reducida;
     g_prev_webp = std::move(convertida);
     g_prev_ruta = fs::path(ruta).filename().wstring();
+    g_prev_calidad = opt.calidad;
+    g_prev_metodo = opt.metodo;
+    g_prev_sin_perdida = opt.sin_perdida;
+    g_prev_avif = opt.formato == L"AVIF";
     g_prev_etiqueta_der = (opt.formato == L"AVIF" ? L"AVIF" : L"WebP") +
                           std::wstring(L" resultante (vista reducida)");
 
@@ -4280,7 +4362,7 @@ static void abrir_vista_previa() {
     if (g_prev_hwnd) DestroyWindow(g_prev_hwnd);
     RECT pr{};
     GetWindowRect(g_hwnd, &pr);
-    int ancho = 980, alto = 660;
+    int ancho = 980, alto = 720;
     int x = pr.left + ((pr.right - pr.left) - ancho) / 2;
     int y = pr.top + ((pr.bottom - pr.top) - alto) / 2;
     g_prev_hwnd = CreateWindowExW(WS_EX_TOOLWINDOW, L"ConversorPreviewWnd",
@@ -4288,6 +4370,8 @@ static void abrir_vista_previa() {
                                   WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU | WS_VISIBLE,
                                   x, y, ancho, alto, g_hwnd, nullptr,
                                   GetModuleHandleW(nullptr), nullptr);
+    aplicar_modo_oscuro_nativo(g_prev_hwnd, g_oscuro);
+    InvalidateRect(g_prev_hwnd, nullptr, TRUE);
     SetWindowTextW(g_status, L"Vista previa lista.");
     } catch (const std::exception& ex) {
         SetWindowTextW(g_status, L"Listo.");
