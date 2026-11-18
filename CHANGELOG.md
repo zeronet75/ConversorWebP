@@ -6,6 +6,19 @@ Todos los cambios relevantes del proyecto. Formato basado en
 
 ---
 
+## [2.6.3] — 2026-11-18
+
+### Añadido
+
+- **Modo oscuro** en las dos ediciones (Python y C++), conmutable desde un icono de sol/luna.
+- El icono cambia al instante: sol en modo claro y luna menguante en modo oscuro.
+- La preferencia se guarda en `config.json` (Python) y `config.ini` (C++), y se restaura al abrir.
+- Paleta oscura completa: tarjetas, entradas, listas, tabla, barras de desplazamiento, barra de estado,
+  pestañas, menús y barra de título.
+- En modo oscuro, las dos ediciones usan una barra de menú propia para que también sea oscura.
+
+---
+
 ## [2.6.2] — 2026-11-18
 
 ### Añadido
@@ -236,6 +249,7 @@ Todos los cambios relevantes del proyecto. Formato basado en
 - Conservación de transparencia, perfil ICC y orientación EXIF.
 - Modo consola básico.
 
+[2.6.3]: #263--2026-11-18
 [2.6.2]: #262--2026-11-18
 [2.6.1]: #261--2026-11-18
 [2.6.0]: #260--2026-11-17

@@ -20,6 +20,7 @@
 #include <wincodec.h>
 #include <uxtheme.h>
 #include <vssym32.h>
+#include <dwmapi.h>
 #include <wrl/client.h>
 #include <webp/encode.h>
 #include <webp/decode.h>
@@ -59,6 +60,7 @@
 #pragma comment(lib, "gdi32.lib")
 #pragma comment(lib, "advapi32.lib")
 #pragma comment(lib, "uxtheme.lib")
+#pragma comment(lib, "dwmapi.lib")
 #pragma comment(lib, "propsys.lib")
 #pragma comment(lib, "bcrypt.lib")
 #pragma comment(lib, "comdlg32.lib")
@@ -74,7 +76,7 @@ using Microsoft::WRL::ComPtr;
 namespace fs = std::filesystem;
 
 static const wchar_t* APP_NAME = L"Conversor WebP";
-static const wchar_t* APP_VERSION = L"2.6.2";
+static const wchar_t* APP_VERSION = L"2.6.3";
 
 // ---------------------------------------------------------------------------
 //  Utilidades generales
@@ -1224,7 +1226,7 @@ struct Options {
     bool beep = true;
     bool csv = false;
     std::wstring salida;
-    std::wstring zip_nombre = L"imagenes_2.6.2-cpp.zip";
+    std::wstring zip_nombre = L"imagenes_2.6.3-cpp.zip";
     std::wstring patron;
     std::wstring formato = L"WEBP";
     bool dry_run = false;
@@ -1369,6 +1371,7 @@ static HWND g_lista_origen = nullptr;
 static HWND g_lista_resultados = nullptr;
 static HWND g_edit_log = nullptr;
 static HWND g_tab = nullptr;
+static int g_tab_sel = 0;
 static HWND g_edit_salida = nullptr;
 static HWND g_edit_zip = nullptr;
 static HWND g_edit_objetivo = nullptr;
@@ -1409,6 +1412,9 @@ static HWND g_btn_pattern_help = nullptr;
 static HWND g_lbl_extractor = nullptr;
 static HWND g_scroll_origen = nullptr;
 static HMENU g_menu_hist = nullptr;
+static HMENU g_menu_principal = nullptr;
+static HMENU g_menu_ayuda = nullptr;
+static int g_menu_hot = -1;
 static std::vector<HistoryEntry> g_historial;
 static std::wstring g_patron_temporal;
 static bool g_aplicando_preset = false;
@@ -1423,6 +1429,267 @@ static bool g_drop_hot = false;
 static bool g_ui_lista = false;
 static HBRUSH g_brush_bg = nullptr, g_brush_card = nullptr, g_brush_dark = nullptr, g_brush_log = nullptr;
 static HBRUSH g_brush_disabled = nullptr;
+static HBRUSH g_brush_border = nullptr, g_brush_input = nullptr;
+
+struct PaletaCpp {
+    COLORREF bg, card, text, muted, accent, accent_dark, border, input;
+    COLORREF drop, drop_hot, sel, log_bg, log_fg, hover, ok, err, disabled;
+};
+static PaletaCpp g_pal{};
+static bool g_oscuro = false;
+
+static void aplicar_modo_global_cpp(bool oscuro) {
+    HMODULE ux = GetModuleHandleW(L"uxtheme.dll");
+    if (!ux) return;
+    using PrefFn = int(WINAPI*)(int);
+    using FlushFn = void(WINAPI*)();
+    auto pref = (PrefFn)GetProcAddress(ux, MAKEINTRESOURCEA(135));
+    auto flush = (FlushFn)GetProcAddress(ux, MAKEINTRESOURCEA(136));
+    if (pref) pref(oscuro ? 2 : 3);
+    if (flush) flush();
+}
+
+static void convertir_botones_tema(bool oscuro);
+
+static void aplicar_modo_oscuro_nativo(HWND hwnd, bool oscuro) {
+    BOOL valor = oscuro ? TRUE : FALSE;
+    DwmSetWindowAttribute(hwnd, 20, &valor, sizeof(valor));
+    DwmSetWindowAttribute(hwnd, 19, &valor, sizeof(valor));
+    SetWindowPos(hwnd, nullptr, 0, 0, 0, 0,
+                 SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE | SWP_FRAMECHANGED);
+    HMODULE ux = GetModuleHandleW(L"uxtheme.dll");
+    if (ux) {
+        using PrefFn = int(WINAPI*)(int);
+        using AllowFn = bool(WINAPI*)(HWND, bool);
+        using FlushFn = void(WINAPI*)();
+        auto pref = (PrefFn)GetProcAddress(ux, MAKEINTRESOURCEA(135));
+        auto allow = (AllowFn)GetProcAddress(ux, MAKEINTRESOURCEA(133));
+        auto flush = (FlushFn)GetProcAddress(ux, MAKEINTRESOURCEA(136));
+        if (pref) pref(oscuro ? 2 : 3);
+        if (allow) allow(hwnd, oscuro);
+        if (flush) flush();
+    }
+    if (hwnd == g_hwnd && g_menu_principal) {
+        SetMenu(hwnd, oscuro ? nullptr : g_menu_principal);
+        DrawMenuBar(hwnd);
+    }
+    if (hwnd == g_hwnd && g_tab) {
+        ShowWindow(g_tab, oscuro ? SW_HIDE : SW_SHOW);
+        TabCtrl_SetCurSel(g_tab, g_tab_sel);
+        ShowWindow(g_lista_resultados, g_tab_sel == 0 ? SW_SHOW : SW_HIDE);
+        ShowWindow(g_edit_log, g_tab_sel == 1 ? SW_SHOW : SW_HIDE);
+    }
+    SetWindowTheme(hwnd, oscuro ? L"DarkMode_Explorer" : L"Explorer", nullptr);
+    EnumChildWindows(hwnd, [](HWND child, LPARAM lp) -> BOOL {
+        bool oscuro = lp != 0;
+        wchar_t clase[64]{};
+        GetClassNameW(child, clase, 64);
+        if (oscuro) {
+            HMODULE ux = GetModuleHandleW(L"uxtheme.dll");
+            if (ux) {
+                using AllowFn = bool(WINAPI*)(HWND, bool);
+                auto allow = (AllowFn)GetProcAddress(ux, MAKEINTRESOURCEA(133));
+                if (allow) allow(child, true);
+            }
+            if (lstrcmpiW(clase, L"ComboBox") == 0)
+                SetWindowTheme(child, L"DarkMode_CFD", nullptr);
+            else
+                SetWindowTheme(child, L"DarkMode_Explorer", nullptr);
+        } else {
+            if (lstrcmpiW(clase, L"ComboBox") == 0)
+                SetWindowTheme(child, L"", nullptr);
+            else
+                SetWindowTheme(child, L"Explorer", nullptr);
+        }
+        return TRUE;
+    }, oscuro ? 1 : 0);
+    if (g_lista_origen) {
+        ListView_SetBkColor(g_lista_origen, g_pal.card);
+        ListView_SetTextBkColor(g_lista_origen, g_pal.card);
+        ListView_SetTextColor(g_lista_origen, g_pal.text);
+    }
+    if (g_lista_resultados) {
+        ListView_SetBkColor(g_lista_resultados, g_pal.card);
+        ListView_SetTextBkColor(g_lista_resultados, g_pal.card);
+        ListView_SetTextColor(g_lista_resultados, g_pal.text);
+    }
+    if (g_progress) {
+        SetWindowTheme(g_progress, oscuro ? L"" : L"Explorer", nullptr);
+        SendMessageW(g_progress, PBM_SETBARCOLOR, 0, (LPARAM)g_pal.accent);
+        SendMessageW(g_progress, PBM_SETBKCOLOR, 0, (LPARAM)g_pal.border);
+    }
+    convertir_botones_tema(oscuro);
+    InvalidateRect(hwnd, nullptr, TRUE);
+    RedrawWindow(hwnd, nullptr, nullptr,
+                 RDW_INVALIDATE | RDW_ALLCHILDREN | RDW_ERASE | RDW_UPDATENOW);
+}
+
+static void dibujar_icono_tema(const DRAWITEMSTRUCT* di) {
+    FillRect(di->hDC, &di->rcItem, g_brush_bg);
+    RECT rc = di->rcItem;
+    int cx = (rc.left + rc.right) / 2;
+    int cy = (rc.top + rc.bottom) / 2;
+    if (g_oscuro) {
+        HBRUSH claro = CreateSolidBrush(RGB(226, 232, 240));
+        HBRUSH fondo = CreateSolidBrush(g_pal.bg);
+        HGDIOBJ viejo = SelectObject(di->hDC, claro);
+        Ellipse(di->hDC, cx - 9, cy - 9, cx + 9, cy + 9);
+        SelectObject(di->hDC, fondo);
+        Ellipse(di->hDC, cx - 2, cy - 12, cx + 15, cy + 5);
+        SelectObject(di->hDC, viejo);
+        DeleteObject(claro);
+        DeleteObject(fondo);
+    } else {
+        HBRUSH sol = CreateSolidBrush(RGB(246, 195, 67));
+        HPEN rayo = CreatePen(PS_SOLID, 2, RGB(246, 195, 67));
+        HGDIOBJ viejoB = SelectObject(di->hDC, sol);
+        HGDIOBJ viejoP = SelectObject(di->hDC, rayo);
+        Ellipse(di->hDC, cx - 5, cy - 5, cx + 5, cy + 5);
+        const int puntos[8][4] = {
+            {cx, cy - 12, cx, cy - 8}, {cx, cy + 8, cx, cy + 12},
+            {cx - 12, cy, cx - 8, cy}, {cx + 8, cy, cx + 12, cy},
+            {cx - 9, cy - 9, cx - 6, cy - 6}, {cx + 6, cy + 6, cx + 9, cy + 9},
+            {cx + 9, cy - 9, cx + 6, cy - 6}, {cx - 6, cy + 6, cx - 9, cy + 9},
+        };
+        for (auto& p : puntos) {
+            MoveToEx(di->hDC, p[0], p[1], nullptr);
+            LineTo(di->hDC, p[2], p[3]);
+        }
+        SelectObject(di->hDC, viejoP);
+        SelectObject(di->hDC, viejoB);
+        DeleteObject(rayo);
+        DeleteObject(sol);
+    }
+    if (di->itemState & ODS_FOCUS) DrawFocusRect(di->hDC, &di->rcItem);
+}
+
+static void convertir_botones_tema(bool oscuro) {
+    EnumChildWindows(g_hwnd, [](HWND child, LPARAM lp) -> BOOL {
+        wchar_t clase[64]{};
+        GetClassNameW(child, clase, 64);
+        if (_wcsicmp(clase, L"Button") != 0) return TRUE;
+        LONG_PTR estilo = GetWindowLongPtrW(child, GWL_STYLE);
+        LONG_PTR tipo = estilo & BS_TYPEMASK;
+        if (tipo != BS_PUSHBUTTON && tipo != BS_DEFPUSHBUTTON) return TRUE;
+        LONG_PTR nuevo = (estilo & ~BS_TYPEMASK) | (lp ? BS_OWNERDRAW : BS_PUSHBUTTON);
+        SetWindowLongPtrW(child, GWL_STYLE, nuevo);
+        SetWindowPos(child, nullptr, 0, 0, 0, 0,
+                     SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_FRAMECHANGED);
+        InvalidateRect(child, nullptr, TRUE);
+        return TRUE;
+    }, oscuro ? 1 : 0);
+}
+
+static void dibujar_combo(const DRAWITEMSTRUCT* di) {
+    bool abierto = di->itemID != (UINT)-1;
+    wchar_t texto[256]{};
+    if (abierto) {
+        SendMessageW(di->hwndItem, CB_GETLBTEXT, (WPARAM)di->itemID, (LPARAM)texto);
+    } else {
+        int sel = (int)SendMessageW(di->hwndItem, CB_GETCURSEL, 0, 0);
+        if (sel >= 0)
+            SendMessageW(di->hwndItem, CB_GETLBTEXT, (WPARAM)sel, (LPARAM)texto);
+    }
+    bool seleccionado = abierto && (di->itemState & ODS_SELECTED);
+    COLORREF fondo = seleccionado ? g_pal.sel : g_pal.input;
+    if (!IsWindowEnabled(di->hwndItem)) fondo = g_pal.disabled;
+    HBRUSH br = CreateSolidBrush(fondo);
+    FillRect(di->hDC, &di->rcItem, br);
+    DeleteObject(br);
+    if (!abierto) {
+        FrameRect(di->hDC, &di->rcItem, g_brush_border);
+        int cx = di->rcItem.right - 11;
+        int cy = (di->rcItem.top + di->rcItem.bottom) / 2;
+        POINT flecha[3] = {{cx - 4, cy - 2}, {cx + 4, cy - 2}, {cx, cy + 3}};
+        HBRUSH color = CreateSolidBrush(IsWindowEnabled(di->hwndItem) ? g_pal.muted
+                                                                      : g_pal.border);
+        HGDIOBJ viejo = SelectObject(di->hDC, color);
+        Polygon(di->hDC, flecha, 3);
+        SelectObject(di->hDC, viejo);
+        DeleteObject(color);
+    }
+    RECT zona = di->rcItem;
+    zona.left += 6;
+    zona.right -= abierto ? 6 : 20;
+    SetBkMode(di->hDC, TRANSPARENT);
+    SetTextColor(di->hDC, IsWindowEnabled(di->hwndItem) ? g_pal.text : g_pal.muted);
+    HFONT vieja = (HFONT)SelectObject(di->hDC, g_font);
+    DrawTextW(di->hDC, texto, -1, &zona,
+              DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
+    SelectObject(di->hDC, vieja);
+}
+
+static void dibujar_boton_tema(const DRAWITEMSTRUCT* di) {
+    RECT wr{};
+    GetWindowRect(di->hwndItem, &wr);
+    HWND padre = GetParent(di->hwndItem);
+    if (!padre) padre = g_hwnd;
+    POINT esquina{wr.left, wr.top};
+    ScreenToClient(padre, &esquina);
+    RECT pc{};
+    GetClientRect(padre, &pc);
+    bool en_pie = pc.bottom > 0 && esquina.y >= pc.bottom / 2;
+    HBRUSH fondo = CreateSolidBrush(en_pie ? g_pal.bg : g_pal.card);
+    FillRect(di->hDC, &di->rcItem, fondo);
+    DeleteObject(fondo);
+    RECT r = di->rcItem;
+    InflateRect(&r, -1, -1);
+    COLORREF relleno = (di->itemState & ODS_DISABLED)
+                           ? g_pal.disabled
+                           : ((di->itemState & ODS_SELECTED)
+                                  ? g_pal.hover
+                                  : (en_pie ? g_pal.bg : g_pal.card));
+    HBRUSH br = CreateSolidBrush(relleno);
+    HPEN pen = CreatePen(PS_SOLID, 1, g_pal.border);
+    HGDIOBJ viejoB = SelectObject(di->hDC, br);
+    HGDIOBJ viejoP = SelectObject(di->hDC, pen);
+    RoundRect(di->hDC, r.left, r.top, r.right, r.bottom, 8, 8);
+    SelectObject(di->hDC, viejoP);
+    SelectObject(di->hDC, viejoB);
+    DeleteObject(pen);
+    DeleteObject(br);
+    wchar_t texto[160]{};
+    GetWindowTextW(di->hwndItem, texto, 160);
+    SetBkMode(di->hDC, TRANSPARENT);
+    SetTextColor(di->hDC, (di->itemState & ODS_DISABLED) ? g_pal.muted : g_pal.text);
+    HFONT vieja = (HFONT)SelectObject(di->hDC, g_font);
+    RECT zona = di->rcItem;
+    DrawTextW(di->hDC, texto, -1, &zona,
+              DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
+    SelectObject(di->hDC, vieja);
+    if (di->itemState & ODS_FOCUS) DrawFocusRect(di->hDC, &r);
+}
+
+static void aplicar_paleta_cpp(bool oscuro) {
+    g_oscuro = oscuro;
+    if (oscuro) {
+        g_pal = {RGB(15, 23, 42), RGB(27, 36, 51), RGB(230, 237, 247), RGB(154, 168, 187),
+                 RGB(76, 154, 255), RGB(143, 194, 255), RGB(46, 58, 77), RGB(17, 26, 41),
+                 RGB(20, 30, 46), RGB(29, 42, 63), RGB(41, 64, 95), RGB(10, 18, 32),
+                 RGB(203, 213, 225), RGB(38, 54, 77), RGB(74, 222, 128), RGB(248, 113, 113),
+                 RGB(35, 45, 60)};
+    } else {
+        g_pal = {RGB(238, 241, 246), RGB(255, 255, 255), RGB(31, 41, 51), RGB(95, 107, 122),
+                 RGB(26, 115, 232), RGB(21, 87, 176), RGB(221, 227, 234), RGB(255, 255, 255),
+                 RGB(250, 251, 253), RGB(242, 247, 255), RGB(215, 227, 251), RGB(15, 23, 42),
+                 RGB(203, 213, 225), RGB(232, 238, 246), RGB(19, 115, 51), RGB(197, 34, 31),
+                 RGB(240, 240, 240)};
+    }
+    for (HBRUSH* b : {&g_brush_bg, &g_brush_card, &g_brush_dark, &g_brush_log,
+                      &g_brush_disabled, &g_brush_border, &g_brush_input}) {
+        if (*b) {
+            DeleteObject(*b);
+            *b = nullptr;
+        }
+    }
+    g_brush_bg = CreateSolidBrush(g_pal.bg);
+    g_brush_card = CreateSolidBrush(g_pal.card);
+    g_brush_dark = CreateSolidBrush(g_pal.log_bg);
+    g_brush_log = CreateSolidBrush(g_pal.log_bg);
+    g_brush_disabled = CreateSolidBrush(g_pal.disabled);
+    g_brush_border = CreateSolidBrush(g_pal.border);
+    g_brush_input = CreateSolidBrush(g_pal.input);
+}
 static HICON g_icono = nullptr;
 
 static std::vector<std::wstring> g_origenes;
@@ -1451,6 +1718,7 @@ enum {
     ID_MENU_CONTEXT_ON, ID_MENU_CONTEXT_OFF, ID_MENU_SENDTO_ON, ID_MENU_SENDTO_OFF,
     ID_MENU_UPDATE, ID_MENU_WATCH, ID_MENU_PREVIEW,
     ID_ADD_ARCHIVE = 3901, ID_PATTERN_HELP = 3902, ID_SCROLL_ORIGEN = 3904,
+    ID_TEMA = 3910,
     ID_SECTION_ORIGEN = 1105, ID_LBL_EXTRACTOR = 1106,
     ID_HIST_BASE = 40000, ID_HIST_CLEAR = 40050
 };
@@ -2100,6 +2368,7 @@ static void cargar_config() {
     std::wstring ruta = ruta_ejecutable();
     fs::path p = ruta.empty() ? fs::current_path() : fs::path(ruta);
     g_ini = (p.parent_path() / L"config.ini").wstring();
+    g_oscuro = GetPrivateProfileIntW(L"opciones", L"tema", 0, g_ini.c_str()) != 0;
 
     wchar_t salida[MAX_PATH] = L"";
     GetPrivateProfileStringW(L"opciones", L"salida", L"", salida, MAX_PATH, g_ini.c_str());
@@ -2197,6 +2466,7 @@ static void guardar_config() {
     swprintf_s(buf, L"%lu", (unsigned long)g_opt.color);
     WritePrivateProfileStringW(L"opciones", L"color", buf, g_ini.c_str());
     WritePrivateProfileStringW(L"opciones", L"apagar", g_opt.apagar ? L"1" : L"0", g_ini.c_str());
+    WritePrivateProfileStringW(L"opciones", L"tema", g_oscuro ? L"1" : L"0", g_ini.c_str());
     WritePrivateProfileStringW(L"opciones", L"salida", g_opt.salida.c_str(), g_ini.c_str());
     WritePrivateProfileStringW(L"opciones", L"zipnombre", g_opt.zip_nombre.c_str(), g_ini.c_str());
     WritePrivateProfileStringW(L"opciones", L"patron", g_opt.patron.c_str(), g_ini.c_str());
@@ -2254,7 +2524,7 @@ static HWND crear(const wchar_t* clase, const wchar_t* texto, DWORD estilo, int 
 }
 
 static HWND boton(const wchar_t* texto, int x, int y, int w, int h, int id, DWORD estilo = BS_PUSHBUTTON) {
-    return crear(L"BUTTON", texto, estilo | WS_TABSTOP, x, y, w, h, id);
+    return crear(L"BUTTON", texto, estilo | BS_OWNERDRAW | WS_TABSTOP, x, y, w, h, id);
 }
 static HWND check(const wchar_t* texto, int x, int y, int w, int h, int id, bool marcado) {
     HWND control = crear(L"BUTTON", texto, BS_AUTOCHECKBOX | WS_TABSTOP, x, y, w, h, id);
@@ -2270,7 +2540,15 @@ static HWND edit(int x, int y, int w, int h, int id, const wchar_t* texto = L"",
     return crear(L"EDIT", texto, estilo | WS_BORDER | WS_TABSTOP, x, y, w, h, id, WS_EX_CLIENTEDGE);
 }
 static HWND combo(int x, int y, int w, int h, int id) {
-    return crear(L"COMBOBOX", L"", CBS_DROPDOWNLIST | WS_VSCROLL | WS_TABSTOP, x, y, w, h, id);
+    HWND control = crear(L"COMBOBOX", L"",
+                         CBS_DROPDOWNLIST | CBS_OWNERDRAWFIXED | CBS_HASSTRINGS |
+                             WS_VSCROLL | WS_TABSTOP,
+                         x, y, w, h, id);
+    if (control) {
+        SendMessageW(control, CB_SETITEMHEIGHT, (WPARAM)-1, 22);
+        SendMessageW(control, CB_SETITEMHEIGHT, 0, 22);
+    }
+    return control;
 }
 static HWND listview(int x, int y, int w, int h, int id) {
     return crear(WC_LISTVIEWW, L"", LVS_REPORT | LVS_SHOWSELALWAYS | WS_BORDER | WS_VSCROLL | WS_TABSTOP, x, y, w, h, id, WS_EX_CLIENTEDGE);
@@ -3233,16 +3511,38 @@ static LRESULT CALLBACK InputWndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) 
                                            16, 42, 340, 24, hwnd, (HMENU)100, nullptr, nullptr);
             SendMessageW(g_input_edit, WM_SETFONT, (WPARAM)g_font, TRUE);
             HWND ok = CreateWindowExW(0, L"BUTTON", L"Aceptar",
-                                      WS_CHILD | WS_VISIBLE | WS_TABSTOP | BS_DEFPUSHBUTTON,
+                                      WS_CHILD | WS_VISIBLE | WS_TABSTOP | BS_OWNERDRAW,
                                       190, 78, 80, 26, hwnd, (HMENU)IDOK, nullptr, nullptr);
             HWND cancel = CreateWindowExW(0, L"BUTTON", L"Cancelar",
-                                          WS_CHILD | WS_VISIBLE | WS_TABSTOP,
+                                          WS_CHILD | WS_VISIBLE | WS_TABSTOP | BS_OWNERDRAW,
                                           276, 78, 80, 26, hwnd, (HMENU)IDCANCEL, nullptr, nullptr);
             SendMessageW(ok, WM_SETFONT, (WPARAM)g_font, TRUE);
             SendMessageW(cancel, WM_SETFONT, (WPARAM)g_font, TRUE);
             SetFocus(g_input_edit);
             SendMessageW(g_input_edit, EM_SETSEL, 0, -1);
             return 0;
+        }
+        case WM_ERASEBKGND: {
+            RECT rc{};
+            GetClientRect(hwnd, &rc);
+            FillRect((HDC)wp, &rc, g_brush_bg);
+            return 1;
+        }
+        case WM_CTLCOLORSTATIC:
+            SetBkMode((HDC)wp, TRANSPARENT);
+            SetTextColor((HDC)wp, g_pal.text);
+            return (LRESULT)g_brush_bg;
+        case WM_CTLCOLOREDIT:
+            SetBkColor((HDC)wp, g_pal.input);
+            SetTextColor((HDC)wp, g_pal.text);
+            return (LRESULT)g_brush_input;
+        case WM_DRAWITEM: {
+            DRAWITEMSTRUCT* di = (DRAWITEMSTRUCT*)lp;
+            if (di && (di->CtlID == IDOK || di->CtlID == IDCANCEL)) {
+                dibujar_boton_tema(di);
+                return TRUE;
+            }
+            break;
         }
         case WM_COMMAND:
             if (LOWORD(wp) == IDOK) {
@@ -3268,7 +3568,7 @@ static std::wstring pedir_texto(HWND parent, const wchar_t* titulo, const std::w
         wc.lpfnWndProc = InputWndProc;
         wc.hInstance = GetModuleHandleW(nullptr);
         wc.hCursor = LoadCursorW(nullptr, IDC_ARROW);
-        wc.hbrBackground = (HBRUSH)(COLOR_WINDOW + 1);
+        wc.hbrBackground = nullptr;
         wc.lpszClassName = L"ConversorInputWnd";
         RegisterClassExW(&wc);
         registrada = true;
@@ -3284,6 +3584,8 @@ static std::wstring pedir_texto(HWND parent, const wchar_t* titulo, const std::w
                              WS_POPUP | WS_CAPTION | WS_SYSMENU | WS_VISIBLE, x, y, ancho, alto,
                              parent, nullptr, GetModuleHandleW(nullptr), nullptr);
     if (!w) return L"";
+    aplicar_modo_oscuro_nativo(w, g_oscuro);
+    InvalidateRect(w, nullptr, TRUE);
     EnableWindow(parent, FALSE);
     MSG msg;
     while (IsWindow(w) && GetMessageW(&msg, nullptr, 0, 0)) {
@@ -3464,16 +3766,34 @@ static LRESULT CALLBACK ApagadoWndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp
                                               18, 44, 320, 24, hwnd, (HMENU)200, nullptr, nullptr);
             SendMessageW(g_apagado_label, WM_SETFONT, (WPARAM)g_font_bold, TRUE);
             HWND cancel = CreateWindowExW(0, L"BUTTON", L"Cancelar apagado",
-                                          WS_CHILD | WS_VISIBLE | WS_TABSTOP,
+                                          WS_CHILD | WS_VISIBLE | WS_TABSTOP | BS_OWNERDRAW,
                                           60, 80, 130, 28, hwnd, (HMENU)IDCANCEL, nullptr, nullptr);
             HWND ahora = CreateWindowExW(0, L"BUTTON", L"Apagar ahora",
-                                         WS_CHILD | WS_VISIBLE | WS_TABSTOP,
+                                         WS_CHILD | WS_VISIBLE | WS_TABSTOP | BS_OWNERDRAW,
                                          198, 80, 110, 28, hwnd, (HMENU)IDOK, nullptr, nullptr);
             SendMessageW(cancel, WM_SETFONT, (WPARAM)g_font, TRUE);
             SendMessageW(ahora, WM_SETFONT, (WPARAM)g_font, TRUE);
             SetWindowTextW(g_apagado_label, L"El equipo se apagara en 30 s");
             SetTimer(hwnd, 1, 1000, nullptr);
             return 0;
+        }
+        case WM_ERASEBKGND: {
+            RECT rc;
+            GetClientRect(hwnd, &rc);
+            FillRect((HDC)wp, &rc, g_brush_bg);
+            return 1;
+        }
+        case WM_CTLCOLORSTATIC:
+            SetBkMode((HDC)wp, TRANSPARENT);
+            SetTextColor((HDC)wp, g_pal.text);
+            return (LRESULT)g_brush_bg;
+        case WM_DRAWITEM: {
+            DRAWITEMSTRUCT* di = (DRAWITEMSTRUCT*)lp;
+            if (di && (di->CtlID == IDOK || di->CtlID == IDCANCEL)) {
+                dibujar_boton_tema(di);
+                return TRUE;
+            }
+            break;
         }
         case WM_TIMER:
             if (wp == 1) {
@@ -3515,7 +3835,7 @@ static void mostrar_apagado() {
         wc.lpfnWndProc = ApagadoWndProc;
         wc.hInstance = GetModuleHandleW(nullptr);
         wc.hCursor = LoadCursorW(nullptr, IDC_ARROW);
-        wc.hbrBackground = (HBRUSH)(COLOR_WINDOW + 1);
+        wc.hbrBackground = nullptr;
         wc.lpszClassName = L"ConversorApagadoWnd";
         RegisterClassExW(&wc);
         registrada = true;
@@ -3532,6 +3852,8 @@ static void mostrar_apagado() {
                                      x, y, ancho, alto, g_hwnd, nullptr,
                                      GetModuleHandleW(nullptr), nullptr);
     SetForegroundWindow(g_apagado_hwnd);
+    aplicar_modo_oscuro_nativo(g_apagado_hwnd, g_oscuro);
+    InvalidateRect(g_apagado_hwnd, nullptr, TRUE);
 }
 
 // ---------------------------------------------------------------------------
@@ -3547,8 +3869,8 @@ static HWND g_prev_hwnd = nullptr;
 
 static void pintar_damas(HDC dc, RECT r) {
     const int lado = 12;
-    HBRUSH claro = CreateSolidBrush(RGB(250, 250, 250));
-    HBRUSH oscuro = CreateSolidBrush(RGB(225, 228, 232));
+    HBRUSH claro = CreateSolidBrush(g_oscuro ? RGB(34, 45, 61) : RGB(250, 250, 250));
+    HBRUSH oscuro = CreateSolidBrush(g_oscuro ? RGB(24, 33, 47) : RGB(225, 228, 232));
     for (int y = r.top; y < r.bottom; y += lado) {
         for (int x = r.left; x < r.right; x += lado) {
             RECT c{x, y, std::min<LONG>(x + lado, r.right), std::min<LONG>(y + lado, r.bottom)};
@@ -3615,11 +3937,11 @@ static LRESULT CALLBACK PreviewWndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp
             HDC dc = BeginPaint(hwnd, &ps);
             RECT rc;
             GetClientRect(hwnd, &rc);
-            HBRUSH fondo = CreateSolidBrush(RGB(238, 241, 246));
+            HBRUSH fondo = CreateSolidBrush(g_pal.bg);
             FillRect(dc, &rc, fondo);
             DeleteObject(fondo);
             SetBkMode(dc, TRANSPARENT);
-            SetTextColor(dc, RGB(31, 41, 51));
+            SetTextColor(dc, g_pal.text);
             SelectObject(dc, g_font_bold);
 
             RECT r1{20, 12, 470, 30};
@@ -3629,12 +3951,12 @@ static LRESULT CALLBACK PreviewWndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp
 
             RECT p1{20, 36, 470, 540};
             RECT p2{490, 36, 940, 540};
-            HBRUSH blanco = CreateSolidBrush(RGB(255, 255, 255));
+            HBRUSH blanco = CreateSolidBrush(g_pal.input);
             FillRect(dc, &p1, blanco);
             FillRect(dc, &p2, blanco);
             DeleteObject(blanco);
-            FrameRect(dc, &p1, (HBRUSH)GetStockObject(GRAY_BRUSH));
-            FrameRect(dc, &p2, (HBRUSH)GetStockObject(GRAY_BRUSH));
+            FrameRect(dc, &p1, g_brush_border);
+            FrameRect(dc, &p2, g_brush_border);
             dibujar_bitmap_escalado(dc, g_prev_orig, p1);
             dibujar_bitmap_escalado(dc, g_prev_webp, p2);
 
@@ -3983,6 +4305,7 @@ static void crear_tooltips() {
     add(GetDlgItem(g_hwnd, ID_BROWSE), L"Elige la carpeta de salida.");
     add(g_btn_archive, L"Añade archivos .zip, .rar o .7z y convierte su contenido.");
     add(g_btn_pattern_help, L"Ver los marcadores disponibles para el nombre de salida.");
+    add(GetDlgItem(g_hwnd, ID_TEMA), L"Cambia entre modo claro y modo oscuro.");
     add(g_lbl_extractor, L"Herramienta usada para abrir .rar y .7z (7-Zip o WinRAR).");
     add(g_check_estructura, L"Reproduce las subcarpetas del origen en la carpeta de salida.");
     add(g_check_sobrescribir, L"Activado reemplaza archivos existentes; desactivado los omite.");
@@ -4017,6 +4340,55 @@ static void crear_tooltips() {
 
 static void dibujar_cards(HDC dc, RECT rc) {
     FillRect(dc, &rc, g_brush_bg);
+    if (g_oscuro) {
+        RECT barra{0, 0, rc.right, 18};
+        FillRect(dc, &barra, g_brush_bg);
+        SetBkMode(dc, TRANSPARENT);
+        SetTextColor(dc, g_pal.text);
+        HFONT vieja = (HFONT)SelectObject(dc, g_font);
+        RECT r1{16, 0, 110, 18};
+        RECT r2{118, 0, 180, 18};
+        RECT r3{188, 0, 240, 18};
+        RECT zonas[3] = {r1, r2, r3};
+        if (g_menu_hot >= 0 && g_menu_hot < 3) {
+            HBRUSH resalte = CreateSolidBrush(g_pal.hover);
+            FillRect(dc, &zonas[g_menu_hot], resalte);
+            DeleteObject(resalte);
+        }
+        DrawTextW(dc, L"Herramientas", -1, &r1, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
+        DrawTextW(dc, L"Historial", -1, &r2, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
+        DrawTextW(dc, L"Ayuda", -1, &r3, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
+        SelectObject(dc, vieja);
+
+        // Pestanas propias (la nativa no admite modo oscuro fiable)
+        RECT rtab1{16, 728, 122, 751};
+        RECT rtab2{126, 728, 208, 751};
+        RECT rtab_zonas[2] = {rtab1, rtab2};
+        const wchar_t* nombres[2] = {L"Resultados", L"Registro"};
+        for (int i = 0; i < 2; i++) {
+            HBRUSH fondo = CreateSolidBrush(i == g_tab_sel ? g_pal.card : g_pal.bg);
+            FillRect(dc, &rtab_zonas[i], fondo);
+            DeleteObject(fondo);
+            SetTextColor(dc, i == g_tab_sel ? g_pal.accent_dark : g_pal.muted);
+            HFONT fuente = (HFONT)SelectObject(dc, i == g_tab_sel ? g_font_bold : g_font);
+            RECT texto = rtab_zonas[i];
+            DrawTextW(dc, nombres[i], -1, &texto,
+                      DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
+            SelectObject(dc, fuente);
+        }
+        RECT linea{16, 750, rc.right - 16, 752};
+        FillRect(dc, &linea, g_brush_border);
+        if (g_tab_sel >= 0 && g_tab_sel < 2) {
+            RECT sub = rtab_zonas[g_tab_sel];
+            sub.left += 10;
+            sub.right -= 10;
+            sub.top = 749;
+            sub.bottom = 752;
+            HBRUSH acento = CreateSolidBrush(g_pal.accent);
+            FillRect(dc, &sub, acento);
+            DeleteObject(acento);
+        }
+    }
     int leftR = 492 + (rc.right - 1000) / 2;
     RECT cards[] = {{16, 60, rc.right - 16, 285},
                     {16, 294, leftR, 618},
@@ -4027,10 +4399,10 @@ static void dibujar_cards(HDC dc, RECT rc) {
     // Zona de arrastre
     RECT zona_drop{28, 98, rc.right - 28, 161};
     HBRUSH relleno_drop =
-        CreateSolidBrush(g_drop_hot ? RGB(242, 247, 255) : RGB(250, 251, 253));
+        CreateSolidBrush(g_drop_hot ? g_pal.drop_hot : g_pal.drop);
     FillRect(dc, &zona_drop, relleno_drop);
     DeleteObject(relleno_drop);
-    LOGBRUSH lb{BS_SOLID, g_drop_hot ? RGB(26, 115, 232) : RGB(185, 195, 209), 0};
+    LOGBRUSH lb{BS_SOLID, g_drop_hot ? g_pal.accent : g_pal.border, 0};
     HPEN pen = ExtCreatePen(PS_GEOMETRIC | PS_DASH, g_drop_hot ? 2 : 1, &lb, 0, nullptr);
     HGDIOBJ old = SelectObject(dc, pen);
     HGDIOBJ oldBrush = SelectObject(dc, GetStockObject(NULL_BRUSH));
@@ -4039,7 +4411,7 @@ static void dibujar_cards(HDC dc, RECT rc) {
     SelectObject(dc, old);
     DeleteObject(pen);
     SetBkMode(dc, TRANSPARENT);
-    SetTextColor(dc, g_drop_hot ? RGB(31, 41, 51) : RGB(95, 107, 122));
+    SetTextColor(dc, g_drop_hot ? g_pal.text : g_pal.muted);
     RECT r1{zona_drop.left, 108, zona_drop.right, 132};
     RECT r2{zona_drop.left, 132, zona_drop.right, 152};
     HFONT fuente_vieja =
@@ -4047,7 +4419,7 @@ static void dibujar_cards(HDC dc, RECT rc) {
     DrawTextW(dc, L"Arrastra aqui tus imagenes, carpetas o comprimidos .zip / .rar", -1,
               &r1, DT_CENTER | DT_SINGLELINE | DT_VCENTER);
     SelectObject(dc, g_font_muted);
-    SetTextColor(dc, RGB(95, 107, 122));
+    SetTextColor(dc, g_pal.muted);
     DrawTextW(dc, L"Archivos, carpetas, .zip, .rar o .7z  ·  tambien puedes hacer clic aqui", -1,
               &r2, DT_CENTER | DT_SINGLELINE | DT_VCENTER);
     SelectObject(dc, fuente_vieja);
@@ -4062,23 +4434,23 @@ static LRESULT CALLBACK SliderWndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
             HDC dc = BeginPaint(hwnd, &ps);
             RECT rc;
             GetClientRect(hwnd, &rc);
-            HBRUSH fondo = CreateSolidBrush(RGB(255, 255, 255));
+            HBRUSH fondo = CreateSolidBrush(g_pal.card);
             FillRect(dc, &rc, fondo);
             DeleteObject(fondo);
             int x0 = 8, x1 = rc.right - 8;
             int y = rc.bottom / 2;
             RECT canal{x0, y - 2, x1, y + 3};
-            HBRUSH gris = CreateSolidBrush(RGB(195, 205, 219));
+            HBRUSH gris = CreateSolidBrush(g_pal.border);
             FillRect(dc, &canal, gris);
             DeleteObject(gris);
             double t = (double)(g_slider_val - g_slider_min) /
                        std::max(1, g_slider_max - g_slider_min);
             int x = x0 + (int)lround(t * (x1 - x0));
             RECT pulgar{x - 6, y - 10, x + 6, y + 11};
-            HBRUSH pulgar_brush = CreateSolidBrush(RGB(245, 247, 250));
+            HBRUSH pulgar_brush = CreateSolidBrush(g_pal.input);
             FillRect(dc, &pulgar, pulgar_brush);
             DeleteObject(pulgar_brush);
-            FrameRect(dc, &pulgar, (HBRUSH)GetStockObject(GRAY_BRUSH));
+            FrameRect(dc, &pulgar, g_brush_border);
             if (GetFocus() == hwnd) DrawFocusRect(dc, &pulgar);
             EndPaint(hwnd, &ps);
             return 0;
@@ -4171,13 +4543,13 @@ static LRESULT CALLBACK ScrollWndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
         HDC dc = BeginPaint(hwnd, &ps);
         RECT rc;
         GetClientRect(hwnd, &rc);
-        HBRUSH fondo = CreateSolidBrush(RGB(240, 240, 240));
+        HBRUSH fondo = CreateSolidBrush(g_pal.card);
         FillRect(dc, &rc, fondo);
         DeleteObject(fondo);
         int w = rc.right;
         int alto = rc.bottom;
         int lado = std::min(16, alto / 3);
-        HBRUSH gris = CreateSolidBrush(RGB(120, 128, 140));
+        HBRUSH gris = CreateSolidBrush(g_pal.muted);
         POINT arriba[3] = {{w / 4, lado - 5}, {3 * w / 4, lado - 5}, {w / 2, 5}};
         POINT abajo[3] = {{w / 4, alto - lado + 5}, {3 * w / 4, alto - lado + 5},
                           {w / 2, alto - 5}};
@@ -4198,10 +4570,10 @@ static LRESULT CALLBACK ScrollWndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
         double t = (double)(si.nPos - si.nMin) / std::max(1.0, (double)(rango - si.nPage));
         int y = lado + (int)lround(t * std::max(0, pista - tam));
         RECT pulgar{2, y, w - 2, y + tam};
-        HBRUSH pulgar_brush = CreateSolidBrush(RGB(200, 205, 213));
+        HBRUSH pulgar_brush = CreateSolidBrush(g_pal.hover);
         FillRect(dc, &pulgar, pulgar_brush);
         DeleteObject(pulgar_brush);
-        FrameRect(dc, &pulgar, (HBRUSH)GetStockObject(GRAY_BRUSH));
+        FrameRect(dc, &pulgar, g_brush_border);
         EndPaint(hwnd, &ps);
     };
     switch (msg) {
@@ -4274,8 +4646,8 @@ static void dibujar_check_plano(const DRAWITEMSTRUCT* di, bool marcado) {
                          ((di->itemState & ODS_DISABLED) ? DFCS_INACTIVE : 0));
     }
     SetBkMode(di->hDC, TRANSPARENT);
-    SetTextColor(di->hDC, (di->itemState & ODS_DISABLED) ? RGB(150, 158, 168)
-                                                         : RGB(31, 41, 51));
+    SetTextColor(di->hDC, (di->itemState & ODS_DISABLED) ? g_pal.muted
+                                                         : g_pal.text);
     HFONT vieja = (HFONT)SelectObject(di->hDC, g_font);
     wchar_t texto[128]{};
     GetWindowTextW(di->hwndItem, texto, 128);
@@ -4307,7 +4679,8 @@ static void reubicar_controles(int cw, int ch) {
     };
 
     // Cabecera
-    mover(ctl(1402), cw - 440, 23, 420, 20);
+    mover(ctl(1402), cw - 440, 23, 390, 20);
+    mover(ctl(ID_TEMA), cw - 42, 20, 26, 26);
 
     // 1. Origen
     mover(ctl(ID_ADD_FILES), 534 + dx, 68, 74, 28);
@@ -4482,7 +4855,7 @@ static void rellenar_acerca(HWND rich) {
     }
     SendMessageW(rich, WM_SETREDRAW, FALSE, 0);
     SendMessageW(rich, WM_SETTEXT, 0, (LPARAM)completo.c_str());
-    SendMessageW(rich, EM_SETBKGNDCOLOR, 0, (LPARAM)RGB(255, 255, 255));
+    SendMessageW(rich, EM_SETBKGNDCOLOR, 0, (LPARAM)g_pal.card);
     SendMessageW(rich, EM_SETMARGINS, EC_LEFTMARGIN | EC_RIGHTMARGIN,
                  MAKELPARAM(16, 12));
 
@@ -4496,23 +4869,23 @@ static void rellenar_acerca(HWND rich) {
         cf.dwMask = CFM_FACE | CFM_SIZE | CFM_COLOR | CFM_BOLD | CFM_BACKCOLOR;
         wcscpy_s(cf.szFaceName, L"Segoe UI");
         cf.yHeight = 180;
-        cf.crTextColor = RGB(31, 41, 51);
+        cf.crTextColor = g_pal.text;
         cf.dwEffects = 0;
-        cf.crBackColor = RGB(255, 255, 255);
+        cf.crBackColor = g_pal.card;
         if (estilo == EstiloAcerca::H1) {
             cf.yHeight = 260;
             cf.dwEffects = CFE_BOLD;
         } else if (estilo == EstiloAcerca::H2) {
             cf.yHeight = 200;
             cf.dwEffects = CFE_BOLD;
-            cf.crTextColor = RGB(21, 87, 176);
+            cf.crTextColor = g_pal.accent_dark;
         } else if (estilo == EstiloAcerca::CODE) {
             wcscpy_s(cf.szFaceName, L"Consolas");
-            cf.crTextColor = RGB(35, 48, 68);
-            cf.crBackColor = RGB(238, 241, 246);
+            cf.crTextColor = g_pal.text;
+            cf.crBackColor = g_pal.input;
         } else if (estilo == EstiloAcerca::MUTED) {
             cf.yHeight = 160;
-            cf.crTextColor = RGB(95, 107, 122);
+            cf.crTextColor = g_pal.muted;
         }
         SendMessageW(rich, EM_SETCHARFORMAT, SCF_SELECTION, (LPARAM)&cf);
 
@@ -4588,11 +4961,11 @@ static LRESULT CALLBACK AcercaWndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
             SetWindowSubclass(g_acerca_rich, AcercaRichProc, 1, 0);
 
             g_acerca_btn_manual = CreateWindowExW(0, L"BUTTON", L"Abrir manual de uso",
-                                                  WS_CHILD | WS_VISIBLE | WS_TABSTOP | BS_PUSHBUTTON,
+                                                  WS_CHILD | WS_VISIBLE | WS_TABSTOP | BS_OWNERDRAW,
                                                   500, 620, 150, 28, hwnd,
                                                   (HMENU)(INT_PTR)ID_ACERCA_MANUAL, inst, nullptr);
             g_acerca_btn_cerrar = CreateWindowExW(0, L"BUTTON", L"Cerrar",
-                                                  WS_CHILD | WS_VISIBLE | WS_TABSTOP | BS_PUSHBUTTON,
+                                                  WS_CHILD | WS_VISIBLE | WS_TABSTOP | BS_OWNERDRAW,
                                                   660, 620, 88, 28, hwnd,
                                                   (HMENU)(INT_PTR)ID_ACERCA_CERRAR, inst, nullptr);
             SendMessageW(g_acerca_btn_manual, WM_SETFONT, (WPARAM)g_font, TRUE);
@@ -4623,16 +4996,22 @@ static LRESULT CALLBACK AcercaWndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
             FillRect(dc, &rc, g_brush_bg);
             RECT caja{18, 80, rc.right - 18, rc.bottom - 64};
             FillRect(dc, &caja, g_brush_card);
-            HBRUSH borde = CreateSolidBrush(RGB(221, 227, 234));
-            FrameRect(dc, &caja, borde);
-            DeleteObject(borde);
+            FrameRect(dc, &caja, g_brush_border);
             EndPaint(hwnd, &ps);
             return 0;
         }
         case WM_CTLCOLORSTATIC: {
             SetBkMode((HDC)wp, TRANSPARENT);
-            SetTextColor((HDC)wp, RGB(31, 41, 51));
+            SetTextColor((HDC)wp, g_pal.text);
             return (LRESULT)g_brush_bg;
+        }
+        case WM_DRAWITEM: {
+            DRAWITEMSTRUCT* di = (DRAWITEMSTRUCT*)lp;
+            if (di && (di->CtlID == ID_ACERCA_MANUAL || di->CtlID == ID_ACERCA_CERRAR)) {
+                dibujar_boton_tema(di);
+                return TRUE;
+            }
+            break;
         }
         case WM_COMMAND:
             if (LOWORD(wp) == ID_ACERCA_MANUAL) {
@@ -4690,18 +5069,116 @@ static void mostrar_acerca(HWND padre) {
         ShowWindow(g_acerca, SW_SHOW);
         UpdateWindow(g_acerca);
         SetForegroundWindow(g_acerca);
+        aplicar_modo_oscuro_nativo(g_acerca, g_oscuro);
+        InvalidateRect(g_acerca, nullptr, TRUE);
     }
+}
+
+static LRESULT dibujar_header_resultados(NMCUSTOMDRAW* cd) {
+    if (cd->dwDrawStage == CDDS_PREPAINT) return CDRF_NOTIFYITEMDRAW;
+    if (cd->dwDrawStage != CDDS_ITEMPREPAINT) return CDRF_DODEFAULT;
+    FillRect(cd->hdc, &cd->rc, g_brush_bg);
+    wchar_t texto[128]{};
+    HDITEMW item{};
+    item.mask = HDI_TEXT | HDI_FORMAT;
+    item.pszText = texto;
+    item.cchTextMax = 128;
+    if (Header_GetItem(cd->hdr.hwndFrom, (int)cd->dwItemSpec, &item)) {
+        SetBkMode(cd->hdc, TRANSPARENT);
+        SetTextColor(cd->hdc, g_pal.text);
+        HFONT vieja = (HFONT)SelectObject(cd->hdc, g_font);
+        RECT r = cd->rc;
+        r.left += 6;
+        UINT formato = DT_SINGLELINE | DT_VCENTER | DT_LEFT;
+        if (item.fmt & HDF_CENTER) formato = DT_SINGLELINE | DT_VCENTER | DT_CENTER;
+        else if (item.fmt & HDF_RIGHT) formato = DT_SINGLELINE | DT_VCENTER | DT_RIGHT;
+        DrawTextW(cd->hdc, texto, -1, &r, formato | DT_NOPREFIX);
+        SelectObject(cd->hdc, vieja);
+    }
+    return CDRF_SKIPDEFAULT;
+}
+
+static LRESULT CALLBACK ResultadosSubclass(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp,
+                                           UINT_PTR, DWORD_PTR) {
+    if (msg == WM_NOTIFY) {
+        NMHDR* nh = (NMHDR*)lp;
+        if (g_oscuro && nh->code == NM_CUSTOMDRAW &&
+            nh->hwndFrom == ListView_GetHeader(hwnd))
+            return dibujar_header_resultados((NMCUSTOMDRAW*)lp);
+    }
+    return DefSubclassProc(hwnd, msg, wp, lp);
+}
+
+static LRESULT CALLBACK ProgressSubclass(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp,
+                                        UINT_PTR, DWORD_PTR) {
+    if (g_oscuro) {
+        if (msg == WM_ERASEBKGND) return 1;
+        if (msg == WM_PAINT) {
+            PAINTSTRUCT ps;
+            HDC dc = BeginPaint(hwnd, &ps);
+            RECT rc;
+            GetClientRect(hwnd, &rc);
+            FillRect(dc, &rc, g_brush_border);
+            PBRANGE rango{};
+            SendMessageW(hwnd, PBM_GETRANGE, TRUE, (LPARAM)&rango);
+            int valor = (int)SendMessageW(hwnd, PBM_GETPOS, 0, 0);
+            int total = rango.iHigh - rango.iLow;
+            if (total > 0 && valor > rango.iLow) {
+                int ancho = (int)((double)(valor - rango.iLow) / total * rc.right);
+                if (ancho > rc.right) ancho = rc.right;
+                RECT lleno{rc.left, rc.top, rc.left + ancho, rc.bottom};
+                HBRUSH br = CreateSolidBrush(g_pal.accent);
+                FillRect(dc, &lleno, br);
+                DeleteObject(br);
+            }
+            EndPaint(hwnd, &ps);
+            return 0;
+        }
+    }
+    return DefSubclassProc(hwnd, msg, wp, lp);
+}
+
+static int zona_menu_custom(POINT p) {
+    if (!g_oscuro || p.y < 0 || p.y >= 18) return -1;
+    if (p.x >= 12 && p.x < 114) return 0;
+    if (p.x >= 114 && p.x < 184) return 1;
+    if (p.x >= 184 && p.x < 244) return 2;
+    return -1;
+}
+
+static int zona_tab_custom(POINT p) {
+    if (!g_oscuro || p.y < 726 || p.y >= 754) return -1;
+    if (p.x >= 16 && p.x < 122) return 0;
+    if (p.x >= 126 && p.x < 208) return 1;
+    return -1;
+}
+
+static void seleccionar_pestana(int sel) {
+    g_tab_sel = sel == 1 ? 1 : 0;
+    if (g_tab) TabCtrl_SetCurSel(g_tab, g_tab_sel);
+    if (g_lista_resultados)
+        ShowWindow(g_lista_resultados, g_tab_sel == 0 ? SW_SHOW : SW_HIDE);
+    if (g_edit_log) ShowWindow(g_edit_log, g_tab_sel == 1 ? SW_SHOW : SW_HIDE);
+    RECT barra{0, 724, 400, 756};
+    InvalidateRect(g_hwnd, &barra, FALSE);
+}
+
+static void abrir_menu_custom(int cual, POINT pantalla) {
+    HMENU menu = cual == 0 ? g_menu_herramientas
+                           : (cual == 1 ? g_menu_hist : g_menu_ayuda);
+    if (!menu) return;
+    SetForegroundWindow(g_hwnd);
+    int id = (int)TrackPopupMenu(menu, TPM_RETURNCMD | TPM_LEFTALIGN | TPM_TOPALIGN,
+                                 pantalla.x, pantalla.y, 0, g_hwnd, nullptr);
+    if (id) PostMessageW(g_hwnd, WM_COMMAND, (WPARAM)id, 0);
+    PostMessageW(g_hwnd, WM_NULL, 0, 0);
 }
 
 static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
     switch (msg) {
         case WM_CREATE: {
             g_hwnd = hwnd;
-            g_brush_bg = CreateSolidBrush(RGB(238, 241, 246));
-            g_brush_card = CreateSolidBrush(RGB(255, 255, 255));
-            g_brush_dark = CreateSolidBrush(RGB(15, 23, 42));
-            g_brush_log = CreateSolidBrush(RGB(15, 23, 42));
-            g_brush_disabled = CreateSolidBrush(RGB(240, 240, 240));
+            aplicar_paleta_cpp(g_oscuro);
 
             WNDCLASSEXW wc_slider{};
             wc_slider.cbSize = sizeof(wc_slider);
@@ -4763,9 +5240,10 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
 
             // Cabecera
             etiqueta(L"Conversor WebP", 16, 17, 300, 30, 1400, g_font_title);
-            etiqueta(L"v2.6.2", 200, 29, 120, 18, 1401, g_font_muted);
-            etiqueta(L"JPG · PNG · BMP · TIFF · GIF · ICO  →  WebP / AVIF", 560, 23, 420, 20,
+            etiqueta(L"v2.6.3", 200, 29, 120, 18, 1401, g_font_muted);
+            etiqueta(L"JPG · PNG · BMP · TIFF · GIF · ICO  →  WebP / AVIF", 560, 23, 390, 20,
                      1402, g_font_muted, SS_RIGHT);
+            boton(L"", 958, 20, 26, 26, ID_TEMA, BS_OWNERDRAW);
 
             // 1. Origen
             etiqueta(L"1. Origen", 28, 69, 200, 20, ID_SECTION_ORIGEN, g_font_section);
@@ -4777,9 +5255,9 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
 
             g_lista_origen = listview(28, 164, 924, 72, ID_RESULTS + 100);
             ListView_SetExtendedListViewStyle(g_lista_origen, LVS_EX_FULLROWSELECT);
-            ListView_SetBkColor(g_lista_origen, RGB(251, 252, 254));
-            ListView_SetTextBkColor(g_lista_origen, RGB(251, 252, 254));
-            ListView_SetTextColor(g_lista_origen, RGB(31, 41, 51));
+            ListView_SetBkColor(g_lista_origen, g_pal.card);
+            ListView_SetTextBkColor(g_lista_origen, g_pal.card);
+            ListView_SetTextColor(g_lista_origen, g_pal.text);
             SendMessageW(g_lista_origen, WM_SETFONT, (WPARAM)g_font_mono, TRUE);
             ShowScrollBar(g_lista_origen, SB_VERT, FALSE);
             ShowScrollBar(g_lista_origen, SB_HORZ, FALSE);
@@ -4880,9 +5358,10 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             boton(L"Abrir carpeta de salida", 854, 616, 124, 32, ID_OPEN);
 
             g_progress = crear(PROGRESS_CLASSW, L"", PBS_SMOOTH, 16, 680, 968, 20, 1300);
+            SetWindowSubclass(g_progress, ProgressSubclass, 1, 0);
             SendMessageW(g_progress, PBM_SETRANGE, 0, MAKELPARAM(0, 100));
-            SendMessageW(g_progress, PBM_SETBARCOLOR, 0, (LPARAM)RGB(26, 115, 232));
-            SendMessageW(g_progress, PBM_SETBKCOLOR, 0, (LPARAM)RGB(221, 227, 234));
+            SendMessageW(g_progress, PBM_SETBARCOLOR, 0, (LPARAM)g_pal.accent);
+            SendMessageW(g_progress, PBM_SETBKCOLOR, 0, (LPARAM)g_pal.border);
             g_status = etiqueta(L"Listo.", 16, 708, 800, 18, 1403, g_font_muted);
 
             // Pestañas
@@ -4895,6 +5374,7 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             TabCtrl_InsertItem(g_tab, 1, &tci);
 
             g_lista_resultados = listview(24, 752, 952, 82, ID_RESULTS);
+            SetWindowSubclass(g_lista_resultados, ResultadosSubclass, 1, 0);
             const wchar_t* cols[] = {L"Archivo", L"Original (KB)", L"Final (KB)", L"Ahorro %", L"Estado"};
             int anchos[] = {556, 100, 90, 72, 114};
             for (int i = 0; i < 5; i++) {
@@ -4907,8 +5387,9 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             ListView_SetExtendedListViewStyle(g_lista_resultados, LVS_EX_FULLROWSELECT);
             ShowScrollBar(g_lista_resultados, SB_VERT, TRUE);
             ShowScrollBar(g_lista_resultados, SB_HORZ, FALSE);
-            ListView_SetBkColor(g_lista_resultados, RGB(255, 255, 255));
-            ListView_SetTextBkColor(g_lista_resultados, RGB(255, 255, 255));
+            ListView_SetBkColor(g_lista_resultados, g_pal.card);
+            ListView_SetTextBkColor(g_lista_resultados, g_pal.card);
+            ListView_SetTextColor(g_lista_resultados, g_pal.text);
 
             g_edit_log = crear(L"EDIT", L"", ES_MULTILINE | ES_READONLY | ES_AUTOVSCROLL |
                                WS_VSCROLL, 24, 752, 952, 82, ID_LOG);
@@ -4952,19 +5433,19 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             SetBkMode((HDC)wp, TRANSPARENT);
             int id = GetDlgCtrlID((HWND)lp);
             if (id == ID_LOG) {
-                SetTextColor((HDC)wp, RGB(203, 213, 225));
-                SetBkColor((HDC)wp, RGB(15, 23, 42));
+                SetTextColor((HDC)wp, g_pal.log_fg);
+                SetBkColor((HDC)wp, g_pal.log_bg);
                 return (LRESULT)g_brush_log;
             }
             if (id == ID_SECTION_ORIGEN || id == 1100 || id == 1200) {
-                SetTextColor((HDC)wp, RGB(21, 87, 176));
+                SetTextColor((HDC)wp, g_pal.accent_dark);
                 return (LRESULT)g_brush_card;
             }
             if (id == 1104 || id == 1204 || id == 1205 || id == 1401 ||
                 id == 1402 || id == 1403 || id == ID_LBL_EXTRACTOR) {
-                SetTextColor((HDC)wp, RGB(95, 107, 122));
+                SetTextColor((HDC)wp, g_pal.muted);
             } else {
-                SetTextColor((HDC)wp, RGB(31, 41, 51));
+                SetTextColor((HDC)wp, g_pal.text);
             }
             if (id >= 1400) return (LRESULT)g_brush_bg;
             return (LRESULT)g_brush_card;
@@ -4974,15 +5455,19 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             if (id == ID_BEEP || id == ID_APAGAR) return (LRESULT)g_brush_bg;
             return (LRESULT)g_brush_card;
         }
+        case WM_CTLCOLORLISTBOX:
+            SetTextColor((HDC)wp, g_pal.text);
+            SetBkColor((HDC)wp, g_pal.input);
+            return (LRESULT)g_brush_input;
         case WM_CTLCOLOREDIT: {
             if (!IsWindowEnabled((HWND)lp)) {
-                SetBkColor((HDC)wp, RGB(240, 240, 240));
-                SetTextColor((HDC)wp, RGB(128, 128, 128));
+                SetBkColor((HDC)wp, g_pal.disabled);
+                SetTextColor((HDC)wp, g_pal.muted);
                 return (LRESULT)g_brush_disabled;
             }
-            SetBkColor((HDC)wp, RGB(255, 255, 255));
-            SetTextColor((HDC)wp, RGB(31, 41, 51));
-            return (LRESULT)g_brush_card;
+            SetBkColor((HDC)wp, g_pal.input);
+            SetTextColor((HDC)wp, g_pal.text);
+            return (LRESULT)g_brush_input;
         }
 
         case WM_MENUSELECT: {
@@ -5013,16 +5498,33 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             return 0;
         }
 
+        case WM_MEASUREITEM: {
+            MEASUREITEMSTRUCT* mi = (MEASUREITEMSTRUCT*)lp;
+            if (mi && mi->CtlType == ODT_COMBOBOX) {
+                mi->itemHeight = 22;
+                return TRUE;
+            }
+            break;
+        }
+
         case WM_DRAWITEM: {
             DRAWITEMSTRUCT* di = (DRAWITEMSTRUCT*)lp;
+            if (di && di->CtlType == ODT_COMBOBOX) {
+                dibujar_combo(di);
+                return TRUE;
+            }
+            if (di && di->CtlID == ID_TEMA) {
+                dibujar_icono_tema(di);
+                return TRUE;
+            }
             if (di && (di->CtlID == ID_APAGAR || di->CtlID == ID_BEEP)) {
                 dibujar_check_plano(di, di->CtlID == ID_APAGAR ? g_ui_apagar : g_ui_beep);
                 return TRUE;
             }
             if (di && di->CtlID == ID_START) {
-                COLORREF fondo = RGB(26, 115, 232);
-                if (di->itemState & ODS_DISABLED) fondo = RGB(157, 184, 221);
-                else if (di->itemState & ODS_SELECTED) fondo = RGB(21, 87, 176);
+                COLORREF fondo = g_pal.accent;
+                if (di->itemState & ODS_DISABLED) fondo = g_pal.hover;
+                else if (di->itemState & ODS_SELECTED) fondo = g_pal.accent_dark;
                 HBRUSH br = CreateSolidBrush(fondo);
                 FillRect(di->hDC, &di->rcItem, br);
                 DeleteObject(br);
@@ -5043,9 +5545,13 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
                 HBRUSH fondo = CreateSolidBrush(g_color);
                 FillRect(di->hDC, &di->rcItem, fondo);
                 DeleteObject(fondo);
-                FrameRect(di->hDC, &di->rcItem, (HBRUSH)GetStockObject(GRAY_BRUSH));
+                FrameRect(di->hDC, &di->rcItem, g_brush_border);
                 if (di->itemState & ODS_SELECTED)
                     DrawFocusRect(di->hDC, &di->rcItem);
+                return TRUE;
+            }
+            if (di) {
+                dibujar_boton_tema(di);
                 return TRUE;
             }
             break;
@@ -5398,6 +5904,28 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
                     }
                     comprobar_actualizaciones(true);
                     return 0;
+                case ID_TEMA:
+                    aplicar_paleta_cpp(!g_oscuro);
+                    guardar_config();
+                    g_menu_hot = -1;
+                    aplicar_modo_oscuro_nativo(hwnd, g_oscuro);
+                    {
+                        RECT rc{};
+                        GetClientRect(hwnd, &rc);
+                        reubicar_controles(rc.right, rc.bottom);
+                    }
+                    if (g_acerca_rich && IsWindow(g_acerca_rich)) {
+                        rellenar_acerca(g_acerca_rich);
+                    }
+                    if (g_acerca && IsWindow(g_acerca)) {
+                        aplicar_modo_oscuro_nativo(g_acerca, g_oscuro);
+                        InvalidateRect(g_acerca, nullptr, TRUE);
+                    }
+                    if (g_prev_hwnd && IsWindow(g_prev_hwnd)) {
+                        aplicar_modo_oscuro_nativo(g_prev_hwnd, g_oscuro);
+                        InvalidateRect(g_prev_hwnd, nullptr, TRUE);
+                    }
+                    return 0;
                 case ID_PATTERN_HELP:
                     MessageBoxW(hwnd,
                         L"Patron de nombre de salida\n\n"
@@ -5446,6 +5974,32 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
 
         case WM_NOTIFY: {
             NMHDR* nh = (NMHDR*)lp;
+            if (g_oscuro && g_lista_resultados && nh->code == NM_CUSTOMDRAW &&
+                nh->hwndFrom == ListView_GetHeader(g_lista_resultados)) {
+                NMCUSTOMDRAW* cd = (NMCUSTOMDRAW*)lp;
+                if (cd->dwDrawStage == CDDS_PREPAINT) return CDRF_NOTIFYITEMDRAW;
+                if (cd->dwDrawStage == CDDS_ITEMPREPAINT) {
+                    FillRect(cd->hdc, &cd->rc, g_brush_bg);
+                    wchar_t texto[128]{};
+                    HDITEMW item{};
+                    item.mask = HDI_TEXT | HDI_FORMAT;
+                    item.pszText = texto;
+                    item.cchTextMax = 128;
+                    if (Header_GetItem(nh->hwndFrom, (int)cd->dwItemSpec, &item)) {
+                        SetBkMode(cd->hdc, TRANSPARENT);
+                        SetTextColor(cd->hdc, g_pal.text);
+                        HFONT vieja = (HFONT)SelectObject(cd->hdc, g_font);
+                        RECT r = cd->rc;
+                        r.left += 6;
+                        UINT formato = DT_SINGLELINE | DT_VCENTER | DT_LEFT;
+                        if (item.fmt & HDF_CENTER) formato = DT_SINGLELINE | DT_VCENTER | DT_CENTER;
+                        else if (item.fmt & HDF_RIGHT) formato = DT_SINGLELINE | DT_VCENTER | DT_RIGHT;
+                        DrawTextW(cd->hdc, texto, -1, &r, formato | DT_NOPREFIX);
+                        SelectObject(cd->hdc, vieja);
+                    }
+                    return CDRF_SKIPDEFAULT;
+                }
+            }
             if (nh->idFrom == ID_RESULTS && nh->code == NM_CUSTOMDRAW) {
                 NMLVCUSTOMDRAW* cd = (NMLVCUSTOMDRAW*)lp;
                 if (cd->nmcd.dwDrawStage == CDDS_PREPAINT) return CDRF_NOTIFYITEMDRAW;
@@ -5465,9 +6019,7 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
                 }
             }
             if (nh->idFrom == ID_TAB && nh->code == TCN_SELCHANGE) {
-                int sel = TabCtrl_GetCurSel(g_tab);
-                ShowWindow(g_lista_resultados, sel == 0 ? SW_SHOW : SW_HIDE);
-                ShowWindow(g_edit_log, sel == 1 ? SW_SHOW : SW_HIDE);
+                seleccionar_pestana(TabCtrl_GetCurSel(g_tab));
             }
             if (nh->idFrom == ID_RESULTS && nh->code == NM_DBLCLK) {
                 int sel = ListView_GetNextItem(g_lista_resultados, -1, LVNI_SELECTED);
@@ -5479,13 +6031,36 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             return 0;
         }
 
+        case WM_LBUTTONDOWN: {
+            POINT p{GET_X_LPARAM(lp), GET_Y_LPARAM(lp)};
+            int zona = zona_menu_custom(p);
+            if (zona >= 0) {
+                POINT pantalla = p;
+                ClientToScreen(hwnd, &pantalla);
+                abrir_menu_custom(zona, pantalla);
+                return 0;
+            }
+            int pestana = zona_tab_custom(p);
+            if (pestana >= 0) {
+                seleccionar_pestana(pestana);
+                return 0;
+            }
+            break;
+        }
+
         case WM_MOUSEMOVE: {
             POINT p{GET_X_LPARAM(lp), GET_Y_LPARAM(lp)};
-            RECT zona = zona_drop_actual();
-            bool dentro = PtInRect(&zona, p) != FALSE;
+            int zona = zona_menu_custom(p);
+            if (zona != g_menu_hot) {
+                g_menu_hot = zona;
+                RECT barra{0, 0, 260, 18};
+                InvalidateRect(hwnd, &barra, FALSE);
+            }
+            RECT zona_drop = zona_drop_actual();
+            bool dentro = PtInRect(&zona_drop, p) != FALSE;
             if (dentro != g_drop_hot) {
                 g_drop_hot = dentro;
-                InvalidateRect(hwnd, &zona, FALSE);
+                InvalidateRect(hwnd, &zona_drop, FALSE);
             }
             TRACKMOUSEEVENT tme{};
             tme.cbSize = sizeof(tme);
@@ -5496,6 +6071,11 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
         }
 
         case WM_MOUSELEAVE:
+            if (g_menu_hot != -1) {
+                g_menu_hot = -1;
+                RECT barra{0, 0, 260, 18};
+                InvalidateRect(hwnd, &barra, FALSE);
+            }
             if (g_drop_hot) {
                 g_drop_hot = false;
                 RECT zona = zona_drop_actual();
@@ -5508,6 +6088,10 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
                 POINT p{};
                 GetCursorPos(&p);
                 ScreenToClient(hwnd, &p);
+                if (zona_menu_custom(p) >= 0 || zona_tab_custom(p) >= 0) {
+                    SetCursor(LoadCursorW(nullptr, IDC_HAND));
+                    return TRUE;
+                }
                 RECT zona = zona_drop_actual();
                 if (PtInRect(&zona, p)) {
                     SetCursor(LoadCursorW(nullptr, IDC_HAND));
@@ -5835,6 +6419,7 @@ int wmain(int argc, wchar_t** argv) {
     }
 
     cargar_config();
+    aplicar_modo_global_cpp(g_oscuro);
     WNDCLASSEXW wc{};
     wc.cbSize = sizeof(wc);
     wc.style = CS_HREDRAW | CS_VREDRAW;
@@ -5858,16 +6443,19 @@ int wmain(int argc, wchar_t** argv) {
     wc.hIconSm = icono_pequeno;
     RegisterClassExW(&wc);
 
-    g_hwnd = CreateWindowExW(0, wc.lpszClassName, L"Conversor WebP 2.6.2",
+    g_hwnd = CreateWindowExW(0, wc.lpszClassName, L"Conversor WebP 2.6.3",
                              WS_OVERLAPPEDWINDOW,
                              CW_USEDEFAULT, CW_USEDEFAULT, 1016, 900, nullptr, nullptr, inst, nullptr);
     if (!g_hwnd) return 1;
+
+    aplicar_modo_oscuro_nativo(g_hwnd, g_oscuro);
 
     for (auto& a : args) {
         if (!a.empty() && a[0] != L'-') anadir_origen(a);
     }
 
     HMENU menu = CreateMenu();
+    g_menu_principal = menu;
     g_menu_hist = CreatePopupMenu();
     HMENU herramientas = CreatePopupMenu();
     g_menu_herramientas = herramientas;
@@ -5880,6 +6468,7 @@ int wmain(int argc, wchar_t** argv) {
     AppendMenuW(herramientas, MF_STRING, ID_MENU_WATCH, L"Vigilar una carpeta");
     AppendMenuW(herramientas, MF_STRING, ID_MENU_PREVIEW, L"Vista previa del seleccionado\tCtrl+P");
     HMENU ayuda = CreatePopupMenu();
+    g_menu_ayuda = ayuda;
     AppendMenuW(ayuda, MF_STRING, ID_MENU_MANUAL, L"Manual de uso\tF1");
     AppendMenuW(ayuda, MF_SEPARATOR, 0, nullptr);
     AppendMenuW(ayuda, MF_STRING, ID_MENU_UPDATE, L"Buscar actualizaciones...");
@@ -5887,8 +6476,10 @@ int wmain(int argc, wchar_t** argv) {
     AppendMenuW(menu, MF_POPUP, (UINT_PTR)herramientas, L"Herramientas");
     AppendMenuW(menu, MF_POPUP, (UINT_PTR)g_menu_hist, L"Historial");
     AppendMenuW(menu, MF_POPUP, (UINT_PTR)ayuda, L"Ayuda");
-    SetMenu(g_hwnd, menu);
+    if (!g_oscuro) SetMenu(g_hwnd, menu);
     reconstruir_menu_historial();
+    aplicar_modo_oscuro_nativo(g_hwnd, g_oscuro);
+    DrawMenuBar(g_hwnd);
 
     ACCEL accels[] = {
         {FVIRTKEY | FCONTROL, 'O', ID_ADD_FILES},

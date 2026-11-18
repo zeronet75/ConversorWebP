@@ -12,6 +12,7 @@ del proyecto principal.
   WebP (chunk ICCP) y AVIF.
 - **Portable:** el ejecutable no escribe en el registro; usa `config.ini` junto al
   `.exe`. La integración con el Explorador es opcional y se instala en HKCU.
+- **Modo oscuro:** conmutable con el icono sol/luna de la cabecera y recordado en `config.ini`.
 
 ## Resultado de la comparación con Python
 
@@ -43,8 +44,11 @@ La interfaz C++ está ajustada a la de Python: paleta, tarjetas, opciones, boton
 slider, scrollbar y pestañas.
 
 - [`docs/gui_python.png`](docs/gui_python.png)
+- [`docs/gui_python_dark.png`](docs/gui_python_dark.png)
 - [`docs/gui_cpp.png`](docs/gui_cpp.png)
+- [`docs/gui_cpp_dark.png`](docs/gui_cpp_dark.png)
 - [`docs/gui_comparacion.png`](docs/gui_comparacion.png)
+- [`docs/gui_comparacion_oscura.png`](docs/gui_comparacion_oscura.png)
 - [`docs/gui_tooltip_cpp.png`](docs/gui_tooltip_cpp.png)
 
 ## Qué incluye

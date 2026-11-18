@@ -77,7 +77,7 @@ except Exception:  # pragma: no cover - la app sigue funcionando sin arrastrar
 
 
 APP_NAME = "Conversor WebP"
-APP_VERSION = "2.6.2"
+APP_VERSION = "2.6.3"
 
 try:  # soporte HEIC/HEIF (iPhone) si pillow-heif esta instalado
     import pillow_heif
@@ -143,6 +143,52 @@ TEXT = "#1f2933"
 MUTED = "#5f6b7a"
 OK = "#137333"
 ERR = "#c5221f"
+BORDER = "#dde3ea"
+INPUT_BG = "#ffffff"
+DROP_BG = "#fafbfd"
+DROP_HOVER = "#f2f7ff"
+SEL_BG = "#d7e3fb"
+LOG_BG = "#0f172a"
+LOG_FG = "#cbd5e1"
+HOVER_BG = "#e8eef6"
+
+PALETA_CLARA = {
+    "BG": "#eef1f6", "CARD": "#ffffff", "TEXT": "#1f2933", "MUTED": "#5f6b7a",
+    "ACCENT": "#1a73e8", "ACCENT_DARK": "#1557b0", "OK": "#137333", "ERR": "#c5221f",
+    "BORDER": "#dde3ea", "INPUT_BG": "#ffffff", "DROP_BG": "#fafbfd",
+    "DROP_HOVER": "#f2f7ff", "SEL_BG": "#d7e3fb", "LOG_BG": "#0f172a",
+    "LOG_FG": "#cbd5e1", "HOVER_BG": "#e8eef6",
+}
+PALETA_OSCURA = {
+    "BG": "#0f172a", "CARD": "#1b2433", "TEXT": "#e6edf7", "MUTED": "#9aa8bb",
+    "ACCENT": "#4c9aff", "ACCENT_DARK": "#8fc2ff", "OK": "#4ade80", "ERR": "#f87171",
+    "BORDER": "#2e3a4d", "INPUT_BG": "#111a29", "DROP_BG": "#141e2e",
+    "DROP_HOVER": "#1d2a3f", "SEL_BG": "#29405f", "LOG_BG": "#0a1220",
+    "LOG_FG": "#cbd5e1", "HOVER_BG": "#26364d",
+}
+
+
+def aplicar_paleta(oscuro: bool) -> None:
+    """Actualiza los colores globales usados por las dos paletas."""
+    global BG, CARD, ACCENT, ACCENT_DARK, TEXT, MUTED, OK, ERR
+    global BORDER, INPUT_BG, DROP_BG, DROP_HOVER, SEL_BG, LOG_BG, LOG_FG, HOVER_BG
+    p = PALETA_OSCURA if oscuro else PALETA_CLARA
+    BG = p["BG"]
+    CARD = p["CARD"]
+    ACCENT = p["ACCENT"]
+    ACCENT_DARK = p["ACCENT_DARK"]
+    TEXT = p["TEXT"]
+    MUTED = p["MUTED"]
+    OK = p["OK"]
+    ERR = p["ERR"]
+    BORDER = p["BORDER"]
+    INPUT_BG = p["INPUT_BG"]
+    DROP_BG = p["DROP_BG"]
+    DROP_HOVER = p["DROP_HOVER"]
+    SEL_BG = p["SEL_BG"]
+    LOG_BG = p["LOG_BG"]
+    LOG_FG = p["LOG_FG"]
+    HOVER_BG = p["HOVER_BG"]
 
 
 # --------------------------------------------------------------------------- #
@@ -1360,8 +1406,8 @@ class DropZone(tk.Canvas):
         self.delete("all")
         w = max(self.winfo_width(), 10)
         h = max(self.winfo_height(), 10)
-        color = ACCENT if self._hover else "#b9c3d1"
-        fondo = "#f2f7ff" if self._hover else "#fafbfd"
+        color = ACCENT if self._hover else BORDER
+        fondo = DROP_HOVER if self._hover else DROP_BG
         self.create_rectangle(2, 2, w - 2, h - 2, outline=color, dash=(6, 4), width=2, fill=fondo)
         self.create_text(
             w / 2,
@@ -1407,7 +1453,7 @@ class VentanaAcerca(tk.Toplevel):
             style="Sub.TLabel",
         ).pack(anchor="w", pady=(2, 0))
 
-        caja = tk.Frame(self, bg=CARD, highlightthickness=1, highlightbackground="#dde3ea")
+        caja = tk.Frame(self, bg=CARD, highlightthickness=1, highlightbackground=BORDER)
         caja.pack(fill="both", expand=True, padx=18, pady=(6, 0))
 
         self.txt = tk.Text(
@@ -1432,7 +1478,7 @@ class VentanaAcerca(tk.Toplevel):
         self.txt.tag_configure("h2", font=("Segoe UI Semibold", 10), foreground=ACCENT_DARK, spacing1=14, spacing3=3)
         self.txt.tag_configure("p", font=("Segoe UI", 9), foreground=TEXT, spacing3=3)
         self.txt.tag_configure("li", font=("Segoe UI", 9), foreground=TEXT, lmargin1=16, lmargin2=30, spacing3=2)
-        self.txt.tag_configure("code", font=("Consolas", 9), background="#eef1f6", foreground="#233044")
+        self.txt.tag_configure("code", font=("Consolas", 9), background=INPUT_BG, foreground=TEXT)
         self.txt.tag_configure("muted", font=("Segoe UI", 8), foreground=MUTED, spacing1=10)
 
         self._rellenar()
@@ -1764,6 +1810,8 @@ class App(BaseTk):  # type: ignore[misc,valid-type]
     def __init__(self, sources_iniciales: list[Path] | None = None) -> None:
         super().__init__()
         self.title(f"{APP_NAME} {APP_VERSION}")
+        self.oscuro = self._leer_tema_inicial()
+        aplicar_paleta(self.oscuro)
         ancho = max(860, min(1000, self.winfo_screenwidth() - 80))
         alto = max(640, min(840, self.winfo_screenheight() - 120))
         self.geometry(f"{ancho}x{alto}")
@@ -1809,6 +1857,7 @@ class App(BaseTk):  # type: ignore[misc,valid-type]
         self._vigilante: Vigilante | None = None
         self._watch_stop = threading.Event()
         self._closing = False
+        self._after_update = None
         self._actualizando = False
         self._after_id: str | None = None
         self._actualizacion: tuple[str, str] | None = None
@@ -1825,6 +1874,7 @@ class App(BaseTk):  # type: ignore[misc,valid-type]
         self._build_style()
         self._build_ui()
         self._bind_shortcuts()
+        self.after(250, self._aplicar_tema_windows)
         for var in (
             self.quality, self.method, self.lossless, self.flatten,
             self.reencode_webp, self.background, self.max_dim,
@@ -1838,7 +1888,7 @@ class App(BaseTk):  # type: ignore[misc,valid-type]
         self.protocol("WM_DELETE_WINDOW", self._on_close)
         self.bind("<Destroy>", self._al_destruir, add="+")
         self._after_id = self.after(100, self._drain_queue)
-        self.after(3000, self._auto_comprobar_update)
+        self._after_update = self.after(3000, self._auto_comprobar_update)
 
         if DND_AVAILABLE:
             self._registrar_dnd_global()
@@ -1848,7 +1898,150 @@ class App(BaseTk):  # type: ignore[misc,valid-type]
         if sources_iniciales:
             self.after(150, lambda: self._anadir(list(sources_iniciales)))
 
+    def _dibujar_icono_tema(self) -> None:
+        c = self.btn_tema
+        try:
+            c.delete("all")
+            c.configure(bg=BG)
+            if self.oscuro:
+                # Luna menguante: circulo claro recortado con el color de fondo
+                c.create_oval(3, 2, 21, 20, fill="#e2e8f0", outline="")
+                c.create_oval(10, -3, 27, 14, fill=BG, outline="")
+            else:
+                # Sol
+                c.create_oval(8, 8, 18, 18, fill="#f6c343", outline="")
+                rayos = [
+                    (12, 2, 12, 6), (12, 18, 12, 22), (2, 12, 6, 12), (18, 12, 22, 12),
+                    (5, 5, 8, 8), (16, 16, 19, 19), (19, 5, 16, 8), (8, 16, 5, 19),
+                ]
+                for x1, y1, x2, y2 in rayos:
+                    c.create_line(x1, y1, x2, y2, fill="#f6c343", width=2, capstyle="round")
+        except tk.TclError:
+            pass
+
+    def _alternar_tema(self) -> None:
+        if self.running or self._actualizando:
+            messagebox.showinfo(
+                APP_NAME, "Espera a que termine el trabajo en curso para cambiar el tema."
+            )
+            return
+        self.oscuro = not self.oscuro
+        aplicar_paleta(self.oscuro)
+        self._save_config()
+        self._reconstruir_ui()
+
+    def _reconstruir_ui(self) -> None:
+        log_texto = ""
+        estado = "Listo."
+        prog_val, prog_max = 0, 100
+        filas: list[tuple] = []
+        preset = self.preset_sel.get()
+        try:
+            log_texto = self.log.get("1.0", "end-1c")
+            estado = self.lbl_status.cget("text")
+            prog_val = float(self.progress.cget("value"))
+            prog_max = float(self.progress.cget("maximum"))
+            for iid in self.tabla.get_children():
+                filas.append((self.tabla.item(iid, "values"), self.tabla.item(iid, "tags")))
+        except Exception:  # noqa: BLE001
+            pass
+        self._tooltips = []
+        for w in list(self.winfo_children()):
+            try:
+                w.destroy()
+            except Exception:  # noqa: BLE001
+                pass
+        self.configure(bg=BG)
+        self._build_style()
+        self._build_ui()
+        self._build_menu()
+        if DND_AVAILABLE:
+            self._registrar_dnd_global()
+        self._instalar_tooltips()
+        self._refrescar_origen()
+        self._refrescar_combo_preset()
+        if preset:
+            self.preset_sel.set(preset)
+        self._refrescar_historial()
+        self._on_formato()
+        self._on_flatten()
+        self._on_lossless()
+        self._on_zip_toggle()
+        self._on_peso()
+        self._refrescar_gpu_ui()
+        self._on_dry_run()
+        self._set_running(self.running)
+        self.lbl_status.configure(text=estado)
+        self.progress.configure(maximum=max(1.0, prog_max), value=prog_val)
+        if log_texto:
+            self.log.configure(state="normal")
+            self.log.insert("end", log_texto)
+            self.log.configure(state="disabled")
+            self.log.see("end")
+        for valores, tags in filas:
+            self.tabla.insert("", "end", values=valores, tags=tags)
+        self._dibujar_icono_tema()
+        self.after(80, self._aplicar_tema_windows)
+
+    def _aplicar_tema_windows(self) -> None:
+        """Titulo y menus nativos en modo oscuro (API de Windows)."""
+        try:
+            self.update_idletasks()
+            hwnd = ctypes.windll.user32.GetParent(self.winfo_id())
+            if not hwnd:
+                hwnd = self.winfo_id()
+            valor = ctypes.c_int(1 if self.oscuro else 0)
+            aplicado = False
+            for atributo in (20, 19):
+                if ctypes.windll.dwmapi.DwmSetWindowAttribute(
+                    hwnd, atributo, ctypes.byref(valor), ctypes.sizeof(valor)
+                ) == 0:
+                    aplicado = True
+                    break
+            uxtheme = ctypes.WinDLL("uxtheme")
+            try:
+                permitir = uxtheme[133]
+                permitir.restype = ctypes.c_bool
+                permitir.argtypes = [wintypes.HWND, ctypes.c_bool]
+                permitir(hwnd, bool(self.oscuro))
+            except Exception:  # noqa: BLE001
+                pass
+            try:
+                ctypes.windll.uxtheme.SetWindowTheme(
+                    hwnd, "DarkMode_Explorer" if self.oscuro else "Explorer", None
+                )
+            except Exception:  # noqa: BLE001
+                pass
+            try:
+                fijar = uxtheme[135]
+                fijar.restype = ctypes.c_int
+                fijar.argtypes = [ctypes.c_int]
+                fijar(2 if self.oscuro else 3)
+            except Exception:  # noqa: BLE001
+                pass
+            try:
+                uxtheme[136]()
+            except Exception:  # noqa: BLE001
+                pass
+            try:
+                ctypes.windll.user32.DrawMenuBar(hwnd)
+            except Exception:  # noqa: BLE001
+                pass
+            if aplicado:
+                ctypes.windll.user32.SetWindowPos(
+                    hwnd, 0, 0, 0, 0, 0, 0x0027  # NOSIZE|NOMOVE|NOZORDER|NOACTIVATE|FRAMECHANGED
+                )
+        except Exception:  # noqa: BLE001
+            pass
+
     # ---------------- infraestructura ---------------- #
+    def _leer_tema_inicial(self) -> bool:
+        try:
+            datos = json.loads(CONFIG_FILE.read_text(encoding="utf-8"))
+            return bool(datos.get("dark_mode", False))
+        except Exception:  # noqa: BLE001
+            return False
+
     def _aplicar_icono(self) -> None:
         """Pone el icono de la app en la barra de titulo y en la barra de tareas."""
         aplicado = False
@@ -1878,13 +2071,19 @@ class App(BaseTk):  # type: ignore[misc,valid-type]
 
     def _build_style(self) -> None:
         style = ttk.Style(self)
-        for tema in ("vista", "winnative", "clam"):
-            if tema in style.theme_names():
-                try:
-                    style.theme_use(tema)
-                    break
-                except tk.TclError:
-                    continue
+        if self.oscuro:
+            try:
+                style.theme_use("clam")
+            except tk.TclError:
+                pass
+        else:
+            for tema in ("vista", "winnative", "clam"):
+                if tema in style.theme_names():
+                    try:
+                        style.theme_use(tema)
+                        break
+                    except tk.TclError:
+                        continue
         self._tema = style.theme_use()
         nativo = self._tema in ("vista", "winnative")
 
@@ -1899,13 +2098,117 @@ class App(BaseTk):  # type: ignore[misc,valid-type]
         style.configure(
             "Section.TLabel", background=CARD, foreground=ACCENT_DARK, font=("Segoe UI Semibold", 10)
         )
-        style.configure("TCheckbutton", background=CARD, foreground=TEXT, font=("Segoe UI", 9))
-        style.map("TCheckbutton", background=[("active", CARD)], foreground=[("disabled", "#9aa5b1")])
+        style.configure(
+            "TCheckbutton",
+            background=CARD,
+            foreground=TEXT,
+            font=("Segoe UI", 9),
+            indicatorbackground=INPUT_BG,
+            indicatorforeground=ACCENT,
+        )
+        style.map(
+            "TCheckbutton",
+            background=[("active", CARD)],
+            foreground=[("disabled", MUTED)],
+        )
         style.configure("TButton", font=("Segoe UI", 9), padding=5)
         style.configure("Bar.TCheckbutton", background=BG, foreground=TEXT, font=("Segoe UI", 9))
-        style.map("Bar.TCheckbutton", background=[("active", BG)], foreground=[("disabled", "#9aa5b1")])
+        style.map(
+            "Bar.TCheckbutton",
+            background=[("active", BG)],
+            foreground=[("disabled", MUTED)],
+        )
         style.configure("TEntry", padding=5)
-        style.configure("Horizontal.TProgressbar", background=ACCENT, troughcolor="#dde3ea", thickness=14)
+        style.configure(
+            "Horizontal.TProgressbar", background=ACCENT, troughcolor=BORDER, thickness=14
+        )
+        if self.oscuro:
+            self.option_add("*TCombobox*Listbox.background", INPUT_BG)
+            self.option_add("*TCombobox*Listbox.foreground", TEXT)
+            self.option_add("*TCombobox*Listbox.selectBackground", SEL_BG)
+            self.option_add("*TCombobox*Listbox.selectForeground", TEXT)
+            style.configure(
+                "TButton",
+                background=CARD,
+                foreground=TEXT,
+                bordercolor=BORDER,
+                lightcolor=CARD,
+                darkcolor=CARD,
+                focuscolor=ACCENT,
+                relief="flat",
+                padding=5,
+            )
+            style.map(
+                "TButton",
+                background=[("pressed", HOVER_BG), ("active", HOVER_BG), ("disabled", CARD)],
+                foreground=[("disabled", MUTED)],
+                bordercolor=[("focus", ACCENT)],
+            )
+            style.configure(
+                "TEntry",
+                fieldbackground=INPUT_BG,
+                foreground=TEXT,
+                insertcolor=TEXT,
+                bordercolor=BORDER,
+                lightcolor=INPUT_BG,
+                darkcolor=INPUT_BG,
+                padding=5,
+            )
+            style.configure(
+                "TCombobox",
+                fieldbackground=INPUT_BG,
+                background=CARD,
+                foreground=TEXT,
+                arrowcolor=TEXT,
+                bordercolor=BORDER,
+                lightcolor=INPUT_BG,
+                darkcolor=INPUT_BG,
+                selectbackground=INPUT_BG,
+                selectforeground=TEXT,
+                padding=4,
+            )
+            style.map(
+                "TCombobox",
+                fieldbackground=[("readonly", INPUT_BG)],
+                foreground=[("readonly", TEXT)],
+                selectbackground=[("readonly", INPUT_BG)],
+                selectforeground=[("readonly", TEXT)],
+            )
+            style.configure(
+                "TScrollbar",
+                background=HOVER_BG,
+                troughcolor=BG,
+                bordercolor=BORDER,
+                arrowcolor=TEXT,
+            )
+            style.map("TScrollbar", background=[("active", ACCENT)])
+            style.configure(
+                "Treeview",
+                background=CARD,
+                fieldbackground=CARD,
+                foreground=TEXT,
+                bordercolor=BORDER,
+            )
+            style.configure(
+                "Treeview.Heading",
+                background=BG,
+                foreground=TEXT,
+                relief="flat",
+            )
+            style.map(
+                "Treeview",
+                background=[("selected", SEL_BG)],
+                foreground=[("selected", TEXT)],
+            )
+            style.configure("TNotebook", background=BG, bordercolor=BORDER)
+            style.configure(
+                "TNotebook.Tab", background=CARD, foreground=TEXT, padding=(10, 4)
+            )
+            style.map(
+                "TNotebook.Tab",
+                background=[("selected", BG)],
+                foreground=[("selected", ACCENT_DARK)],
+            )
         if not nativo:
             # El tema "clam" necesita un color de acento explicito
             style.configure(
@@ -1913,10 +2216,13 @@ class App(BaseTk):  # type: ignore[misc,valid-type]
                 font=("Segoe UI Semibold", 10),
                 padding=(16, 9),
                 background=ACCENT,
-                foreground="white",
+                foreground="#ffffff",
                 borderwidth=0,
             )
-            style.map("Accent.TButton", background=[("disabled", "#9db8dd"), ("active", ACCENT_DARK)])
+            style.map(
+                "Accent.TButton",
+                background=[("disabled", MUTED), ("active", ACCENT_DARK)],
+            )
 
     def _aviso_sin_dnd(self) -> None:
         messagebox.showinfo(
@@ -1926,7 +2232,38 @@ class App(BaseTk):  # type: ignore[misc,valid-type]
             "Para activarlo:  pip install tkinterdnd2",
         )
 
+    def _crear_check(self, parent, texto, variable, bar=False, command=None):
+        if self.oscuro:
+            return tk.Checkbutton(
+                parent,
+                text=texto,
+                variable=variable,
+                command=command,
+                bg=BG if bar else CARD,
+                fg=TEXT,
+                activebackground=BG if bar else CARD,
+                activeforeground=TEXT,
+                selectcolor=INPUT_BG,
+                highlightthickness=0,
+                bd=0,
+                anchor="w",
+                font=("Segoe UI", 9),
+                cursor="hand2",
+            )
+        return ttk.Checkbutton(
+            parent,
+            text=texto,
+            variable=variable,
+            command=command,
+            style="Bar.TCheckbutton" if bar else "TCheckbutton",
+        )
+
     def _build_ui(self) -> None:
+        if self.oscuro:
+            self.barra_custom = tk.Frame(self, bg=BG)
+            self.barra_custom.pack(fill="x", side="top")
+        else:
+            self.barra_custom = None
         outer = ttk.Frame(self, padding=16)
         outer.pack(fill="both", expand=True)
 
@@ -1934,6 +2271,12 @@ class App(BaseTk):  # type: ignore[misc,valid-type]
         cab.pack(fill="x")
         ttk.Label(cab, text=APP_NAME, style="Title.TLabel").pack(side="left")
         ttk.Label(cab, text=f"v{APP_VERSION}", style="Muted.TLabel").pack(side="left", padx=(8, 0), pady=(6, 0))
+        self.btn_tema = tk.Canvas(
+            cab, width=26, height=26, bg=BG, highlightthickness=0, bd=0, cursor="hand2"
+        )
+        self.btn_tema.pack(side="right", padx=(10, 0), pady=(1, 0))
+        self.btn_tema.bind("<Button-1>", lambda _e: self._alternar_tema())
+        self._dibujar_icono_tema()
         ttk.Label(
             cab,
             text="JPG · PNG · BMP · TIFF · GIF · ICO  →  WebP / AVIF",
@@ -1975,12 +2318,12 @@ class App(BaseTk):  # type: ignore[misc,valid-type]
             height=4,
             activestyle="none",
             selectmode="extended",
-            bg="#fbfcfe",
+            bg=INPUT_BG,
             fg=TEXT,
-            selectbackground="#d7e3fb",
+            selectbackground=SEL_BG,
             selectforeground=TEXT,
             highlightthickness=1,
-            highlightbackground="#dde3ea",
+            highlightbackground=BORDER,
             relief="flat",
             font=("Consolas", 9),
         )
@@ -2014,21 +2357,21 @@ class App(BaseTk):  # type: ignore[misc,valid-type]
         self.btn_browse = ttk.Button(fila_out, text="Examinar...", command=self._pick_output)
         self.btn_browse.pack(side="left", padx=(5, 0))
 
-        self.chk_structure = ttk.Checkbutton(
-            card_out, text="Mantener subcarpetas del origen", variable=self.keep_structure
+        self.chk_structure = self._crear_check(
+            card_out, "Mantener subcarpetas del origen", self.keep_structure
         )
         self.chk_structure.pack(anchor="w", pady=(8, 0))
-        self.chk_overwrite = ttk.Checkbutton(
-            card_out, text="Sobrescribir archivos existentes", variable=self.overwrite
+        self.chk_overwrite = self._crear_check(
+            card_out, "Sobrescribir archivos existentes", self.overwrite
         )
         self.chk_overwrite.pack(anchor="w", pady=(3, 0))
 
         fila_zip = ttk.Frame(card_out, style="Card.TFrame")
         fila_zip.pack(fill="x", pady=(8, 0))
-        self.chk_zip = ttk.Checkbutton(
+        self.chk_zip = self._crear_check(
             fila_zip,
-            text="Empaquetar el resultado en .zip",
-            variable=self.make_zip,
+            "Empaquetar el resultado en .zip",
+            self.make_zip,
             command=self._on_zip_toggle,
         )
         self.chk_zip.pack(side="left")
@@ -2049,10 +2392,10 @@ class App(BaseTk):  # type: ignore[misc,valid-type]
         self.cmb_formato.bind("<<ComboboxSelected>>", self._on_formato)
         ttk.Label(fila_fmt, text="AVIF pesa menos", style="MutedCard.TLabel").pack(side="left", padx=(8, 0))
 
-        self.chk_csv = ttk.Checkbutton(
+        self.chk_csv = self._crear_check(
             card_out,
-            text="Guardar informe CSV en la carpeta de salida",
-            variable=self.csv_report,
+            "Guardar informe CSV en la carpeta de salida",
+            self.csv_report,
         )
         self.chk_csv.pack(anchor="w", pady=(6, 0))
 
@@ -2066,18 +2409,18 @@ class App(BaseTk):  # type: ignore[misc,valid-type]
         )
         self.btn_patron_ayuda.pack(side="left")
 
-        self.chk_dry = ttk.Checkbutton(
+        self.chk_dry = self._crear_check(
             card_out,
-            text="Solo analizar (no escribir archivos)",
-            variable=self.dry_run,
+            "Solo analizar (no escribir archivos)",
+            self.dry_run,
             command=self._on_dry_run,
         )
         self.chk_dry.pack(anchor="w", pady=(6, 0))
 
         fila_gpu = ttk.Frame(card_out, style="Card.TFrame")
         fila_gpu.pack(fill="x", pady=(6, 0))
-        self.chk_gpu = ttk.Checkbutton(
-            fila_gpu, text="Acelerar con GPU (CUDA)", variable=self.usar_gpu
+        self.chk_gpu = self._crear_check(
+            fila_gpu, "Acelerar con GPU (CUDA)", self.usar_gpu
         )
         self.chk_gpu.pack(side="left")
         self.lbl_gpu = ttk.Label(fila_gpu, text="", style="MutedCard.TLabel")
@@ -2116,8 +2459,8 @@ class App(BaseTk):  # type: ignore[misc,valid-type]
             variable=self.quality,
             command=self._on_quality,
             showvalue=False,
-            bg="#ffffff",
-            troughcolor="#c3cddb",
+            bg=INPUT_BG,
+            troughcolor=BORDER,
             activebackground=ACCENT_DARK,
             highlightthickness=0,
             bd=1,
@@ -2135,26 +2478,26 @@ class App(BaseTk):  # type: ignore[misc,valid-type]
         )
         self.cmb_method.pack(side="left")
 
-        self.chk_lossless = ttk.Checkbutton(
-            card_cal, text="Sin perdida (lossless)", variable=self.lossless,
+        self.chk_lossless = self._crear_check(
+            card_cal, "Sin perdida (lossless)", self.lossless,
             command=self._on_lossless,
         )
         self.chk_lossless.pack(anchor="w", pady=(8, 0))
-        self.chk_webp = ttk.Checkbutton(
-            card_cal, text="Recodificar tambien los .webp", variable=self.reencode_webp
+        self.chk_webp = self._crear_check(
+            card_cal, "Recodificar tambien los .webp", self.reencode_webp
         )
         self.chk_webp.pack(anchor="w", pady=(3, 0))
 
         fila_alfa = ttk.Frame(card_cal, style="Card.TFrame")
         fila_alfa.pack(fill="x", pady=(3, 0))
-        self.chk_flatten = ttk.Checkbutton(
-            fila_alfa, text="Aplanar transparencia sobre", variable=self.flatten,
+        self.chk_flatten = self._crear_check(
+            fila_alfa, "Aplanar transparencia sobre", self.flatten,
             command=self._on_flatten,
         )
         self.chk_flatten.pack(side="left")
         self.btn_color = tk.Frame(
             fila_alfa, width=26, height=18, bg=self.background.get(),
-            highlightthickness=1, highlightbackground="#8a94a3", bd=0, cursor="hand2",
+            highlightthickness=1, highlightbackground=BORDER, bd=0, cursor="hand2",
         )
         self.btn_color.pack(side="left", padx=(41, 0))
         self.btn_color.bind("<Button-1>", lambda _e: self._pick_background())
@@ -2174,8 +2517,8 @@ class App(BaseTk):  # type: ignore[misc,valid-type]
 
         fila_peso = ttk.Frame(card_cal, style="Card.TFrame")
         fila_peso.pack(fill="x", pady=(4, 0))
-        self.chk_peso = ttk.Checkbutton(
-            fila_peso, text="Peso maximo", variable=self.peso_activo, command=self._on_peso
+        self.chk_peso = self._crear_check(
+            fila_peso, "Peso maximo", self.peso_activo, command=self._on_peso
         )
         self.chk_peso.pack(side="left")
         self.entry_peso = ttk.Entry(fila_peso, textvariable=self.peso_kb, width=7, justify="right")
@@ -2206,18 +2549,12 @@ class App(BaseTk):  # type: ignore[misc,valid-type]
         self.btn_cancel.pack(side="left", padx=(8, 0))
         self.btn_open = ttk.Button(accion, text="Abrir carpeta de salida", command=self._open_output)
         self.btn_open.pack(side="right")
-        self.chk_beep = ttk.Checkbutton(
-            accion,
-            text="Aviso sonoro al terminar",
-            variable=self.beep,
-            style="Bar.TCheckbutton",
+        self.chk_beep = self._crear_check(
+            accion, "Aviso sonoro al terminar", self.beep, bar=True
         )
         self.chk_beep.pack(side="right", padx=(0, 18))
-        self.chk_apagar = ttk.Checkbutton(
-            accion,
-            text="Apagar al terminar",
-            variable=self.apagar,
-            style="Bar.TCheckbutton",
+        self.chk_apagar = self._crear_check(
+            accion, "Apagar al terminar", self.apagar, bar=True,
             command=self._on_apagar_toggle,
         )
         self.chk_apagar.pack(side="right", padx=(0, 12))
@@ -2267,7 +2604,7 @@ class App(BaseTk):  # type: ignore[misc,valid-type]
         log_wrap = ttk.Frame(tab_log)
         log_wrap.pack(fill="both", expand=True)
         self.log = tk.Text(
-            log_wrap, height=6, bg="#0f172a", fg="#cbd5e1", insertbackground="#cbd5e1",
+            log_wrap, height=6, bg=LOG_BG, fg=LOG_FG, insertbackground=LOG_FG,
             relief="flat", font=("Consolas", 9), padx=10, pady=6, wrap="none",
         )
         self.log.pack(side="left", fill="both", expand=True)
@@ -2293,6 +2630,7 @@ class App(BaseTk):  # type: ignore[misc,valid-type]
 
     def _instalar_tooltips(self) -> None:
         tips = {
+            "btn_tema": "Cambia entre modo claro y modo oscuro.",
             "btn_add_files": "Añade una o varias imágenes al lote.",
             "btn_add_folder": "Añade una carpeta completa, incluidas sus subcarpetas.",
             "btn_add_zip": "Añade archivos .zip, .rar o .7z y convierte su contenido.",
@@ -2368,8 +2706,32 @@ class App(BaseTk):  # type: ignore[misc,valid-type]
         )
 
     def _build_menu(self) -> None:
-        barra = tk.Menu(self)
-        ayuda = tk.Menu(barra, tearoff=0)
+        if getattr(self, "menu_barra", None) is not None:
+            try:
+                self.menu_barra.destroy()
+            except Exception:  # noqa: BLE001
+                pass
+        if getattr(self, "barra_custom", None) is not None:
+            for hijo in list(self.barra_custom.winfo_children()):
+                try:
+                    hijo.destroy()
+                except Exception:  # noqa: BLE001
+                    pass
+
+        def nuevo_menu(padre):
+            return tk.Menu(
+                padre,
+                tearoff=0,
+                bg=CARD,
+                fg=TEXT,
+                activebackground=ACCENT,
+                activeforeground="#ffffff",
+                disabledforeground=MUTED,
+                selectcolor=ACCENT,
+                bd=0,
+            )
+
+        ayuda = nuevo_menu(self)
         ayuda.add_command(label="Manual de uso", accelerator="F1", command=self._abrir_manual)
         ayuda.add_separator()
         ayuda.add_command(
@@ -2377,8 +2739,8 @@ class App(BaseTk):  # type: ignore[misc,valid-type]
             command=lambda: self._comprobar_actualizaciones(manual=True),
         )
         ayuda.add_command(label="Acerca de Conversor WebP", command=self._acerca_de)
-        self.menu_hist = tk.Menu(barra, tearoff=0)
-        herr = tk.Menu(barra, tearoff=0)
+        self.menu_hist = nuevo_menu(self)
+        herr = nuevo_menu(self)
         herr.add_command(
             label="Anadir a 'Enviar a' del Explorador", command=self._instalar_sendto
         )
@@ -2400,9 +2762,46 @@ class App(BaseTk):  # type: ignore[misc,valid-type]
         herr.add_separator()
         herr.add_command(label="Carpeta vigilada...", command=self._dialogo_vigilante)
         herr.add_command(label="Vista previa de la primera imagen", command=self._vista_previa)
-        barra.add_cascade(label="Herramientas", menu=herr)
-        barra.add_cascade(label="Historial", menu=self.menu_hist)
-        barra.add_cascade(label="Ayuda", menu=ayuda)
+        if self.oscuro and getattr(self, "barra_custom", None) is not None:
+            self.configure(menu="")
+            self.menu_barra = None
+            for texto, menu in (
+                ("Herramientas", herr),
+                ("Historial", self.menu_hist),
+                ("Ayuda", ayuda),
+            ):
+                boton = tk.Menubutton(
+                    self.barra_custom,
+                    text=texto,
+                    menu=menu,
+                    bg=BG,
+                    fg=TEXT,
+                    activebackground=ACCENT,
+                    activeforeground="#ffffff",
+                    bd=0,
+                    highlightthickness=0,
+                    relief="flat",
+                    indicatoron=False,
+                    padx=10,
+                    pady=4,
+                    font=("Segoe UI", 9),
+                    cursor="hand2",
+                )
+                boton.pack(side="left")
+        else:
+            barra = tk.Menu(
+                self,
+                bg=CARD,
+                fg=TEXT,
+                activebackground=ACCENT,
+                activeforeground="#ffffff",
+                bd=0,
+            )
+            barra.add_cascade(label="Herramientas", menu=herr)
+            barra.add_cascade(label="Historial", menu=self.menu_hist)
+            barra.add_cascade(label="Ayuda", menu=ayuda)
+            self.menu_barra = barra
+            self.configure(menu=barra)
         self._menu_descripciones = {
             "Manual de uso": "Abre el manual completo en el navegador (F1).",
             "Buscar actualizaciones": "Comprueba si hay una versión nueva publicada en GitHub.",
@@ -2419,7 +2818,6 @@ class App(BaseTk):  # type: ignore[misc,valid-type]
         }
         for menu in (ayuda, self.menu_hist, herr):
             menu.bind("<<MenuSelect>>", self._al_recorrer_menu)
-        self.configure(menu=barra)
         self._refrescar_historial()
         self.bind_all("<F1>", lambda _e: self._abrir_manual())
 
@@ -2748,7 +3146,7 @@ class App(BaseTk):  # type: ignore[misc,valid-type]
         self.destroy()
 
     def _auto_comprobar_update(self) -> None:
-        if not self.buscar_actualizaciones:
+        if self._closing or not self.buscar_actualizaciones:
             return
         try:
             ultima = datetime.strptime(self.ultima_comprobacion, "%Y-%m-%d %H:%M")
@@ -3909,6 +4307,12 @@ class App(BaseTk):  # type: ignore[misc,valid-type]
             except Exception:
                 pass
             self._after_menu = None
+        if self._after_update is not None:
+            try:
+                self.after_cancel(self._after_update)
+            except Exception:
+                pass
+            self._after_update = None
         for tip in self._tooltips:
             tip._ocultar()
 
@@ -4042,6 +4446,7 @@ class App(BaseTk):  # type: ignore[misc,valid-type]
                     "buscar_actualizaciones": self.buscar_actualizaciones,
                     "ultima_comprobacion": self.ultima_comprobacion,
                     "apagar_al_terminar": self.apagar.get(),
+                    "dark_mode": bool(self.oscuro),
                     "presets": self.presets_usuario,
                     "historial": self.historial,
                 },
