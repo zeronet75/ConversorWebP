@@ -11,7 +11,7 @@
 </p>
 
 <p align="center">
-  <img alt="Versión" src="https://img.shields.io/badge/version-2.15.2-1a73e8">
+  <img alt="Versión" src="https://img.shields.io/badge/version-2.15.3-1a73e8">
   <img alt="Windows" src="https://img.shields.io/badge/Windows-10%20%7C%2011-0078D6">
   <img alt="Python" src="https://img.shields.io/badge/Python-3.12-3776AB">
   <img alt="Pillow" src="https://img.shields.io/badge/Pillow-13-11557C">
@@ -63,10 +63,14 @@ archivos originales **nunca se modifican ni se borran**.
 Puede trabajar con **imágenes sueltas, carpetas enteras o archivos comprimidos** (`.zip`, `.rar`, `.7z`),
 guardar el resultado donde elijas, empaquetarlo en un ZIP y generar un informe CSV con los pesos.
 
-El programa se distribuye en dos formas:
+El programa se distribuye en cuatro paquetes principales:
 
-- **Ejecutable autocontenido** (`ConversorWebP.exe`): no requiere instalar Python.
-- **Código fuente** (`conversor_webp.py`): un único archivo Python, con Tkinter y Pillow.
+- **Instalador Python** (`ConversorWebP-Setup-x.y.z.exe`): instalación por usuario, con FFmpeg incluido.
+- **Portable Python** (`ConversorWebP-Portable-x.y.z.zip`): sin instalación, con FFmpeg incluido.
+- **Instalador C++** (`ConversorWebPC-x.y.z-setup.exe`): edición nativa Win32, con FFmpeg incluido.
+- **Portable C++** (`ConversorWebPC-x.y.z-cpp-portable.zip`): edición nativa sin instalación, con FFmpeg incluido.
+
+También está disponible el **código fuente** (`conversor_webp.py`): un único archivo Python, con Tkinter y Pillow.
 
 ---
 
@@ -125,7 +129,7 @@ El programa se distribuye en dos formas:
 | Uso | Necesitas |
 |---|---|
 | Ejecutable `.exe` | Windows 10 u 11 (64 bits). Nada más para imágenes. |
-| Convertir vídeo a WebM | **Incluido** en el instalador y el portable (`ffmpeg.exe` + `ffprobe.exe`). En el ejecutable suelto o desde el código fuente, ponlos en el `PATH` o junto al programa. |
+| Convertir vídeo a WebM | **Incluido** en el instalador y el portable (`ffmpeg.exe` + `ffprobe.exe`). En la copia suelta de compatibilidad o desde el código fuente, ponlos en el `PATH` o junto al programa. |
 | Código fuente | Python 3.10 o superior (probado con 3.12). |
 | Abrir `.rar` / `.7z` | [7-Zip](https://www.7-zip.org) o WinRAR instalados (los `.zip` funcionan sin nada). |
 
@@ -142,15 +146,21 @@ tkinterdnd2 >= 0.4     # opcional: activa arrastrar y soltar
 
 ## Instalación
 
-### Opción 1: ejecutable
+### Opción 1: instalador o portable
 
-1. Descarga desde la sección **Releases** la edición que prefieras:
-   - **Instalador**: `ConversorWebP-Setup-x.y.z.exe` (recomendado).
-   - **Portable**: `ConversorWebP-Portable-x.y.z.zip` (sin instalación).
-   - **Solo el ejecutable**: `ConversorWebP.exe` (o compílalo tú, ver [docs/COMPILAR.md](docs/COMPILAR.md)).
-2. Coloca el `.exe` donde quieras y ejecútalo.
+1. Descarga desde la sección **Releases** una de las cuatro ediciones principales:
+   - **Python, instalador**: `ConversorWebP-Setup-x.y.z.exe` (recomendado).
+   - **Python, portable**: `ConversorWebP-Portable-x.y.z.zip` (sin instalación).
+   - **C++, instalador**: `ConversorWebPC-x.y.z-setup.exe`.
+   - **C++, portable**: `ConversorWebPC-x.y.z-cpp-portable.zip` (sin instalación).
+2. Ejecuta el instalador o descomprime el portable en una carpeta y abre `ConversorWebP.exe`
+   o `ConversorWebPC.exe`, según la edición.
 3. Opcional: deja `MANUAL_DE_USO.html` junto al ejecutable para que el menú **Ayuda → Manual de uso**
    abra el manual. Si no está, se usa la copia incrustada en el propio `.exe`.
+
+> Los assets sueltos `ConversorWebP.exe`, `ConversorWebPC.exe` y `ConversorWebPContext.dll` se mantienen
+> temporalmente por compatibilidad con versiones anteriores. No son la descarga recomendada y no incluyen
+> FFmpeg; se retirarán en la próxima versión.
 
 > Windows puede mostrar el aviso de SmartScreen por no estar firmado. Es normal en programas nuevos:
 > pulsa **Más información → Ejecutar de todas formas**.
@@ -331,7 +341,7 @@ en WebP o AVIF. Se usa **VP9** para imagen y **Opus** para el audio:
 - Un `.webm` de origen se omite salvo que se active **Recodificar**.
 
 FFmpeg se incluye en el **instalador** y en el **portable** (`ffmpeg.exe` y `ffprobe.exe` en la misma
-carpeta). Si usas el ejecutable suelto o el código fuente, descarga una build estática en
+carpeta). Si usas el código fuente o una copia suelta de compatibilidad, descarga una build estática en
 <https://www.gyan.dev/ffmpeg/builds/> y copia `ffmpeg.exe` y `ffprobe.exe` junto a `ConversorWebP.exe`,
 o instálalos en el `PATH`. El menú **Herramientas → Descargar FFmpeg para vídeo** abre esa página.
 
@@ -483,20 +493,27 @@ y convertirlas como cualquier otra imagen.
 
 ## Instalador y versión portable
 
-Hay dos ediciones con el mismo programa:
+Las cuatro descargas principales son:
 
-| Edición | Configuración | Uso |
+| Edición | Instalador | Portable |
 |---|---|---|
-| **Instalador** (`ConversorWebP-Setup-x.y.z.exe`) | `%APPDATA%\ConversorWebP\config.json` | Instala en `%LOCALAPPDATA%\Programs` (sin administrador), crea accesos en Inicio/Escritorio y desinstalador. |
-| **Portable** (`ConversorWebP-Portable-x.y.z.zip`) | `config.json` junto al `.exe` (por `portable.txt`) | Descomprimir en una carpeta o USB y ejecutar; no escribe en el registro ni en `%APPDATA%`. |
+| **Python** | `ConversorWebP-Setup-x.y.z.exe` | `ConversorWebP-Portable-x.y.z.zip` |
+| **C++** | `ConversorWebPC-x.y.z-setup.exe` | `ConversorWebPC-x.y.z-cpp-portable.zip` |
 
-Ambas incluyen el manual, el mismo motor y la comprobación de actualizaciones.
+En Python, el instalador guarda la configuración en `%APPDATA%\ConversorWebP\config.json` e instala en
+`%LOCALAPPDATA%\Programs` (sin administrador); el portable usa `config.json` junto al `.exe` y escribe
+`portable.txt` para no tocar el registro ni `%APPDATA%`. La edición C++ usa `config.ini` junto al ejecutable.
+
+Los assets sueltos `ConversorWebP.exe`, `ConversorWebPC.exe` y `ConversorWebPContext.dll` se mantienen
+temporalmente por compatibilidad y se retirarán en la próxima versión.
 
 ### Actualizaciones
 
 Al arrancar, si han pasado más de 24 horas, se consulta la última release del repositorio y se muestra
 `Actualizacion disponible: vX.Y.Z` en la barra de estado. `Ayuda → Buscar actualizaciones` fuerza la
-comprobación y, si hay una nueva, ofrece abrir la página de descarga. No se instala nada automáticamente.
+comprobación y, si hay una nueva, ofrece descargarla e instalarla. El actualizador elige el instalador o
+el portable según la edición, verifica su SHA-256, aplica la actualización y reinicia el programa.
+Las copias sueltas antiguas se actualizan con el portable, que incluye FFmpeg.
 
 
 
@@ -682,6 +699,7 @@ ConversorWebP/
 
 Consulta [CHANGELOG.md](CHANGELOG.md). Resumen:
 
+- **2.15.3** — actualización de copias sueltas mediante portable y descargas principales reducidas a cuatro.
 - **2.15.2** — metadatos en HEIC/AVIF, orientación EXIF y diálogos multimonitor en Python y C++.
 - **2.15.1** — correcciones de modo oscuro en Python y de `--preset` en C++.
 - **2.15.0** — C++: informe HTML y conservación de metadatos EXIF/XMP, con la misma fila de opciones que Python.

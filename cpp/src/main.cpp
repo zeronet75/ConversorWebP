@@ -80,7 +80,7 @@ using Microsoft::WRL::ComPtr;
 namespace fs = std::filesystem;
 
 static const wchar_t* APP_NAME = L"Conversor WebP";
-static const wchar_t* APP_VERSION = L"2.15.2";
+static const wchar_t* APP_VERSION = L"2.15.3";
 
 // ---------------------------------------------------------------------------
 //  Utilidades generales
@@ -2260,7 +2260,7 @@ struct Options {
     bool csv = false;
     bool html = false;
     std::wstring salida;
-    std::wstring zip_nombre = L"imagenes_2.15.2-cpp.zip";
+    std::wstring zip_nombre = L"imagenes_2.15.3-cpp.zip";
     std::wstring patron;
     std::wstring formato = L"WEBP";
     bool dry_run = false;
@@ -3190,7 +3190,7 @@ static int modo_actualizacion() {
     if (fs::exists(dir / L"unins000.exe", ec)) return 1;              // instalado con Inno
     if (fs::exists(dir / L"7zr.exe", ec) ||
         fs::exists(dir / L"ConversorWebPC.exe.manifest", ec)) return 2;  // portable
-    return 3;                                                          // exe suelto
+    return 2;  // copia suelta: actualizar con el portable, que incluye FFmpeg
 }
 
 static std::wstring version_sin_v(std::wstring v) {
@@ -3200,8 +3200,7 @@ static std::wstring version_sin_v(std::wstring v) {
 
 static std::wstring asset_para_modo(int modo, const std::wstring& version) {
     if (modo == 1) return L"ConversorWebPC-" + version + L"-setup.exe";
-    if (modo == 2) return L"ConversorWebPC-" + version + L"-cpp-portable.zip";
-    return L"ConversorWebPC.exe";
+    return L"ConversorWebPC-" + version + L"-cpp-portable.zip";
 }
 
 static bool buscar_asset_json(const std::string& json, const std::string& nombre,
@@ -7678,7 +7677,7 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
 
             // Cabecera
             etiqueta(L"Conversor WebP", 16, 17, 300, 30, 1400, g_font_title);
-            etiqueta(L"v2.15.2", 200, 29, 120, 18, 1401, g_font_muted);
+            etiqueta(L"v2.15.3", 200, 29, 120, 18, 1401, g_font_muted);
             etiqueta(L"JPG · PNG · BMP · TIFF · GIF · ICO  →  WebP / AVIF", 560, 23, 390, 20,
                      1402, g_font_muted, SS_RIGHT);
             boton(L"", 958, 20, 26, 26, ID_TEMA, BS_OWNERDRAW);
@@ -9125,7 +9124,7 @@ int wmain(int argc, wchar_t** argv) {
         ancho_ini = std::min(ancho_ini, (int)(wa_ini.right - wa_ini.left) - 16);
         alto_ini = std::min(alto_ini, (int)(wa_ini.bottom - wa_ini.top) - 16);
     }
-    g_hwnd = CreateWindowExW(0, wc.lpszClassName, L"Conversor WebP 2.15.2",
+    g_hwnd = CreateWindowExW(0, wc.lpszClassName, L"Conversor WebP 2.15.3",
                              WS_OVERLAPPEDWINDOW,
                              CW_USEDEFAULT, CW_USEDEFAULT, ancho_ini, alto_ini, nullptr, nullptr, inst, nullptr);
     if (!g_hwnd) return 1;

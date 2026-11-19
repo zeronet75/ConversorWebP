@@ -6,6 +6,24 @@ Todos los cambios relevantes del proyecto. Formato basado en
 
 ---
 
+## [2.15.3] — 2026-11-19
+
+### Cambiado
+
+- **Actualizador:** las copias sueltas (sin instalador ni marca de portable) descargan ahora el **portable**, que incluye FFmpeg, en lugar del `.exe` aislado. Se aplica en Python (`_modo_actualizacion`) y C++ (`modo_actualizacion`).
+- **Descargas:** la documentación presenta solo cuatro paquetes principales: instalador y portable de Python, instalador y portable de C++.
+- **Compatibilidad:** `ConversorWebP.exe`, `ConversorWebPC.exe` y `ConversorWebPContext.dll` siguen publicados en esta versión para que las copias antiguas puedan actualizarse, pero quedan marcados como no recomendados y se retirarán en la próxima versión.
+- **Documentación:** corregida la descripción del actualizador, que ahora descarga, verifica el SHA-256, instala y reinicia.
+
+### Pruebas
+
+- 38 pruebas Python superadas.
+- Comprobada la selección de asset para instalador, portable y copia suelta.
+- C++ compilado con `/W4` sin avisos.
+- Regenerados los paquetes y artefactos de ambas ediciones.
+
+---
+
 ## [2.15.2] — 2026-11-19
 
 ### Corregido
@@ -525,6 +543,7 @@ Todos los cambios relevantes del proyecto. Formato basado en
 - Conservación de transparencia, perfil ICC y orientación EXIF.
 - Modo consola básico.
 
+[2.15.3]: #2153--2026-11-19
 [2.15.2]: #2152--2026-11-19
 [2.15.1]: #2151--2026-11-19
 [2.15.0]: #2150--2026-11-19

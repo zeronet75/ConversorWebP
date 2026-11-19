@@ -105,6 +105,26 @@ class TestPortable(unittest.TestCase):
         self.assertIn("ConversorWebP".lower(), proc.stdout.lower())
 
 
+class TestActualizacion(unittest.TestCase):
+    def test_asset_instalador(self):
+        self.assertEqual(
+            cw._asset_para_modo("setup", "v2.15.3"),
+            "ConversorWebP-Setup-2.15.3.exe",
+        )
+
+    def test_asset_portable(self):
+        self.assertEqual(
+            cw._asset_para_modo("portable", "2.15.3"),
+            "ConversorWebP-Portable-2.15.3.zip",
+        )
+
+    def test_copia_suelta_usa_portable(self):
+        self.assertEqual(
+            cw._asset_para_modo("exe", "2.15.3"),
+            "ConversorWebP-Portable-2.15.3.zip",
+        )
+
+
 class TestHEIC(Base):
     def test_conversion_heic(self):
         if not cw.HEIF_DISPONIBLE:

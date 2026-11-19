@@ -79,7 +79,7 @@ except Exception:  # pragma: no cover - la app sigue funcionando sin arrastrar
 
 
 APP_NAME = "Conversor WebP"
-APP_VERSION = "2.15.2"
+APP_VERSION = "2.15.3"
 
 try:  # soporte HEIC/HEIF (iPhone) si pillow-heif esta instalado
     import pillow_heif
@@ -632,18 +632,16 @@ def _modo_actualizacion() -> str | None:
     carpeta = Path(sys.executable).parent
     if (carpeta / "unins000.exe").is_file():
         return "setup"
-    if (carpeta / "portable.txt").is_file():
-        return "portable"
-    return "exe"
+    # Una copia suelta (sin marcadores de instalacion) se actualiza con el
+    # portable: incluye FFmpeg y deja la carpeta lista para futuras versiones.
+    return "portable"
 
 
 def _asset_para_modo(modo: str, version: str) -> str:
     v = version.lstrip("vV")
     if modo == "setup":
         return f"ConversorWebP-Setup-{v}.exe"
-    if modo == "portable":
-        return f"ConversorWebP-Portable-{v}.zip"
-    return "ConversorWebP.exe"
+    return f"ConversorWebP-Portable-{v}.zip"
 
 
 def _crear_script_actualizacion(archivo: Path, modo: str) -> Path:

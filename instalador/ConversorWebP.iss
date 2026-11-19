@@ -2,7 +2,7 @@
 ; Compilar con:  "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" instalador\ConversorWebP.iss
 
 #define MyAppName "Conversor WebP"
-#define MyAppVersion "2.15.2"
+#define MyAppVersion "2.15.3"
 #define MyAppPublisher "zeronet75"
 #define MyAppURL "https://github.com/zeronet75/ConversorWebP"
 #define MyAppExeName "ConversorWebP.exe"
