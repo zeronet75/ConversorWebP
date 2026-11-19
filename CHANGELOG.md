@@ -12,7 +12,7 @@ Todos los cambios relevantes del proyecto. Formato basado en
 
 - **Actualizador:** las copias sueltas (sin instalador ni marca de portable) descargan ahora el **portable**, que incluye FFmpeg, en lugar del `.exe` aislado. Se aplica en Python (`_modo_actualizacion`) y C++ (`modo_actualizacion`).
 - **Descargas:** la documentación presenta solo cuatro paquetes principales: instalador y portable de Python, instalador y portable de C++.
-- **Compatibilidad:** `ConversorWebP.exe`, `ConversorWebPC.exe` y `ConversorWebPContext.dll` siguen publicados en esta versión para que las copias antiguas puedan actualizarse, pero quedan marcados como no recomendados y se retirarán en la próxima versión.
+- **Compatibilidad:** `ConversorWebP.exe`, `ConversorWebPC.exe` y `ConversorWebPContext.dll` siguen publicados en esta versión para que las copias antiguas puedan actualizarse, pero quedan marcados como no recomendados y se mantendrán hasta la versión 2.16.0, en la que se retirarán.
 - **Documentación:** corregida la descripción del actualizador, que ahora descarga, verifica el SHA-256, instala y reinicia.
 
 ### Pruebas

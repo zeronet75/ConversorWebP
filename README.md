@@ -160,7 +160,7 @@ tkinterdnd2 >= 0.4     # opcional: activa arrastrar y soltar
 
 > Los assets sueltos `ConversorWebP.exe`, `ConversorWebPC.exe` y `ConversorWebPContext.dll` se mantienen
 > temporalmente por compatibilidad con versiones anteriores. No son la descarga recomendada y no incluyen
-> FFmpeg; se retirarán en la próxima versión.
+> FFmpeg; se mantendrán hasta la versión 2.16.0, en la que se retirarán.
 
 > Windows puede mostrar el aviso de SmartScreen por no estar firmado. Es normal en programas nuevos:
 > pulsa **Más información → Ejecutar de todas formas**.
@@ -505,7 +505,7 @@ En Python, el instalador guarda la configuración en `%APPDATA%\ConversorWebP\co
 `portable.txt` para no tocar el registro ni `%APPDATA%`. La edición C++ usa `config.ini` junto al ejecutable.
 
 Los assets sueltos `ConversorWebP.exe`, `ConversorWebPC.exe` y `ConversorWebPContext.dll` se mantienen
-temporalmente por compatibilidad y se retirarán en la próxima versión.
+temporalmente por compatibilidad y se mantendrán hasta la versión 2.16.0, en la que se retirarán.
 
 ### Actualizaciones
 
