@@ -25,7 +25,7 @@ rc /nologo /fo "%RAIZ%obj\app.res" "%RAIZ%app.rc"
 if errorlevel 1 exit /b 1
 
 :: No usar /OPT:ICF: al fusionar funciones de libavif/AOM el ejecutable fallaba al iniciar.
-cl /nologo /std:c++20 /EHsc /O2 /MT /DUNICODE /D_UNICODE /utf-8 /wd5033 ^
+cl /nologo /std:c++20 /EHsc /O2 /W4 /MT /DUNICODE /D_UNICODE /utf-8 /wd5033 ^
    /I"%WEBP%\src" ^
    /I"%AVIF%\include" ^
    /I"%AOM%\include" ^

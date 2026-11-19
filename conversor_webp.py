@@ -19,6 +19,7 @@ arrastrar y soltar). Para .rar/.7z hace falta 7-Zip o WinRAR instalados.
 from __future__ import annotations
 
 import ctypes
+from ctypes import wintypes
 import csv
 import hashlib
 import html
@@ -78,7 +79,7 @@ except Exception:  # pragma: no cover - la app sigue funcionando sin arrastrar
 
 
 APP_NAME = "Conversor WebP"
-APP_VERSION = "2.15.0"
+APP_VERSION = "2.15.1"
 
 try:  # soporte HEIC/HEIF (iPhone) si pillow-heif esta instalado
     import pillow_heif
@@ -2202,6 +2203,7 @@ class Vigilante(threading.Thread):
             name_pattern=b.name_pattern,
             dry_run=False,
             ffmpeg=b.ffmpeg,
+            preservar_extra=b.preservar_extra,
             video_height=b.video_height,
             video_mode=b.video_mode,
             video_crf=b.video_crf,
@@ -2243,7 +2245,9 @@ class Vigilante(threading.Thread):
                 try:
                     run_job(
                         self._job_para(archivo),
-                        lambda t, d: resultado.update({"r": d}) if t == "done" else None,
+                        lambda t, d, resultado=resultado: resultado.update({"r": d})
+                        if t == "done"
+                        else None,
                         self.stop_event,
                     )
                     res = resultado.get("r")

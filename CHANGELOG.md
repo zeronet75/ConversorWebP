@@ -6,6 +6,23 @@ Todos los cambios relevantes del proyecto. Formato basado en
 
 ---
 
+## [2.15.1] — 2026-11-19
+
+### Corregido
+
+- **Python:** `ctypes.wintypes` no estaba importado, por lo que la llamada nativa para permitir el modo oscuro (`AllowDarkModeForWindow`) fallaba silenciosamente. Ahora se aplica correctamente.
+- **Python:** el vigilante de carpeta no copiaba `preservar_extra` a sus trabajos; ahora conserva EXIF/XMP y fecha si la opción está activa.
+- **C++:** al usar `--preset` se perdían `--html` y los parámetros de vídeo indicados por CLI; ahora se conservan.
+- **C++:** compilación elevada a `/W4` sin avisos.
+
+### Pruebas
+
+- 32 pruebas Python superadas.
+- C++ compilado sin avisos y probado con HTML, EXIF/XMP, AVIF y vídeo.
+- Ejecutadas ambas interfaces.
+
+---
+
 ## [2.15.0] — 2026-11-19
 
 ### Añadido
@@ -487,6 +504,7 @@ Todos los cambios relevantes del proyecto. Formato basado en
 - Conservación de transparencia, perfil ICC y orientación EXIF.
 - Modo consola básico.
 
+[2.15.1]: #2151--2026-11-19
 [2.15.0]: #2150--2026-11-19
 [2.14.0]: #2140--2026-11-19
 [2.13.0]: #2130--2026-11-18

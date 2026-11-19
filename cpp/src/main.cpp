@@ -80,7 +80,7 @@ using Microsoft::WRL::ComPtr;
 namespace fs = std::filesystem;
 
 static const wchar_t* APP_NAME = L"Conversor WebP";
-static const wchar_t* APP_VERSION = L"2.15.0";
+static const wchar_t* APP_VERSION = L"2.15.1";
 
 // ---------------------------------------------------------------------------
 //  Utilidades generales
@@ -1078,10 +1078,14 @@ static bool decodificar_pcx(const std::wstring& ruta, Bitmap& bmp, std::wstring&
         (planos != 1 && planos != 3) || bytes_linea < w) {
         error = L"PCX no valido"; return false;
     }
+    uint64_t total_linea = (uint64_t)h * (uint64_t)planos * (uint64_t)bytes_linea;
+    if (total_linea > 500000000ull) {
+        error = L"PCX demasiado grande"; return false;
+    }
     std::vector<uint8_t> datos;
-    datos.reserve((size_t)h * planos * bytes_linea);
+    datos.reserve((size_t)total_linea);
     size_t pos = 128;
-    while (pos < d.size() && datos.size() < (size_t)h * planos * bytes_linea) {
+    while (pos < d.size() && datos.size() < (size_t)total_linea) {
         uint8_t b = d[pos++];
         if ((b & 0xC0) == 0xC0) {
             int cuenta = b & 0x3F;
@@ -1092,7 +1096,7 @@ static bool decodificar_pcx(const std::wstring& ruta, Bitmap& bmp, std::wstring&
             datos.push_back(b);
         }
     }
-    if (datos.size() < (size_t)h * planos * bytes_linea) {
+    if (datos.size() < (size_t)total_linea) {
         error = L"PCX truncado"; return false;
     }
     std::vector<uint8_t> paleta;
@@ -1908,7 +1912,7 @@ struct Options {
     bool csv = false;
     bool html = false;
     std::wstring salida;
-    std::wstring zip_nombre = L"imagenes_2.15.0-cpp.zip";
+    std::wstring zip_nombre = L"imagenes_2.15.1-cpp.zip";
     std::wstring patron;
     std::wstring formato = L"WEBP";
     bool dry_run = false;
@@ -7277,7 +7281,7 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
 
             // Cabecera
             etiqueta(L"Conversor WebP", 16, 17, 300, 30, 1400, g_font_title);
-            etiqueta(L"v2.15.0", 200, 29, 120, 18, 1401, g_font_muted);
+            etiqueta(L"v2.15.1", 200, 29, 120, 18, 1401, g_font_muted);
             etiqueta(L"JPG · PNG · BMP · TIFF · GIF · ICO  →  WebP / AVIF", 560, 23, 390, 20,
                      1402, g_font_muted, SS_RIGHT);
             boton(L"", 958, 20, 26, 26, ID_TEMA, BS_OWNERDRAW);
@@ -8543,17 +8547,37 @@ static int ejecutar_cli(const std::vector<std::wstring>& args) {
         bool zip = opt.zip;
         std::wstring zip_nombre = opt.zip_nombre;
         bool csv = opt.csv;
+        bool html = opt.html;
         bool dry = opt.dry_run;
         bool fecha = opt.preservar_fecha;
         int jobs = opt.jobs;
+        std::wstring ffmpeg = opt.ffmpeg;
+        int video_height = opt.video_height;
+        std::wstring video_mode = opt.video_mode;
+        int video_crf = opt.video_crf;
+        int video_bitrate = opt.video_bitrate;
+        int video_audio = opt.video_audio;
+        int video_fps = opt.video_fps;
+        std::wstring video_tune = opt.video_tune;
+        bool video_denoise = opt.video_denoise;
         Options base = it->opt;
         base.salida = salida;
         base.zip = zip;
         base.zip_nombre = zip_nombre;
         base.csv = csv;
+        base.html = html;
         base.dry_run = dry;
         base.preservar_fecha = fecha;
         base.jobs = jobs;
+        base.ffmpeg = ffmpeg;
+        base.video_height = video_height;
+        base.video_mode = video_mode;
+        base.video_crf = video_crf;
+        base.video_bitrate = video_bitrate;
+        base.video_audio = video_audio;
+        base.video_fps = video_fps;
+        base.video_tune = video_tune;
+        base.video_denoise = video_denoise;
         opt = base;
     }
     g_opt = opt;
@@ -8698,7 +8722,7 @@ int wmain(int argc, wchar_t** argv) {
     wc.hIconSm = icono_pequeno;
     RegisterClassExW(&wc);
 
-    g_hwnd = CreateWindowExW(0, wc.lpszClassName, L"Conversor WebP 2.15.0",
+    g_hwnd = CreateWindowExW(0, wc.lpszClassName, L"Conversor WebP 2.15.1",
                              WS_OVERLAPPEDWINDOW,
                              CW_USEDEFAULT, CW_USEDEFAULT, dpx(1016), dpx(900), nullptr, nullptr, inst, nullptr);
     if (!g_hwnd) return 1;
