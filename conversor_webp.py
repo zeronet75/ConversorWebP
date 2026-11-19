@@ -695,6 +695,7 @@ def _crear_script_actualizacion(archivo: Path, modo: str) -> Path:
             "  Remove-Item -LiteralPath $stage -Recurse -Force -ErrorAction SilentlyContinue"
         )
     else:
+        # TODO(2.16.0): eliminar esta rama al retirar los assets sueltos.
         lineas.append(
             f"  Copy-Item -LiteralPath '{_ps_quote(archivo)}' -Destination '{_ps_quote(exe)}' -Force"
         )

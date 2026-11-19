@@ -22,6 +22,13 @@ Todos los cambios relevantes del proyecto. Formato basado en
 - C++ compilado con `/W4` sin avisos.
 - Regenerados los paquetes y artefactos de ambas ediciones.
 
+### Pendiente para 2.16.0
+
+- Retirar de la release `ConversorWebP.exe`, `ConversorWebPC.exe` y `ConversorWebPContext.dll`.
+- Publicar solo los cuatro paquetes principales.
+- Eliminar las ramas `else` de los actualizadores de Python y C++ que copian el `.exe` suelto.
+- Quitar la nota de compatibilidad y los assets legacy de README, LEEME y manuales.
+
 ---
 
 ## [2.15.2] — 2026-11-19

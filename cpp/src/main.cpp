@@ -3465,6 +3465,7 @@ static bool lanzar_actualizador(const std::wstring& archivo, int modo, std::wstr
            << ps_cadena(dir_exe.wstring()) << L"' -Recurse -Force\r\n";
         ps << L"  Remove-Item -LiteralPath $stage -Recurse -Force -ErrorAction SilentlyContinue\r\n";
     } else {
+        // TODO(2.16.0): eliminar esta rama al retirar los assets sueltos.
         ps << L"  Copy-Item -LiteralPath '" << ps_cadena(archivo) << L"' -Destination '"
            << ps_cadena(exe) << L"' -Force\r\n";
     }
