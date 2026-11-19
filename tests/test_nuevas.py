@@ -118,6 +118,43 @@ class TestHEIC(Base):
         self.assertEqual(res.converted, 1)
         self.assertTrue((self.tmp / "out" / "foto.webp").exists())
 
+    def test_heic_conserva_exif(self):
+        if not cw.HEIF_DISPONIBLE:
+            self.skipTest("pillow-heif no disponible")
+        ruta = self.tmp / "meta.heic"
+        exif = Image.Exif()
+        exif[271] = "HeicCam"
+        try:
+            Image.new("RGB", (120, 90), (40, 160, 90)).save(
+                ruta, format="HEIF", exif=exif
+            )
+        except Exception as e:
+            self.skipTest(f"no se pudo crear HEIC con EXIF: {e}")
+        destino = self.tmp / "meta.webp"
+        job = cw.Job(sources=[ruta], output_dir=self.tmp, preservar_extra=True)
+        cw.convert_one(ruta, destino, job)
+        with Image.open(destino) as salida:
+            self.assertEqual(salida.getexif().get(271), "HeicCam")
+
+
+class TestAVIF(Base):
+    def test_avif_es_formato_de_entrada(self):
+        self.assertIn(".avif", cw.IMAGE_EXTS)
+
+    def test_avif_conserva_exif(self):
+        ruta = self.tmp / "meta.avif"
+        exif = Image.Exif()
+        exif[271] = "AvifCam"
+        try:
+            Image.new("RGB", (120, 90), (160, 40, 90)).save(ruta, exif=exif)
+        except Exception as e:
+            self.skipTest(f"no se pudo crear AVIF con EXIF: {e}")
+        destino = self.tmp / "meta.webp"
+        job = cw.Job(sources=[ruta], output_dir=self.tmp, preservar_extra=True)
+        cw.convert_one(ruta, destino, job)
+        with Image.open(destino) as salida:
+            self.assertEqual(salida.getexif().get(271), "AvifCam")
+
 
 class TestAnimacion(Base):
     def test_gif_animado_a_webp(self):

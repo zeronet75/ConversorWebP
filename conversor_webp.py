@@ -59,7 +59,7 @@ except ImportError:  # pragma: no cover
     raise SystemExit(1)
 
 import tkinter as tk
-from tkinter import colorchooser, filedialog, messagebox, simpledialog, ttk
+from tkinter import colorchooser, filedialog, messagebox, ttk
 
 try:  # solo existe en Windows, que es donde corre la app
     import winsound
@@ -79,7 +79,7 @@ except Exception:  # pragma: no cover - la app sigue funcionando sin arrastrar
 
 
 APP_NAME = "Conversor WebP"
-APP_VERSION = "2.15.1"
+APP_VERSION = "2.15.2"
 
 try:  # soporte HEIC/HEIF (iPhone) si pillow-heif esta instalado
     import pillow_heif
@@ -93,7 +93,7 @@ except Exception:  # pragma: no cover
 IMAGE_EXTS = {
     ".jpg", ".jpeg", ".jfif", ".jpe", ".png", ".bmp", ".dib", ".gif",
     ".tif", ".tiff", ".ico", ".ppm", ".pgm", ".pbm", ".tga", ".pcx",
-    ".dds", ".webp", ".heic", ".heif",
+    ".dds", ".webp", ".avif", ".heic", ".heif",
 }
 VIDEO_EXTS = {
     ".mp4", ".m4v", ".mov", ".mkv", ".avi", ".wmv", ".flv", ".webm",
@@ -1982,6 +1982,105 @@ class DropZone(tk.Canvas):
 
 
 # --------------------------------------------------------------------------- #
+#  Utilidades de ventanas y monitores
+# --------------------------------------------------------------------------- #
+class _MonitorInfoW(ctypes.Structure):
+    _fields_ = [
+        ("cbSize", wintypes.DWORD),
+        ("rcMonitor", wintypes.RECT),
+        ("rcWork", wintypes.RECT),
+        ("dwFlags", wintypes.DWORD),
+    ]
+
+
+_USER32 = ctypes.windll.user32
+_USER32.GetAncestor.argtypes = [wintypes.HWND, wintypes.UINT]
+_USER32.GetAncestor.restype = wintypes.HWND
+_USER32.MonitorFromWindow.argtypes = [wintypes.HWND, wintypes.DWORD]
+_USER32.MonitorFromWindow.restype = wintypes.HANDLE
+_USER32.GetMonitorInfoW.argtypes = [wintypes.HANDLE, ctypes.POINTER(_MonitorInfoW)]
+_USER32.GetMonitorInfoW.restype = wintypes.BOOL
+
+
+def area_trabajo(widget: tk.Misc) -> tuple[int, int, int, int]:
+    """Area util (sin barra de tareas) del monitor donde esta el widget."""
+    try:
+        hwnd = widget.winfo_id()
+        raiz = _USER32.GetAncestor(hwnd, 2) or hwnd
+        monitor = _USER32.MonitorFromWindow(raiz, 2)
+        info = _MonitorInfoW()
+        info.cbSize = ctypes.sizeof(_MonitorInfoW)
+        if _USER32.GetMonitorInfoW(monitor, ctypes.byref(info)):
+            r = info.rcWork
+            return int(r.left), int(r.top), int(r.right), int(r.bottom)
+    except Exception:
+        pass
+    return 0, 0, widget.winfo_screenwidth(), widget.winfo_screenheight()
+
+
+def ajustar_ventana(
+    ventana: tk.Toplevel,
+    padre: tk.Misc,
+    ancho: int | None = None,
+    alto: int | None = None,
+) -> tuple[int, int, int, int]:
+    """Centra una ventana en el monitor del padre y la mantiene visible."""
+    ventana.update_idletasks()
+    izq, arr, der, aba = area_trabajo(padre)
+    disp_ancho = max(320, der - izq - 16)
+    disp_alto = max(240, aba - arr - 24)
+    w = min(int(ancho if ancho is not None else ventana.winfo_width()), disp_ancho)
+    h = min(int(alto if alto is not None else ventana.winfo_height()), disp_alto)
+    x = padre.winfo_rootx() + max(0, (padre.winfo_width() - w) // 2)
+    y = padre.winfo_rooty() + max(0, (padre.winfo_height() - h) // 2)
+    x = min(max(x, izq + 8), max(izq + 8, der - w - 8))
+    y = min(max(y, arr + 8), max(arr + 8, aba - h - 8))
+    if ancho is not None or alto is not None:
+        ventana.geometry(f"{w}x{h}+{x}+{y}")
+    else:
+        ventana.geometry(f"+{x}+{y}")
+    return x, y, w, h
+
+
+def pedir_texto(parent: tk.Misc, titulo: str, etiqueta: str, inicial: str = "") -> str | None:
+    """Dialogo modal tematizado para pedir una cadena corta."""
+    ventana = tk.Toplevel(parent)
+    ventana.title(titulo)
+    ventana.configure(bg=BG)
+    ventana.transient(parent)
+    ventana.resizable(False, False)
+    resultado: list[str | None] = [None]
+
+    marco = ttk.Frame(ventana, padding=16)
+    marco.pack(fill="both", expand=True)
+    ttk.Label(marco, text=etiqueta).pack(anchor="w")
+    valor = tk.StringVar(value=inicial)
+    entrada = ttk.Entry(marco, textvariable=valor, width=42)
+    entrada.pack(fill="x", pady=(6, 14))
+
+    pie = ttk.Frame(marco)
+    pie.pack(fill="x")
+
+    def cancelar() -> None:
+        ventana.destroy()
+
+    def aceptar(_evento=None) -> None:
+        resultado[0] = valor.get().strip()
+        ventana.destroy()
+
+    ttk.Button(pie, text="Cancelar", command=cancelar).pack(side="right")
+    ttk.Button(pie, text="Aceptar", command=aceptar).pack(side="right", padx=(0, 8))
+    ventana.bind("<Escape>", lambda _e: cancelar())
+    ventana.bind("<Return>", aceptar)
+    entrada.focus_set()
+    entrada.select_range(0, "end")
+    ventana.grab_set()
+    ajustar_ventana(ventana, parent)
+    parent.wait_window(ventana)
+    return resultado[0]
+
+
+# --------------------------------------------------------------------------- #
 #  Ventana "Acerca de"
 # --------------------------------------------------------------------------- #
 class VentanaAcerca(tk.Toplevel):
@@ -1999,7 +2098,7 @@ class VentanaAcerca(tk.Toplevel):
         ttk.Label(cab, text=APP_NAME, style="Title.TLabel").pack(anchor="w")
         ttk.Label(
             cab,
-            text=f"Version {APP_VERSION}  ·  Conversion local de imagenes a WebP  ·  Windows",
+            text=f"Versión {APP_VERSION}  ·  Conversión local de imágenes a WebP  ·  Windows",
             style="Sub.TLabel",
         ).pack(anchor="w", pady=(2, 0))
 
@@ -2041,12 +2140,18 @@ class VentanaAcerca(tk.Toplevel):
 
         self.bind("<Escape>", lambda e: self.destroy())
 
+        izq, arr, der, aba = area_trabajo(master)
+        ancho = min(780, max(480, der - izq - 16))
+        alto = min(680, max(360, aba - arr - 24))
+        self.minsize(min(660, ancho), min(480, alto))
+        ajustar_ventana(self, master, ancho, alto)
+
     def _rellenar(self) -> None:
         t = self.txt
         t.configure(state="normal")
         t.delete("1.0", "end")
 
-        t.insert("end", "Que hace\n", "h1")
+        t.insert("end", "Qué hace\n", "h1")
         for linea in (
             "Convierte JPG, PNG, BMP, TIFF, GIF, ICO, TGA, PCX, DDS y PPM/PGM/PBM a WebP, "
             "y vídeos MP4, MOV, MKV, AVI, WebM y similares a WebM.",
@@ -2351,12 +2456,15 @@ class ToolTip:
 
         ancho = ventana.winfo_width()
         alto = ventana.winfo_height()
-        pantalla_w = self.widget.winfo_screenwidth()
-        pantalla_h = self.widget.winfo_screenheight()
-        if x + ancho > pantalla_w - 12:
-            x = max(6, pantalla_w - ancho - 12)
-        if y + alto > pantalla_h - 12:
-            y = max(6, self.widget.winfo_rooty() - alto - 8)
+        izq, arr, der, aba = area_trabajo(self.widget)
+        if x + ancho > der - 12:
+            x = der - ancho - 12
+        if x < izq + 6:
+            x = izq + 6
+        if y + alto > aba - 12:
+            y = self.widget.winfo_rooty() - alto - 8
+        if y < arr + 6:
+            y = arr + 6
         ventana.wm_geometry(f"+{x}+{y}")
         self._ventana = ventana
 
@@ -2377,13 +2485,15 @@ class ToolTip:
 class App(BaseTk):  # type: ignore[misc,valid-type]
     def __init__(self, sources_iniciales: list[Path] | None = None) -> None:
         super().__init__()
+        self._dpi_setup()
         self.title(f"{APP_NAME} {APP_VERSION}")
         self.oscuro = self._leer_tema_inicial()
         aplicar_paleta(self.oscuro)
-        ancho = max(860, min(1000, self.winfo_screenwidth() - 80))
-        alto = max(640, min(840, self.winfo_screenheight() - 120))
+        escala = getattr(self, "_escala_dpi", 1.0)
+        ancho = max(860, min(int(1000 * escala), self.winfo_screenwidth() - 80))
+        alto = max(640, min(int(840 * escala), self.winfo_screenheight() - 120))
         self.geometry(f"{ancho}x{alto}")
-        self.minsize(860, 620)
+        self.minsize(int(860 * escala), int(620 * escala))
         self.configure(bg=BG)
         self._aplicar_icono()
 
@@ -2460,7 +2570,6 @@ class App(BaseTk):  # type: ignore[misc,valid-type]
         self._job_actual: Job | None = None
         self._inicio_trabajo = 0.0
 
-        self._dpi_setup()
         self._build_style()
         self._build_ui()
         self._bind_shortcuts()
@@ -2671,10 +2780,24 @@ class App(BaseTk):  # type: ignore[misc,valid-type]
                     pass
 
     def _dpi_setup(self) -> None:
+        escala = 1.0
         try:
             ctypes.windll.shcore.SetProcessDpiAwareness(1)  # type: ignore[attr-defined]
             dpi = ctypes.windll.user32.GetDpiForSystem()  # type: ignore[attr-defined]
-            self.tk.call("tk", "scaling", dpi / 72.0)
+            escala = max(1.0, dpi / 96.0)
+        except Exception:
+            pass
+        try:
+            izq, arr, der, aba = area_trabajo(self)
+            disp_w = max(640, der - izq - 80)
+            disp_h = max(480, aba - arr - 120)
+            tope = min(disp_w / 1000.0, disp_h / 840.0)
+            escala = min(escala, max(1.0, tope))
+        except Exception:
+            pass
+        self._escala_dpi = escala
+        try:
+            self.tk.call("tk", "scaling", 96.0 * escala / 72.0)
         except Exception:
             pass
 
@@ -3887,7 +4010,9 @@ class App(BaseTk):  # type: ignore[misc,valid-type]
             self._refrescar_gpu_ui()
             return
 
-        carpeta = filedialog.askdirectory(title="Carpeta site-packages con PyTorch CUDA")
+        carpeta = filedialog.askdirectory(
+            title="Carpeta site-packages con PyTorch CUDA", parent=self
+        )
         if not carpeta:
             return
         self.gpu_path = carpeta
@@ -4105,10 +4230,14 @@ class App(BaseTk):  # type: ignore[misc,valid-type]
                 self._log("info", "Vigilante: detenido.")
             return
 
-        entrada = filedialog.askdirectory(title="Carpeta que quieres vigilar")
+        entrada = filedialog.askdirectory(
+            title="Carpeta que quieres vigilar", parent=self
+        )
         if not entrada:
             return
-        salida = filedialog.askdirectory(title="Carpeta de salida del vigilante")
+        salida = filedialog.askdirectory(
+            title="Carpeta de salida del vigilante", parent=self
+        )
         if not salida:
             return
         try:
@@ -4400,13 +4529,16 @@ class App(BaseTk):  # type: ignore[misc,valid-type]
             row=4, column=0, columnspan=2, pady=(6, 0)
         )
         ventana.protocol("WM_DELETE_WINDOW", cerrar)
+        ajustar_ventana(ventana, self)
         self.lbl_status.configure(text="Vista previa lista.")
 
     def _center(self) -> None:
         self.update_idletasks()
         w, h = self.winfo_width(), self.winfo_height()
-        sw, sh = self.winfo_screenwidth(), self.winfo_screenheight()
-        self.geometry(f"+{max(0, (sw - w) // 2)}+{max(0, (sh - h) // 3)}")
+        izq, arr, der, aba = area_trabajo(self)
+        x = izq + max(0, (der - izq - w) // 2)
+        y = arr + max(0, (aba - arr - h) // 3)
+        self.geometry(f"+{x}+{y}")
 
     # ---------------- eventos de UI ---------------- #
     def _on_quality(self, _value=None) -> None:
@@ -4736,10 +4868,7 @@ class App(BaseTk):  # type: ignore[misc,valid-type]
         ttk.Button(pie, text="Aceptar", command=aceptar).pack(side="left", padx=(8, 0))
         ventana.bind("<Escape>", lambda _e: ventana.destroy())
         ventana.grab_set()
-        ventana.update_idletasks()
-        x = self.winfo_rootx() + max(0, (self.winfo_width() - ventana.winfo_width()) // 2)
-        y = self.winfo_rooty() + max(0, (self.winfo_height() - ventana.winfo_height()) // 2)
-        ventana.geometry(f"+{x}+{y}")
+        ajustar_ventana(ventana, self)
 
     def _on_peso(self) -> None:
         self.entry_peso.configure(state="normal" if self.peso_activo.get() else "disabled")
@@ -4920,7 +5049,9 @@ class App(BaseTk):  # type: ignore[misc,valid-type]
         self.preset_sel.set(nombre)
 
     def _guardar_preset(self) -> None:
-        nombre = simpledialog.askstring(APP_NAME, "Nombre del nuevo preset:", parent=self)
+        nombre = pedir_texto(
+            self, "Nuevo preset", "Nombre del nuevo preset:", ""
+        )
         if not nombre or not nombre.strip():
             return
         nombre = nombre.strip()
@@ -4947,6 +5078,7 @@ class App(BaseTk):  # type: ignore[misc,valid-type]
             title="Exportar presets",
             defaultextension=".json",
             filetypes=[("Presets JSON", "*.json"), ("Todos los archivos", "*.*")],
+            parent=self,
         )
         if not ruta:
             return
@@ -4969,6 +5101,7 @@ class App(BaseTk):  # type: ignore[misc,valid-type]
         ruta = filedialog.askopenfilename(
             title="Importar presets",
             filetypes=[("Presets JSON", "*.json"), ("Todos los archivos", "*.*")],
+            parent=self,
         )
         if not ruta:
             return
@@ -5110,7 +5243,9 @@ class App(BaseTk):  # type: ignore[misc,valid-type]
     def _pick_background(self) -> None:
         if not self.flatten.get():
             return
-        color = colorchooser.askcolor(color=self.background.get(), title="Color de fondo")
+        color = colorchooser.askcolor(
+            color=self.background.get(), title="Color de fondo", parent=self
+        )
         if color and color[1]:
             self.background.set(color[1])
             self.btn_color.configure(bg=color[1])
@@ -5195,12 +5330,15 @@ class App(BaseTk):  # type: ignore[misc,valid-type]
                 ),
                 ("Todos los archivos", "*.*"),
             ],
+            parent=self,
         )
         if rutas:
             self._anadir([Path(r) for r in rutas])
 
     def _add_folder(self) -> None:
-        carpeta = filedialog.askdirectory(title="Selecciona una carpeta con imágenes o vídeos")
+        carpeta = filedialog.askdirectory(
+            title="Selecciona una carpeta con imágenes o vídeos", parent=self
+        )
         if carpeta:
             self._anadir([Path(carpeta)])
 
@@ -5208,6 +5346,7 @@ class App(BaseTk):  # type: ignore[misc,valid-type]
         rutas = filedialog.askopenfilenames(
             title="Selecciona comprimidos",
             filetypes=[("Comprimidos", "*.zip *.rar *.7z"), ("Todos los archivos", "*.*")],
+            parent=self,
         )
         if rutas:
             self._anadir([Path(r) for r in rutas])
@@ -5323,7 +5462,9 @@ class App(BaseTk):  # type: ignore[misc,valid-type]
     def _pick_output(self) -> None:
         inicial = self.output_dir.get() or ""
         carpeta = filedialog.askdirectory(
-            title="Carpeta de salida", initialdir=inicial if Path(inicial).is_dir() else None
+            title="Carpeta de salida",
+            initialdir=inicial if Path(inicial).is_dir() else None,
+            parent=self,
         )
         if carpeta:
             self.output_dir.set(carpeta)
@@ -5785,7 +5926,7 @@ class App(BaseTk):  # type: ignore[misc,valid-type]
 
         cont = ttk.Frame(ventana, padding=22)
         cont.pack(fill="both", expand=True)
-        ttk.Label(cont, text="Conversion completada", style="Title.TLabel").pack()
+        ttk.Label(cont, text="Conversión completada", style="Title.TLabel").pack()
         etiqueta = ttk.Label(cont, text="", style="TLabel")
         etiqueta.configure(font=("Segoe UI", 11))
         etiqueta.pack(pady=(10, 4))
@@ -5830,7 +5971,7 @@ class App(BaseTk):  # type: ignore[misc,valid-type]
                 ventana.destroy()
                 self._apagado_win = None
                 return
-            etiqueta.configure(text=f"El equipo se apagara en {estado['restante']} s")
+            etiqueta.configure(text=f"El equipo se apagará en {estado['restante']} s")
             estado["id"] = ventana.after(1000, tick)
 
         ttk.Button(botones, text="Cancelar apagado", command=cancelar).pack(side="left")
@@ -5838,13 +5979,9 @@ class App(BaseTk):  # type: ignore[misc,valid-type]
             side="left", padx=(8, 0)
         )
         ventana.protocol("WM_DELETE_WINDOW", cancelar)
-        etiqueta.configure(text="El equipo se apagara en 30 s")
+        etiqueta.configure(text="El equipo se apagará en 30 s")
         estado["id"] = ventana.after(1000, tick)
-
-        ventana.update_idletasks()
-        x = self.winfo_rootx() + (self.winfo_width() - ventana.winfo_width()) // 2
-        y = self.winfo_rooty() + 140
-        ventana.geometry(f"+{max(0, x)}+{max(0, y)}")
+        ajustar_ventana(ventana, self)
 
     def _ejecutar_apagado(self) -> None:
         if self._apagado_lanzado:

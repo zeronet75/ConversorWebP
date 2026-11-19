@@ -80,7 +80,7 @@ using Microsoft::WRL::ComPtr;
 namespace fs = std::filesystem;
 
 static const wchar_t* APP_NAME = L"Conversor WebP";
-static const wchar_t* APP_VERSION = L"2.15.1";
+static const wchar_t* APP_VERSION = L"2.15.2";
 
 // ---------------------------------------------------------------------------
 //  Utilidades generales
@@ -411,6 +411,7 @@ static bool escribir_zip(const fs::path& zip, const std::vector<fs::path>& archi
 struct Bitmap {
     UINT w = 0, h = 0;
     bool alfa = false;
+    bool pixeles_orientados = false;
     int frames = 1;
     std::vector<uint8_t> rgba;
     std::vector<uint8_t> icc;
@@ -425,6 +426,115 @@ static bool perfil_es_rgb(const std::vector<uint8_t>& icc) {
     cmsColorSpaceSignature espacio = cmsGetColorSpace(perfil);
     cmsCloseProfile(perfil);
     return espacio == cmsSigRgbData;
+}
+
+static uint16_t leer_exif16(const std::vector<uint8_t>& d, size_t p, bool little) {
+    if (p + 2 > d.size()) return 0;
+    if (little) return (uint16_t)(d[p] | ((uint16_t)d[p + 1] << 8));
+    return (uint16_t)(((uint16_t)d[p] << 8) | d[p + 1]);
+}
+
+static uint32_t leer_exif32(const std::vector<uint8_t>& d, size_t p, bool little) {
+    if (p + 4 > d.size()) return 0;
+    if (little)
+        return (uint32_t)d[p] | ((uint32_t)d[p + 1] << 8) |
+               ((uint32_t)d[p + 2] << 16) | ((uint32_t)d[p + 3] << 24);
+    return ((uint32_t)d[p] << 24) | ((uint32_t)d[p + 1] << 16) |
+           ((uint32_t)d[p + 2] << 8) | (uint32_t)d[p + 3];
+}
+
+static int leer_orientacion_exif(const std::vector<uint8_t>& exif) {
+    size_t base = 0;
+    if (exif.size() >= 6 && memcmp(exif.data(), "Exif\0\0", 6) == 0) base = 6;
+    if (exif.size() < base + 8) return 1;
+    bool little;
+    if (exif[base] == 'I' && exif[base + 1] == 'I') little = true;
+    else if (exif[base] == 'M' && exif[base + 1] == 'M') little = false;
+    else return 1;
+    uint32_t ifd = leer_exif32(exif, base + 4, little);
+    if (ifd < 8) return 1;
+    size_t p = base + ifd;
+    if (p + 2 > exif.size()) return 1;
+    uint16_t total = leer_exif16(exif, p, little);
+    p += 2;
+    for (uint16_t i = 0; i < total && p + 12 <= exif.size(); i++, p += 12) {
+        if (leer_exif16(exif, p, little) != 274) continue;
+        uint16_t tipo = leer_exif16(exif, p + 2, little);
+        uint32_t cuenta = leer_exif32(exif, p + 4, little);
+        if (cuenta < 1) return 1;
+        if (tipo == 3) return leer_exif16(exif, p + 8, little);
+        if (tipo == 4) return (int)leer_exif32(exif, p + 8, little);
+        return 1;
+    }
+    return 1;
+}
+
+static void poner_orientacion_exif(std::vector<uint8_t>& exif, uint16_t valor) {
+    size_t base = 0;
+    if (exif.size() >= 6 && memcmp(exif.data(), "Exif\0\0", 6) == 0) base = 6;
+    if (exif.size() < base + 8) return;
+    bool little;
+    if (exif[base] == 'I' && exif[base + 1] == 'I') little = true;
+    else if (exif[base] == 'M' && exif[base + 1] == 'M') little = false;
+    else return;
+    uint32_t ifd = leer_exif32(exif, base + 4, little);
+    if (ifd < 8) return;
+    size_t p = base + ifd;
+    if (p + 2 > exif.size()) return;
+    uint16_t total = leer_exif16(exif, p, little);
+    p += 2;
+    for (uint16_t i = 0; i < total && p + 12 <= exif.size(); i++, p += 12) {
+        if (leer_exif16(exif, p, little) != 274) continue;
+        uint16_t tipo = leer_exif16(exif, p + 2, little);
+        uint32_t cuenta = leer_exif32(exif, p + 4, little);
+        if (cuenta < 1) return;
+        if (tipo == 3) {
+            if (little) {
+                exif[p + 8] = (uint8_t)(valor & 0xFF);
+                exif[p + 9] = (uint8_t)(valor >> 8);
+            } else {
+                exif[p + 8] = (uint8_t)(valor >> 8);
+                exif[p + 9] = (uint8_t)(valor & 0xFF);
+            }
+        } else if (tipo == 4) {
+            for (int k = 0; k < 4; k++) {
+                int shift = little ? 8 * k : 8 * (3 - k);
+                exif[p + 8 + k] = (uint8_t)((valor >> shift) & 0xFF);
+            }
+        }
+        return;
+    }
+}
+
+static void aplicar_orientacion_exif(Bitmap& bmp, int orientacion) {
+    if (orientacion < 2 || orientacion > 8 || bmp.w == 0 || bmp.h == 0) return;
+    size_t esperado = (size_t)bmp.w * bmp.h * 4;
+    if (bmp.rgba.size() < esperado) return;
+    int w = (int)bmp.w, h = (int)bmp.h;
+    bool intercambia = orientacion >= 5;
+    int nw = intercambia ? h : w;
+    int nh = intercambia ? w : h;
+    std::vector<uint8_t> salida((size_t)nw * nh * 4);
+    for (int y = 0; y < nh; y++) {
+        for (int x = 0; x < nw; x++) {
+            int sx = x, sy = y;
+            switch (orientacion) {
+                case 2: sx = w - 1 - x; break;
+                case 3: sx = w - 1 - x; sy = h - 1 - y; break;
+                case 4: sy = h - 1 - y; break;
+                case 5: sx = y; sy = x; break;
+                case 6: sx = y; sy = h - 1 - x; break;
+                case 7: sx = w - 1 - y; sy = h - 1 - x; break;
+                case 8: sx = w - 1 - y; sy = x; break;
+                default: break;
+            }
+            memcpy(&salida[((size_t)y * nw + x) * 4],
+                   &bmp.rgba[((size_t)sy * w + sx) * 4], 4);
+        }
+    }
+    bmp.rgba.swap(salida);
+    bmp.w = (UINT)nw;
+    bmp.h = (UINT)nh;
 }
 
 static std::vector<uint8_t> leer_icc_png(const std::wstring& ruta) {
@@ -593,14 +703,18 @@ static bool decodificar_wic(IWICImagingFactory* factory, const std::wstring& rut
     }
 
     UINT orientacion = 1;
+    bool orientacion_leida = false;
     ComPtr<IWICMetadataQueryReader> meta;
     if (SUCCEEDED(frame->GetMetadataQueryReader(&meta))) {
         PROPVARIANT v;
         PropVariantInit(&v);
-        if (SUCCEEDED(meta->GetMetadataByName(L"/app1/ifd/{ushort=274}", &v)) && v.vt == VT_UI2)
+        if (SUCCEEDED(meta->GetMetadataByName(L"/app1/ifd/{ushort=274}", &v)) && v.vt == VT_UI2) {
             orientacion = v.uiVal;
-        else if (SUCCEEDED(meta->GetMetadataByName(L"/{ushort=274}", &v)) && v.vt == VT_UI2)
+            orientacion_leida = true;
+        } else if (SUCCEEDED(meta->GetMetadataByName(L"/{ushort=274}", &v)) && v.vt == VT_UI2) {
             orientacion = v.uiVal;
+            orientacion_leida = true;
+        }
         PropVariantClear(&v);
     }
 
@@ -643,6 +757,7 @@ static bool decodificar_wic(IWICImagingFactory* factory, const std::wstring& rut
     if (FAILED(hr)) { error = L"conversion de pixel format"; return false; }
 
     ComPtr<IWICBitmapSource> fuente = conv;
+    bool rotada = false;
     if (orientacion >= 2 && orientacion <= 8) {
         WICBitmapTransformOptions opt = WICBitmapTransformRotate0;
         switch (orientacion) {
@@ -658,6 +773,7 @@ static bool decodificar_wic(IWICImagingFactory* factory, const std::wstring& rut
         if (SUCCEEDED(factory->CreateBitmapFlipRotator(&rot)) &&
             SUCCEEDED(rot->Initialize(fuente.Get(), opt))) {
             fuente = rot;
+            rotada = true;
         }
     }
 
@@ -667,6 +783,7 @@ static bool decodificar_wic(IWICImagingFactory* factory, const std::wstring& rut
 
     bmp.w = w;
     bmp.h = h;
+    bmp.pixeles_orientados = orientacion_leida && (orientacion == 1 || rotada);
     bmp.rgba.resize((size_t)w * h * 4);
     hr = fuente->CopyPixels(nullptr, w * 4, (UINT)bmp.rgba.size(), bmp.rgba.data());
     if (FAILED(hr)) { error = L"lectura de pixeles"; return false; }
@@ -741,11 +858,28 @@ static bool decodificar_avif_datos(const std::vector<uint8_t>& datos, Bitmap& bm
     bmp.alfa = decoder->alphaPresent != 0;
     if (imagen->icc.size && imagen->icc.data)
         bmp.icc.assign(imagen->icc.data, imagen->icc.data + imagen->icc.size);
+    if (imagen->exif.size && imagen->exif.data)
+        bmp.exif.assign(imagen->exif.data, imagen->exif.data + imagen->exif.size);
+    if (imagen->xmp.size && imagen->xmp.data)
+        bmp.xmp.assign(imagen->xmp.data, imagen->xmp.data + imagen->xmp.size);
     bmp.rgba.resize((size_t)bmp.w * bmp.h * 4);
     for (size_t y = 0; y < bmp.h; y++) {
         const uint8_t* src = rgb.pixels + (size_t)y * rgb.rowBytes;
         std::copy(src, src + (size_t)bmp.w * 4, bmp.rgba.data() + (size_t)y * bmp.w * 4);
     }
+    bool transformada = false;
+    if (imagen->transformFlags & AVIF_TRANSFORM_IROT) {
+        uint8_t angulo = imagen->irot.angle & 3;
+        if (angulo == 1) aplicar_orientacion_exif(bmp, 8);
+        else if (angulo == 2) aplicar_orientacion_exif(bmp, 3);
+        else if (angulo == 3) aplicar_orientacion_exif(bmp, 6);
+        transformada = true;
+    }
+    if (imagen->transformFlags & AVIF_TRANSFORM_IMIR) {
+        aplicar_orientacion_exif(bmp, imagen->imir.axis == 0 ? 4 : 2);
+        transformada = true;
+    }
+    bmp.pixeles_orientados = transformada;
     avifRGBImageFreePixels(&rgb);
     avifDecoderDestroy(decoder);
     return true;
@@ -1291,6 +1425,11 @@ static void extraer_metadatos_jpeg(const fs::path& ruta, Bitmap& bmp) {
     }
 }
 
+static uint16_t leer_be16(const std::vector<uint8_t>& d, size_t p) {
+    if (p + 2 > d.size()) return 0;
+    return (uint16_t)(((uint16_t)d[p] << 8) | d[p + 1]);
+}
+
 static uint32_t leer_be32(const std::vector<uint8_t>& d, size_t p) {
     if (p + 4 > d.size()) return 0;
     return ((uint32_t)d[p] << 24) | ((uint32_t)d[p + 1] << 16) |
@@ -1354,6 +1493,205 @@ static void extraer_metadatos_webp(const fs::path& ruta, Bitmap& bmp) {
     }
 }
 
+struct CajaHeif {
+    std::string tipo;
+    size_t cuerpo = 0;
+    size_t fin = 0;
+};
+
+static std::vector<CajaHeif> cajas_heif(const std::vector<uint8_t>& d,
+                                       size_t inicio, size_t fin) {
+    std::vector<CajaHeif> salida;
+    size_t pos = inicio;
+    while (pos + 8 <= fin && pos + 8 <= d.size()) {
+        uint64_t tam = leer_be32(d, pos);
+        size_t cabecera = 8;
+        if (tam == 1) {
+            if (pos + 16 > fin) break;
+            tam = ((uint64_t)leer_be32(d, pos + 8) << 32) | leer_be32(d, pos + 12);
+            cabecera = 16;
+        } else if (tam == 0) {
+            tam = fin - pos;
+        }
+        if (tam < cabecera || tam > (uint64_t)(fin - pos)) break;
+        CajaHeif c;
+        c.tipo.assign((const char*)d.data() + pos + 4, 4);
+        c.cuerpo = pos + cabecera;
+        c.fin = pos + (size_t)tam;
+        salida.push_back(c);
+        pos = c.fin;
+    }
+    return salida;
+}
+
+static uint64_t leer_be_variable(const std::vector<uint8_t>& d, size_t p, int bytes) {
+    uint64_t v = 0;
+    for (int i = 0; i < bytes; i++) {
+        if (p + (size_t)i >= d.size()) return v;
+        v = (v << 8) | d[p + i];
+    }
+    return v;
+}
+
+// Extrae EXIF y XMP de contenedores HEIF/AVIF. WIC expone estos metadatos como
+// lectores anidados y no como bloque, asi que se leen los items del contenedor.
+static void extraer_metadatos_heif(const fs::path& ruta, Bitmap& bmp) {
+    std::ifstream f(ruta, std::ios::binary);
+    if (!f) return;
+    std::vector<uint8_t> d((std::istreambuf_iterator<char>(f)),
+                           std::istreambuf_iterator<char>());
+    if (d.size() < 16) return;
+
+    const CajaHeif* meta = nullptr;
+    for (auto& c : cajas_heif(d, 0, d.size()))
+        if (c.tipo == "meta") { meta = &c; break; }
+    if (!meta || meta->cuerpo + 4 > meta->fin) return;
+
+    std::vector<CajaHeif> hijos = cajas_heif(d, meta->cuerpo + 4, meta->fin);
+    const CajaHeif *iinf = nullptr, *iloc = nullptr, *idat = nullptr;
+    for (auto& c : hijos) {
+        if (c.tipo == "iinf") iinf = &c;
+        else if (c.tipo == "iloc") iloc = &c;
+        else if (c.tipo == "idat") idat = &c;
+    }
+    if (!iinf || !iloc) return;
+
+    struct ItemInfo {
+        std::string tipo;
+        std::string content_type;
+    };
+    std::map<uint32_t, ItemInfo> items;
+    {
+        size_t p = iinf->cuerpo;
+        if (p + 4 > iinf->fin) return;
+        uint8_t version = d[p];
+        p += 4;
+        uint32_t total = 0;
+        if (version == 0) { total = (uint32_t)leer_be16(d, p); p += 2; }
+        else { total = leer_be32(d, p); p += 4; }
+        for (uint32_t n = 0; n < total && p + 8 <= iinf->fin; n++) {
+            uint64_t tam = leer_be32(d, p);
+            if (tam < 8 || tam > (uint64_t)(iinf->fin - p)) break;
+            size_t fin_caja = p + (size_t)tam;
+            if (memcmp(d.data() + p + 4, "infe", 4) == 0 && p + 12 <= fin_caja) {
+                size_t q = p + 8;
+                uint8_t ver = d[q];
+                q += 4;
+                uint32_t id = 0;
+                if (ver <= 2) { id = (uint32_t)leer_be16(d, q); q += 2; }
+                else { id = leer_be32(d, q); q += 4; }
+                q += 2;  // indice de proteccion
+                ItemInfo info;
+                if (ver >= 1 && q + 4 <= fin_caja) {
+                    info.tipo.assign((const char*)d.data() + q, 4);
+                    q += 4;
+                }
+                while (q < fin_caja && d[q]) q++;  // nombre del item
+                if (q < fin_caja) q++;
+                if (ver >= 1 && info.tipo == "mime" && q < fin_caja) {
+                    size_t ini = q;
+                    while (q < fin_caja && d[q]) q++;
+                    info.content_type.assign((const char*)d.data() + ini, q - ini);
+                }
+                items[id] = std::move(info);
+            }
+            p = fin_caja;
+        }
+    }
+
+    struct Parte {
+        uint64_t off = 0;
+        uint64_t len = 0;
+    };
+    struct Localizacion {
+        uint8_t metodo = 0;
+        uint64_t base = 0;
+        std::vector<Parte> partes;
+    };
+    std::map<uint32_t, Localizacion> localizaciones;
+    {
+        size_t p = iloc->cuerpo;
+        if (p + 4 > iloc->fin) return;
+        uint8_t version = d[p];
+        p += 4;
+        if (p + 2 > iloc->fin) return;
+        uint8_t tam_off = d[p] >> 4, tam_len = d[p] & 0x0F;
+        p++;
+        uint8_t tam_base = d[p] >> 4;
+        uint8_t tam_idx = (version == 1 || version == 2) ? (d[p] & 0x0F) : 0;
+        p++;
+        uint32_t total = 0;
+        if (version < 2) { total = (uint32_t)leer_be16(d, p); p += 2; }
+        else { total = leer_be32(d, p); p += 4; }
+        for (uint32_t n = 0; n < total && p < iloc->fin; n++) {
+            uint32_t id = 0;
+            if (version < 2) { id = (uint32_t)leer_be16(d, p); p += 2; }
+            else { id = leer_be32(d, p); p += 4; }
+            Localizacion loc;
+            if (version == 1 || version == 2) {
+                loc.metodo = (uint8_t)(leer_be16(d, p) & 0x0F);
+                p += 2;
+            }
+            p += 2;  // indice de referencia de datos
+            loc.base = leer_be_variable(d, p, tam_base);
+            p += tam_base;
+            if (p + 2 > iloc->fin) break;
+            uint16_t n_partes = leer_be16(d, p);
+            p += 2;
+            for (uint16_t k = 0; k < n_partes; k++) {
+                if ((version == 1 || version == 2) && tam_idx) p += tam_idx;
+                Parte parte;
+                parte.off = leer_be_variable(d, p, tam_off);
+                p += tam_off;
+                parte.len = leer_be_variable(d, p, tam_len);
+                p += tam_len;
+                if (p > iloc->fin) break;
+                loc.partes.push_back(parte);
+            }
+            localizaciones[id] = std::move(loc);
+        }
+    }
+
+    auto leer_item = [&](const Localizacion& loc) {
+        std::vector<uint8_t> datos;
+        for (auto& parte : loc.partes) {
+            uint64_t inicio = 0;
+            if (loc.metodo == 0) inicio = loc.base + parte.off;
+            else if (loc.metodo == 1 && idat)
+                inicio = idat->cuerpo + 4 + loc.base + parte.off;
+            else
+                continue;
+            if (inicio >= d.size()) continue;
+            uint64_t n = std::min<uint64_t>(parte.len, d.size() - inicio);
+            if (n == 0 || datos.size() + n > 64ull * 1024 * 1024) continue;
+            datos.insert(datos.end(), d.begin() + (size_t)inicio,
+                         d.begin() + (size_t)(inicio + n));
+        }
+        return datos;
+    };
+
+    for (auto& [id, loc] : localizaciones) {
+        auto it = items.find(id);
+        if (it == items.end()) continue;
+        if (it->second.tipo == "Exif") {
+            std::vector<uint8_t> datos = leer_item(loc);
+            if (datos.size() > 4) {
+                uint32_t offset = leer_be32(datos, 0);
+                uint64_t ini = 4ull + offset;
+                if (ini < datos.size()) {
+                    bmp.exif.assign({'E', 'x', 'i', 'f', 0, 0});
+                    bmp.exif.insert(bmp.exif.end(), datos.begin() + (size_t)ini,
+                                    datos.end());
+                }
+            }
+        } else if (it->second.tipo == "mime" &&
+                   it->second.content_type == "application/rdf+xml") {
+            std::vector<uint8_t> datos = leer_item(loc);
+            if (!datos.empty()) bmp.xmp = std::move(datos);
+        }
+    }
+}
+
 static bool decodificar_imagen(IWICImagingFactory* factory, const std::wstring& ruta,
                                Bitmap& bmp, std::wstring& error) {
     std::wstring ext = lower(fs::path(ruta).extension().wstring());
@@ -1372,6 +1710,16 @@ static bool decodificar_imagen(IWICImagingFactory* factory, const std::wstring& 
             extraer_metadatos_png(ruta, bmp);
         else if (ext == L".webp")
             extraer_metadatos_webp(ruta, bmp);
+        else if (ext == L".heic" || ext == L".heif")
+            extraer_metadatos_heif(ruta, bmp);
+        else if (ext == L".avif" && (bmp.exif.empty() || bmp.xmp.empty()))
+            extraer_metadatos_heif(ruta, bmp);
+        if (!bmp.pixeles_orientados && !bmp.exif.empty()) {
+            int orientacion = leer_orientacion_exif(bmp.exif);
+            if (orientacion >= 2 && orientacion <= 8)
+                aplicar_orientacion_exif(bmp, orientacion);
+        }
+        if (!bmp.exif.empty()) poner_orientacion_exif(bmp.exif, 1);
     }
     return ok;
 }
@@ -1912,7 +2260,7 @@ struct Options {
     bool csv = false;
     bool html = false;
     std::wstring salida;
-    std::wstring zip_nombre = L"imagenes_2.15.1-cpp.zip";
+    std::wstring zip_nombre = L"imagenes_2.15.2-cpp.zip";
     std::wstring patron;
     std::wstring formato = L"WEBP";
     bool dry_run = false;
@@ -2285,6 +2633,40 @@ static std::wstring g_dpi_efectivo = L"gdi";
 
 static int dpx(int valor) {
     return (int)lround((double)valor * g_dpi_escala);
+}
+
+static RECT area_trabajo_ventana(HWND ventana) {
+    MONITORINFO mi{};
+    mi.cbSize = sizeof(mi);
+    HMONITOR mon = MonitorFromWindow(ventana, MONITOR_DEFAULTTONEAREST);
+    if (mon && GetMonitorInfoW(mon, &mi)) return mi.rcWork;
+    RECT r{0, 0, GetSystemMetrics(SM_CXSCREEN), GetSystemMetrics(SM_CYSCREEN)};
+    return r;
+}
+
+static RECT area_trabajo_recta(const RECT& rc) {
+    MONITORINFO mi{};
+    mi.cbSize = sizeof(mi);
+    HMONITOR mon = MonitorFromRect(&rc, MONITOR_DEFAULTTONEAREST);
+    if (mon && GetMonitorInfoW(mon, &mi)) return mi.rcWork;
+    RECT r{0, 0, GetSystemMetrics(SM_CXSCREEN), GetSystemMetrics(SM_CYSCREEN)};
+    return r;
+}
+
+static void centrar_en_monitor(HWND padre, int ancho, int alto, int& x, int& y) {
+    RECT pr{};
+    if (padre) GetWindowRect(padre, &pr);
+    RECT wa = area_trabajo_ventana(padre);
+    x = pr.left + ((pr.right - pr.left) - ancho) / 2;
+    y = pr.top + ((pr.bottom - pr.top) - alto) / 2;
+    int izq = wa.left + 8;
+    int arr = wa.top + 8;
+    int der = wa.right - ancho - 8;
+    int aba = wa.bottom - alto - 8;
+    if (der < izq) der = izq;
+    if (aba < arr) aba = arr;
+    x = std::clamp(x, izq, der);
+    y = std::clamp(y, arr, aba);
 }
 
 static void dibujar_icono_tema(const DRAWITEMSTRUCT* di) {
@@ -5342,11 +5724,9 @@ static void mostrar_apagado() {
         registrada = true;
     }
     if (g_apagado_hwnd) return;
-    RECT pr{};
-    GetWindowRect(g_hwnd, &pr);
     int ancho = dpx(380), alto = dpx(160);
-    int x = pr.left + ((pr.right - pr.left) - ancho) / 2;
-    int y = pr.top + ((pr.bottom - pr.top) - alto) / 2;
+    int x = 0, y = 0;
+    centrar_en_monitor(g_hwnd, ancho, alto, x, y);
     g_apagado_hwnd = CreateWindowExW(WS_EX_TOPMOST, L"ConversorApagadoWnd",
                                      L"Apagado automatico",
                                      WS_POPUP | WS_CAPTION | WS_SYSMENU | WS_VISIBLE,
@@ -5689,11 +6069,12 @@ static void abrir_vista_previa() {
         registrada = true;
     }
     if (g_prev_hwnd) DestroyWindow(g_prev_hwnd);
-    RECT pr{};
-    GetWindowRect(g_hwnd, &pr);
     int ancho = dpx(980), alto = dpx(720);
-    int x = pr.left + ((pr.right - pr.left) - ancho) / 2;
-    int y = pr.top + ((pr.bottom - pr.top) - alto) / 2;
+    RECT wa = area_trabajo_ventana(g_hwnd);
+    ancho = std::min(ancho, (int)(wa.right - wa.left) - dpx(16));
+    alto = std::min(alto, (int)(wa.bottom - wa.top) - dpx(16));
+    int x = 0, y = 0;
+    centrar_en_monitor(g_hwnd, ancho, alto, x, y);
     g_prev_hwnd = CreateWindowExW(WS_EX_TOOLWINDOW, L"ConversorPreviewWnd",
                                   (L"Vista previa - " + g_prev_ruta).c_str(),
                                   WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU | WS_VISIBLE,
@@ -5818,10 +6199,17 @@ static void mostrar_tooltip_rect(RECT rc, const std::wstring& texto) {
     int alto = (int)medida.bottom + dpx(12);
     int x = rc.left + dpx(8);
     int y = rc.bottom + dpx(10);
-    int sw = GetSystemMetrics(SM_CXSCREEN);
-    int sh = GetSystemMetrics(SM_CYSCREEN);
-    if (x + ancho > sw - dpx(12)) x = std::max(dpx(6), sw - ancho - dpx(12));
-    if (y + alto > sh - dpx(12)) y = std::max(dpx(6), (int)rc.top - alto - dpx(8));
+    RECT wa = area_trabajo_recta(rc);
+    if (y + alto > wa.bottom - dpx(12))
+        y = rc.top - alto - dpx(8);
+    int minx = wa.left + dpx(6);
+    int maxx = wa.right - ancho - dpx(6);
+    int miny = wa.top + dpx(6);
+    int maxy = wa.bottom - alto - dpx(6);
+    if (maxx < minx) maxx = minx;
+    if (maxy < miny) maxy = miny;
+    x = std::clamp(x, minx, maxx);
+    y = std::clamp(y, miny, maxy);
     SetWindowPos(g_tip_hwnd, HWND_TOPMOST, x, y, ancho, alto,
                  SWP_NOACTIVATE | SWP_SHOWWINDOW);
     InvalidateRect(g_tip_hwnd, nullptr, TRUE);
@@ -6253,11 +6641,12 @@ static void mostrar_dialogo_video(HWND parent) {
         RegisterClassExW(&wc);
         registrada = true;
     }
-    RECT pr{};
-    GetWindowRect(parent, &pr);
     int ancho = dpx(560), alto = dpx(350);
-    int x = pr.left + ((pr.right - pr.left) - ancho) / 2;
-    int y = pr.top + ((pr.bottom - pr.top) - alto) / 2;
+    RECT wa = area_trabajo_ventana(parent);
+    ancho = std::min(ancho, (int)(wa.right - wa.left) - dpx(16));
+    alto = std::min(alto, (int)(wa.bottom - wa.top) - dpx(16));
+    int x = 0, y = 0;
+    centrar_en_monitor(parent, ancho, alto, x, y);
     g_video_dlg = CreateWindowExW(WS_EX_DLGMODALFRAME, L"ConversorVideoWnd",
                                   L"Opciones de vídeo (WebM)",
                                   WS_POPUP | WS_CAPTION | WS_SYSMENU | WS_VISIBLE,
@@ -7100,11 +7489,19 @@ static void mostrar_acerca(HWND padre) {
         RegisterClassExW(&wc);
         registrada = true;
     }
-    RECT marco{0, 0, dpx(780), dpx(680)};
+    RECT wa = area_trabajo_ventana(padre);
+    int ancho_cli = std::min(dpx(780), (int)(wa.right - wa.left) - dpx(32));
+    int alto_cli = std::min(dpx(680), (int)(wa.bottom - wa.top) - dpx(48));
+    if (ancho_cli < dpx(480)) ancho_cli = dpx(480);
+    if (alto_cli < dpx(360)) alto_cli = dpx(360);
+    RECT marco{0, 0, ancho_cli, alto_cli};
     AdjustWindowRectEx(&marco, WS_OVERLAPPEDWINDOW, FALSE, 0);
+    int ancho = marco.right - marco.left;
+    int alto = marco.bottom - marco.top;
+    int x = 0, y = 0;
+    centrar_en_monitor(padre, ancho, alto, x, y);
     g_acerca = CreateWindowExW(0, L"ConversorAcerca", L"Acerca de Conversor WebP",
-                               WS_OVERLAPPEDWINDOW, CW_USEDEFAULT, CW_USEDEFAULT,
-                               marco.right - marco.left, marco.bottom - marco.top,
+                               WS_OVERLAPPEDWINDOW, x, y, ancho, alto,
                                padre, nullptr, inst, nullptr);
     if (g_acerca) {
         ShowWindow(g_acerca, SW_SHOW);
@@ -7281,7 +7678,7 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
 
             // Cabecera
             etiqueta(L"Conversor WebP", 16, 17, 300, 30, 1400, g_font_title);
-            etiqueta(L"v2.15.1", 200, 29, 120, 18, 1401, g_font_muted);
+            etiqueta(L"v2.15.2", 200, 29, 120, 18, 1401, g_font_muted);
             etiqueta(L"JPG · PNG · BMP · TIFF · GIF · ICO  →  WebP / AVIF", 560, 23, 390, 20,
                      1402, g_font_muted, SS_RIGHT);
             boton(L"", 958, 20, 26, 26, ID_TEMA, BS_OWNERDRAW);
@@ -8722,9 +9119,15 @@ int wmain(int argc, wchar_t** argv) {
     wc.hIconSm = icono_pequeno;
     RegisterClassExW(&wc);
 
-    g_hwnd = CreateWindowExW(0, wc.lpszClassName, L"Conversor WebP 2.15.1",
+    int ancho_ini = dpx(1016), alto_ini = dpx(900);
+    RECT wa_ini{};
+    if (SystemParametersInfoW(SPI_GETWORKAREA, 0, &wa_ini, 0)) {
+        ancho_ini = std::min(ancho_ini, (int)(wa_ini.right - wa_ini.left) - 16);
+        alto_ini = std::min(alto_ini, (int)(wa_ini.bottom - wa_ini.top) - 16);
+    }
+    g_hwnd = CreateWindowExW(0, wc.lpszClassName, L"Conversor WebP 2.15.2",
                              WS_OVERLAPPEDWINDOW,
-                             CW_USEDEFAULT, CW_USEDEFAULT, dpx(1016), dpx(900), nullptr, nullptr, inst, nullptr);
+                             CW_USEDEFAULT, CW_USEDEFAULT, ancho_ini, alto_ini, nullptr, nullptr, inst, nullptr);
     if (!g_hwnd) return 1;
 
     aplicar_modo_oscuro_nativo(g_hwnd, g_oscuro);

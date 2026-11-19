@@ -6,6 +6,27 @@ Todos los cambios relevantes del proyecto. Formato basado en
 
 ---
 
+## [2.15.2] — 2026-11-19
+
+### Corregido
+
+- **C++:** los archivos HEIC/HEIF y AVIF de origen conservan EXIF y XMP. Se leen los ítems `Exif` y `mime` del contenedor HEIF, que WIC no expone como bloque.
+- **C++:** la orientación EXIF se aplica una sola vez y se normaliza a 1, evitando el doble giro en JPEG y aplicando correctamente `irot`/`imir` en AVIF. Verificado con las 8 orientaciones EXIF.
+- **C++:** Acerca de, vista previa, apagado y tooltips se centran en el monitor del padre y se mantienen dentro del área de trabajo.
+- **Python:** AVIF añadido a los formatos de entrada; antes se ignoraba aunque Pillow pudiera abrirlo.
+- **Python:** diálogos y tooltips siguen al monitor del padre; los diálogos nativos reciben `parent` y el selector de preset usa un diálogo tematizado.
+- **Python:** la escala DPI se limita al área de trabajo y el tamaño inicial crece con ella, evitando que desaparezca la botonera inferior en pantallas de 125–150 %.
+
+### Pruebas
+
+- 35 pruebas Python superadas.
+- Comparación de las orientaciones EXIF 1–8 contra Pillow: dimensiones y colores coinciden.
+- HEIC, HEIF y AVIF con EXIF/XMP verificados en C++.
+- Diálogos personalizados, nativos y tooltips abiertos y capturados en el monitor secundario en ambas ediciones.
+- C++ compilado con `/W4` sin avisos.
+
+---
+
 ## [2.15.1] — 2026-11-19
 
 ### Corregido
@@ -504,6 +525,7 @@ Todos los cambios relevantes del proyecto. Formato basado en
 - Conservación de transparencia, perfil ICC y orientación EXIF.
 - Modo consola básico.
 
+[2.15.2]: #2152--2026-11-19
 [2.15.1]: #2151--2026-11-19
 [2.15.0]: #2150--2026-11-19
 [2.14.0]: #2140--2026-11-19
