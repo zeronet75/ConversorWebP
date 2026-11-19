@@ -12,6 +12,7 @@ del proyecto principal.
   `ffmpeg.exe` y `ffprobe.exe`; también se detecta en `PATH`, junto al `.exe`, en `bin\`, `tools\`
   o con `--ffmpeg`. Acepta vídeos en lotes mixtos.
 - **Opciones de vídeo:** resolución, CRF o VBR, bitrate, audio Opus, FPS, `-tune-content` y denoise.
+- **Informes:** CSV e HTML, y conservación de EXIF/XMP y fecha original, con la misma interfaz que Python.
 - **Color:** lcms2 para validar/convertir perfiles; los perfiles RGB se incrustan en
   WebP (chunk ICCP) y AVIF.
 - **Portable:** el ejecutable no escribe en el registro; usa `config.ini` junto al

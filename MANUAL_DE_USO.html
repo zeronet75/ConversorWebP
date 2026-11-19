@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Manual de uso · Conversor WebP 2.14.0</title>
+<title>Manual de uso · Conversor WebP 2.15.0</title>
 <style>
   :root{
     --azul:#1a73e8; --azul-osc:#1557b0; --texto:#1f2933; --gris:#5f6b7a;
@@ -67,7 +67,7 @@
 <div class="hoja">
 
 <header>
-  <h1>Conversor WebP 2.14.0</h1>
+  <h1>Conversor WebP 2.15.0</h1>
   <p class="sub">Manual de uso · Qué hace cada opción y cómo sacarle partido</p>
 </header>
 
@@ -94,7 +94,7 @@
 </div>
 
 <div class="nota">
-  <strong>Novedades de la versión 2.14.0:</strong> presets de vídeo <strong>Baja</strong> (480p · CRF 36 · 64 kbps · 30 fps), <strong>Media</strong> (720p · CRF 32 · 96 kbps · 30 fps), <strong>Alta</strong> (1080p · CRF 26 · 128 kbps · FPS original) y <strong>Personalizada</strong>; opciones avanzadas de vídeo (resolución, CRF o bitrate VBR, audio, FPS, contenido y reducción de ruido); FFmpeg y ffprobe incluidos en el portable y el instalador (texto y controles a resolución real, con opciones <code>auto</code>, <code>system</code> y <code>gdi</code>). Se mantienen la cola persistente con pausa, reanudación, reintento y reordenación; vista previa con calidad de prueba y peso estimado; WebP animado desde GIF/WebP; conservación opcional de metadatos EXIF/XMP y fecha original; CLI con salida JSON, modo silencioso, trabajos en paralelo y presets; actualizaciones con verificación Authenticode cuando el ejecutable esté firmado; configuración atómica en C++; aviso de espacio libre, tiempo restante e instancia única.
+  <strong>Novedades de la versión 2.15.0:</strong> la edición C++ incorpora las mismas opciones de informes que Python: <strong>Informe CSV</strong>, <strong>Informe HTML</strong> y <strong>Conservar metadatos (EXIF/XMP) y fecha original</strong>; se mantienen los presets de vídeo Baja, Media, Alta y Personalizada (texto y controles a resolución real, con opciones <code>auto</code>, <code>system</code> y <code>gdi</code>). Se mantienen la cola persistente con pausa, reanudación, reintento y reordenación; vista previa con calidad de prueba y peso estimado; WebP animado desde GIF/WebP; conservación opcional de metadatos EXIF/XMP y fecha original; CLI con salida JSON, modo silencioso, trabajos en paralelo y presets; actualizaciones con verificación Authenticode cuando el ejecutable esté firmado; configuración atómica en C++; aviso de espacio libre, tiempo restante e instancia única.
   <br><br>
   <strong>Novedades de la versión 2.6.2:</strong> actualización automática desde la propia aplicación,
   edición C++ con paridad funcional, apagado opcional, tooltips, HEIC, carpeta vigilada, patrones,
@@ -485,6 +485,8 @@ instalados; el programa los busca solo en las rutas habituales de Windows.</p>
   <tr><td><code>--max-dim N</code></td><td>Redimensiona al lado máximo de N píxeles (no amplía).</td></tr>
   <tr><td><code>--max-kb N</code></td><td>Busca la calidad necesaria para no superar N KB por imagen.</td></tr>
   <tr><td><code>--csv</code></td><td>Genera el informe CSV en la carpeta de salida.</td></tr>
+  <tr><td><code>--html</code></td><td>Genera el informe HTML en la carpeta de salida.</td></tr>
+  <tr><td><code>--keep-metadata</code></td><td>Conserva EXIF/XMP y la fecha original.</td></tr>
   <tr><td><code>--gpu</code></td><td>Fuerza la GPU CUDA aunque el lote sea pequeño.</td></tr>
   <tr><td><code>--no-gpu</code></td><td>Desactiva la aceleración GPU.</td></tr>
   <tr><td><code>--shutdown</code></td><td>Apaga el equipo al terminar correctamente.</td></tr>
@@ -635,7 +637,7 @@ muestran un aviso en la barra de estado. <em>Ayuda → Buscar actualizaciones</e
 ofrece abrir la página de descarga.</p>
 
 <p class="pie">
-  Conversor WebP 2.14.0 · Programa local para Windows · Interfaz Tkinter, conversión con Pillow, arrastre con
+  Conversor WebP 2.15.0 · Programa local para Windows · Interfaz Tkinter, conversión con Pillow, arrastre con
   TkDND, extracción con 7-Zip/WinRAR.<br>
   Este manual se abre desde el programa en <strong>Ayuda → Manual de uso</strong> y también puede abrirse
   con doble clic en cualquier navegador.

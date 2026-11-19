@@ -11,7 +11,7 @@
 </p>
 
 <p align="center">
-  <img alt="Versión" src="https://img.shields.io/badge/version-2.14.0-1a73e8">
+  <img alt="Versión" src="https://img.shields.io/badge/version-2.15.0-1a73e8">
   <img alt="Windows" src="https://img.shields.io/badge/Windows-10%20%7C%2011-0078D6">
   <img alt="Python" src="https://img.shields.io/badge/Python-3.12-3776AB">
   <img alt="Pillow" src="https://img.shields.io/badge/Pillow-13-11557C">
@@ -682,6 +682,7 @@ ConversorWebP/
 
 Consulta [CHANGELOG.md](CHANGELOG.md). Resumen:
 
+- **2.15.0** — C++: informe HTML y conservación de metadatos EXIF/XMP, con la misma fila de opciones que Python.
 - **2.14.0** — presets de vídeo Baja, Media, Alta y Personalizada.
 - **2.13.0** — opciones avanzadas de vídeo: resolución, CRF/VBR, bitrate, audio, FPS, contenido y denoise.
 - **2.12.0** — FFmpeg y ffprobe incluidos en el portable y el instalador de Python y C++.

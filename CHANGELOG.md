@@ -6,6 +6,28 @@ Todos los cambios relevantes del proyecto. Formato basado en
 
 ---
 
+## [2.15.0] — 2026-11-19
+
+### Añadido
+
+- **Paridad de informes en C++:** la fila de opciones ahora es idéntica a Python:
+  - **Informe CSV**
+  - **Informe HTML**
+  - **Conservar metadatos (EXIF/XMP) y fecha original**
+- **Informe HTML** en C++ con la misma tabla, resumen, ahorro total y estilo que el de Python.
+- **Conservación de metadatos en C++:** EXIF y XMP en JPEG, PNG y WebP; EXIF/XMP también al generar AVIF.
+- Fecha original conservada con la misma casilla combinada.
+- Nuevos argumentos CLI en C++: `--html` y `--keep-metadata` (alias de `--keep-date`).
+- El estado de las casillas se guarda en configuración, presets e historial.
+
+### Pruebas
+
+- 32 pruebas Python superadas.
+- C++ verificado con EXIF, XMP, AVIF, CSV y HTML.
+- Captura de la interfaz C++ revisada: la fila coincide con Python.
+
+---
+
 ## [2.14.0] — 2026-11-19
 
 ### Añadido
@@ -465,6 +487,7 @@ Todos los cambios relevantes del proyecto. Formato basado en
 - Conservación de transparencia, perfil ICC y orientación EXIF.
 - Modo consola básico.
 
+[2.15.0]: #2150--2026-11-19
 [2.14.0]: #2140--2026-11-19
 [2.13.0]: #2130--2026-11-18
 [2.12.0]: #2120--2026-11-18

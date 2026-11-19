@@ -80,7 +80,7 @@ using Microsoft::WRL::ComPtr;
 namespace fs = std::filesystem;
 
 static const wchar_t* APP_NAME = L"Conversor WebP";
-static const wchar_t* APP_VERSION = L"2.14.0";
+static const wchar_t* APP_VERSION = L"2.15.0";
 
 // ---------------------------------------------------------------------------
 //  Utilidades generales
@@ -196,6 +196,22 @@ static std::string csv_campo(const std::string& valor) {
         salida.push_back(c);
     }
     salida.push_back('"');
+    return salida;
+}
+
+static std::string html_campo(const std::string& valor) {
+    std::string salida;
+    salida.reserve(valor.size());
+    for (char c : valor) {
+        switch (c) {
+            case '&': salida += "&amp;"; break;
+            case '<': salida += "&lt;"; break;
+            case '>': salida += "&gt;"; break;
+            case '"': salida += "&quot;"; break;
+            case '\'': salida += "&#39;"; break;
+            default: salida += c; break;
+        }
+    }
     return salida;
 }
 
@@ -398,6 +414,8 @@ struct Bitmap {
     int frames = 1;
     std::vector<uint8_t> rgba;
     std::vector<uint8_t> icc;
+    std::vector<uint8_t> exif;
+    std::vector<uint8_t> xmp;
 };
 
 static bool perfil_es_rgb(const std::vector<uint8_t>& icc) {
@@ -1235,16 +1253,123 @@ static bool decodificar_dds(const std::wstring& ruta, Bitmap& bmp, std::wstring&
     return false;
 }
 
+static void extraer_metadatos_jpeg(const fs::path& ruta, Bitmap& bmp) {
+    std::ifstream f(ruta, std::ios::binary);
+    if (!f) return;
+    std::vector<uint8_t> d((std::istreambuf_iterator<char>(f)),
+                           std::istreambuf_iterator<char>());
+    if (d.size() < 4 || d[0] != 0xFF || d[1] != 0xD8) return;
+    size_t i = 2;
+    while (i + 4 <= d.size()) {
+        if (d[i] != 0xFF) { i++; continue; }
+        uint8_t marcador = d[i + 1];
+        if (marcador == 0xD8 || marcador == 0xD9 ||
+            (marcador >= 0xD0 && marcador <= 0xD7)) {
+            i += 2;
+            continue;
+        }
+        size_t longitud = ((size_t)d[i + 2] << 8) | d[i + 3];
+        if (longitud < 2 || i + 2 + longitud > d.size()) break;
+        if (marcador == 0xE1 && longitud > 2) {
+            const uint8_t* p = d.data() + i + 4;
+            size_t n = longitud - 2;
+            if (n >= 6 && memcmp(p, "Exif\0\0", 6) == 0) {
+                bmp.exif.assign(p, p + n);
+            } else {
+                static const char* xmp_hdr = "http://ns.adobe.com/xap/1.0/";
+                size_t hl = strlen(xmp_hdr);
+                if (n > hl + 1 && memcmp(p, xmp_hdr, hl) == 0 && p[hl] == 0)
+                    bmp.xmp.assign(p + hl + 1, p + n);
+            }
+        }
+        if (marcador == 0xDA) break;
+        i += 2 + longitud;
+    }
+}
+
+static uint32_t leer_be32(const std::vector<uint8_t>& d, size_t p) {
+    if (p + 4 > d.size()) return 0;
+    return ((uint32_t)d[p] << 24) | ((uint32_t)d[p + 1] << 16) |
+           ((uint32_t)d[p + 2] << 8) | d[p + 3];
+}
+
+static void extraer_metadatos_png(const fs::path& ruta, Bitmap& bmp) {
+    std::ifstream f(ruta, std::ios::binary);
+    if (!f) return;
+    std::vector<uint8_t> d((std::istreambuf_iterator<char>(f)),
+                           std::istreambuf_iterator<char>());
+    static const uint8_t firma[8] = {0x89, 'P', 'N', 'G', 0x0D, 0x0A, 0x1A, 0x0A};
+    if (d.size() < 8 || memcmp(d.data(), firma, 8) != 0) return;
+    size_t i = 8;
+    while (i + 12 <= d.size()) {
+        uint32_t n = leer_be32(d, i);
+        if (n > d.size() || i + 12 + n > d.size()) break;
+        const uint8_t* tipo = d.data() + i + 4;
+        const uint8_t* datos = d.data() + i + 8;
+        if (memcmp(tipo, "eXIf", 4) == 0) {
+            bmp.exif.assign(datos, datos + n);
+        } else if (memcmp(tipo, "iTXt", 4) == 0 && n > 22) {
+            size_t k = 0;
+            while (k < n && datos[k] != 0) k++;
+            std::string clave((const char*)datos, k);
+            if (clave == "XML:com.adobe.xmp" && k + 5 < n) {
+                size_t p = k + 1;
+                bool comprimido = datos[p] != 0;
+                p += 2;  // flag de compresion + metodo
+                while (p < n && datos[p] != 0) p++;  // idioma
+                if (p < n) p++;
+                while (p < n && datos[p] != 0) p++;  // titulo traducido
+                if (p < n) p++;
+                if (!comprimido && p <= n) bmp.xmp.assign(datos + p, datos + n);
+            }
+        }
+        i += 12 + n;
+        if (memcmp(tipo, "IEND", 4) == 0) break;
+    }
+}
+
+static void extraer_metadatos_webp(const fs::path& ruta, Bitmap& bmp) {
+    std::ifstream f(ruta, std::ios::binary);
+    if (!f) return;
+    std::vector<uint8_t> d((std::istreambuf_iterator<char>(f)),
+                           std::istreambuf_iterator<char>());
+    if (d.size() < 12 || memcmp(d.data(), "RIFF", 4) != 0 ||
+        memcmp(d.data() + 8, "WEBP", 4) != 0)
+        return;
+    size_t i = 12;
+    while (i + 8 <= d.size()) {
+        uint32_t n = (uint32_t)d[i + 4] | ((uint32_t)d[i + 5] << 8) |
+                     ((uint32_t)d[i + 6] << 16) | ((uint32_t)d[i + 7] << 24);
+        if (i + 8 + n > d.size()) break;
+        const uint8_t* p = d.data() + i + 8;
+        if (memcmp(d.data() + i, "EXIF", 4) == 0)
+            bmp.exif.assign(p, p + n);
+        else if (memcmp(d.data() + i, "XMP ", 4) == 0)
+            bmp.xmp.assign(p, p + n);
+        i += 8 + n + (n & 1);
+    }
+}
+
 static bool decodificar_imagen(IWICImagingFactory* factory, const std::wstring& ruta,
                                Bitmap& bmp, std::wstring& error) {
     std::wstring ext = lower(fs::path(ruta).extension().wstring());
-    if (ext == L".avif") return decodificar_avif(ruta, bmp, error);
-    if (ext == L".tga") return decodificar_tga(ruta, bmp, error);
-    if (ext == L".pcx") return decodificar_pcx(ruta, bmp, error);
-    if (ext == L".dds") return decodificar_dds(ruta, bmp, error);
-    if (ext == L".ppm" || ext == L".pgm" || ext == L".pbm")
-        return decodificar_ppm(ruta, bmp, error);
-    return decodificar_wic(factory, ruta, bmp, error);
+    bool ok = false;
+    if (ext == L".avif") ok = decodificar_avif(ruta, bmp, error);
+    else if (ext == L".tga") ok = decodificar_tga(ruta, bmp, error);
+    else if (ext == L".pcx") ok = decodificar_pcx(ruta, bmp, error);
+    else if (ext == L".dds") ok = decodificar_dds(ruta, bmp, error);
+    else if (ext == L".ppm" || ext == L".pgm" || ext == L".pbm")
+        ok = decodificar_ppm(ruta, bmp, error);
+    else ok = decodificar_wic(factory, ruta, bmp, error);
+    if (ok) {
+        if (ext == L".jpg" || ext == L".jpeg" || ext == L".jfif")
+            extraer_metadatos_jpeg(ruta, bmp);
+        else if (ext == L".png")
+            extraer_metadatos_png(ruta, bmp);
+        else if (ext == L".webp")
+            extraer_metadatos_webp(ruta, bmp);
+    }
+    return ok;
 }
 
 struct Coeficientes {
@@ -1610,12 +1735,27 @@ static std::vector<uint8_t> codificar_webp(const Bitmap& bmp, int calidad, int m
     }
 
     std::vector<uint8_t> datos(writer.mem, writer.mem + writer.size);
-    if (!bmp.icc.empty()) {
+    if (!bmp.icc.empty() || !bmp.exif.empty() || !bmp.xmp.empty()) {
         WebPData entrada{datos.data(), datos.size()};
         WebPMux* mux = WebPMuxCreate(&entrada, 1);
         if (mux) {
-            WebPData perfil{bmp.icc.data(), bmp.icc.size()};
-            if (WebPMuxSetChunk(mux, "ICCP", &perfil, 1) == WEBP_MUX_OK) {
+            bool cambiado = false;
+            if (!bmp.icc.empty()) {
+                WebPData perfil{bmp.icc.data(), bmp.icc.size()};
+                if (WebPMuxSetChunk(mux, "ICCP", &perfil, 1) == WEBP_MUX_OK)
+                    cambiado = true;
+            }
+            if (!bmp.exif.empty()) {
+                WebPData exif{bmp.exif.data(), bmp.exif.size()};
+                if (WebPMuxSetChunk(mux, "EXIF", &exif, 1) == WEBP_MUX_OK)
+                    cambiado = true;
+            }
+            if (!bmp.xmp.empty()) {
+                WebPData xmp{bmp.xmp.data(), bmp.xmp.size()};
+                if (WebPMuxSetChunk(mux, "XMP ", &xmp, 1) == WEBP_MUX_OK)
+                    cambiado = true;
+            }
+            if (cambiado) {
                 WebPData ensamblado{nullptr, 0};
                 if (WebPMuxAssemble(mux, &ensamblado) == WEBP_MUX_OK &&
                     ensamblado.bytes && ensamblado.size) {
@@ -1645,6 +1785,10 @@ static std::vector<uint8_t> codificar_avif(const Bitmap& bmp, int calidad, int m
     }
     if (!bmp.icc.empty())
         avifImageSetProfileICC(imagen, bmp.icc.data(), bmp.icc.size());
+    if (!bmp.exif.empty())
+        avifImageSetMetadataExif(imagen, bmp.exif.data(), bmp.exif.size());
+    if (!bmp.xmp.empty())
+        avifImageSetMetadataXMP(imagen, bmp.xmp.data(), bmp.xmp.size());
     avifResult r = avifImageAllocatePlanes(
         imagen, alfa ? (AVIF_PLANES_YUV | AVIF_PLANES_A) : AVIF_PLANES_YUV);
     if (r != AVIF_RESULT_OK) {
@@ -1762,8 +1906,9 @@ struct Options {
     bool zip = false;
     bool beep = true;
     bool csv = false;
+    bool html = false;
     std::wstring salida;
-    std::wstring zip_nombre = L"imagenes_2.14.0-cpp.zip";
+    std::wstring zip_nombre = L"imagenes_2.15.0-cpp.zip";
     std::wstring patron;
     std::wstring formato = L"WEBP";
     bool dry_run = false;
@@ -1812,6 +1957,7 @@ static std::wstring serializar_opciones(const Options& o) {
       << L"|zip=" << (o.zip ? 1 : 0)
       << L"|beep=" << (o.beep ? 1 : 0)
       << L"|csv=" << (o.csv ? 1 : 0)
+      << L"|html=" << (o.html ? 1 : 0)
       << L"|dry=" << (o.dry_run ? 1 : 0)
       << L"|flatten=" << (o.flatten ? 1 : 0)
       << L"|color=" << (unsigned long)o.color
@@ -1881,6 +2027,7 @@ static Options deserializar_opciones(const std::wstring& texto) {
         else if (clave == L"zip") o.zip = _wtoi(valor.c_str()) != 0;
         else if (clave == L"beep") o.beep = _wtoi(valor.c_str()) != 0;
         else if (clave == L"csv") o.csv = _wtoi(valor.c_str()) != 0;
+        else if (clave == L"html") o.html = _wtoi(valor.c_str()) != 0;
         else if (clave == L"dry") o.dry_run = _wtoi(valor.c_str()) != 0;
         else if (clave == L"flatten") o.flatten = _wtoi(valor.c_str()) != 0;
         else if (clave == L"color") o.color = (COLORREF)wcstoul(valor.c_str(), nullptr, 10);
@@ -1971,6 +2118,7 @@ static HWND g_check_sobrescribir = nullptr;
 static HWND g_check_estructura = nullptr;
 static HWND g_check_zip = nullptr;
 static HWND g_check_csv = nullptr;
+static HWND g_check_html = nullptr;
 static HWND g_check_beep = nullptr;
 static bool g_ui_beep = true;
 static bool g_ui_apagar = false;
@@ -2328,7 +2476,7 @@ static std::wstring g_ini;
 enum {
     ID_ADD_FILES = 1001, ID_ADD_FOLDER, ID_REMOVE, ID_CLEAR,
     ID_OUTPUT, ID_BROWSE, ID_STRUCT, ID_OVERWRITE, ID_ZIP, ID_ZIPNAME,
-    ID_FORMAT, ID_CSV,
+    ID_FORMAT, ID_CSV, ID_HTML,
     ID_PRESET, ID_SAVE_PRESET, ID_DEL_PRESET, ID_CALITY, ID_METHOD,
     ID_LOSSLESS, ID_REENCODE, ID_DIM, ID_TARGET, ID_TARGET_EDIT,
     ID_START, ID_CANCEL, ID_OPEN, ID_BEEP,
@@ -3118,6 +3266,7 @@ static void cargar_config() {
     g_opt.zip = GetPrivateProfileIntW(L"opciones", L"zip", 1, g_ini.c_str()) != 0;
     g_opt.beep = GetPrivateProfileIntW(L"opciones", L"beep", 1, g_ini.c_str()) != 0;
     g_opt.csv = GetPrivateProfileIntW(L"opciones", L"csv", 0, g_ini.c_str()) != 0;
+    g_opt.html = GetPrivateProfileIntW(L"opciones", L"html", 0, g_ini.c_str()) != 0;
     g_opt.dry_run = GetPrivateProfileIntW(L"opciones", L"dry", 0, g_ini.c_str()) != 0;
     g_opt.flatten = GetPrivateProfileIntW(L"opciones", L"flatten", 0, g_ini.c_str()) != 0;
     g_opt.color = (COLORREF)GetPrivateProfileIntW(L"opciones", L"color", RGB(255, 255, 255), g_ini.c_str());
@@ -3213,6 +3362,7 @@ static void guardar_config() {
     WritePrivateProfileStringW(L"opciones", L"zip", g_opt.zip ? L"1" : L"0", destino.c_str());
     WritePrivateProfileStringW(L"opciones", L"beep", g_opt.beep ? L"1" : L"0", destino.c_str());
     WritePrivateProfileStringW(L"opciones", L"csv", g_opt.csv ? L"1" : L"0", destino.c_str());
+    WritePrivateProfileStringW(L"opciones", L"html", g_opt.html ? L"1" : L"0", destino.c_str());
     WritePrivateProfileStringW(L"opciones", L"dry", g_opt.dry_run ? L"1" : L"0", destino.c_str());
     WritePrivateProfileStringW(L"opciones", L"flatten", g_opt.flatten ? L"1" : L"0", destino.c_str());
     swprintf_s(buf, L"%lu", (unsigned long)g_opt.color);
@@ -3876,6 +4026,10 @@ static bool procesar_imagen(IWICImagingFactory* factory, const Tarea& t, const O
 
     Bitmap bmp;
     if (!decodificar_imagen(factory, t.src.wstring(), bmp, error)) return false;
+    if (!opt.preservar_fecha) {
+        bmp.exif.clear();
+        bmp.xmp.clear();
+    }
     std::wstring nota_anim;
     if (bmp.frames > 1)
         nota_anim = L"animada (" + std::to_wstring(bmp.frames) +
@@ -4281,6 +4435,41 @@ static void hilo_conversion(Options opt_trabajo, std::vector<std::wstring> orige
         emitir_log(L"Informe CSV: " + csv.wstring());
     }
 
+    if (opt_trabajo.html && !filas.empty()) {
+        std::error_code ec_html;
+        fs::create_directories(opt_trabajo.salida, ec_html);
+        std::wstring prefijo = opt_trabajo.dry_run ? L"analisis_" : L"informe_";
+        fs::path html = fs::path(opt_trabajo.salida) / (prefijo + fecha_archivo() + L".html");
+        std::ofstream f(html, std::ios::binary);
+        double ahorro_total = entrada > 0 ? (1.0 - salida / entrada) * 100.0 : 0.0;
+        f << "<!doctype html>\n<html lang=\"es\"><head><meta charset=\"utf-8\">\n"
+             "<title>Informe de Conversor WebP</title>\n<style>\n"
+             "body{font-family:Segoe UI,Arial,sans-serif;margin:24px;color:#1f2933}\n"
+             "h1{font-size:22px} table{border-collapse:collapse;width:100%;margin-top:16px}\n"
+             "th,td{border:1px solid #dde3ea;padding:6px 8px;font-size:13px;text-align:left}\n"
+             "th{background:#eef1f6} tr:nth-child(even){background:#fafbfd}\n"
+             ".resumen{background:#e8f0fe;padding:10px 14px;border-radius:6px}\n"
+             "</style></head><body>\n<h1>Conversor WebP · Informe de conversión</h1>\n"
+             "<p class=\"resumen\">";
+        f << "Convertidas: " << convertidas << " · Omitidas: " << omitidas
+          << " · Fallidas: " << fallidas << "<br>\n";
+        f << std::fixed << std::setprecision(1) << "Ahorro total: " << ahorro_total
+          << " %</p>\n<table><thead><tr><th>Archivo</th><th>Origen</th>"
+             "<th>KB original</th><th>KB resultado</th><th>Ahorro %</th>"
+             "<th>Estado</th><th>Nota</th></tr></thead>\n<tbody>\n";
+        for (auto& r : filas) {
+            f << "<tr><td>" << html_campo(a_utf8(r.archivo)) << "</td><td>"
+              << html_campo(a_utf8(r.origen)) << "</td><td>" << std::fixed
+              << std::setprecision(1) << r.kb_in << "</td><td>" << r.kb_out
+              << "</td><td>" << r.ahorro << "</td><td>"
+              << html_campo(a_utf8(r.estado)) << "</td><td>"
+              << html_campo(a_utf8(r.nota)) << "</td></tr>\n";
+        }
+        f << "</tbody></table>\n<p>Generado por Conversor WebP " << a_utf8(APP_VERSION)
+          << " · " << a_utf8(fecha_compacta()) << "</p>\n</body></html>\n";
+        emitir_log(L"Informe HTML: " + html.wstring());
+    }
+
     if (opt_trabajo.zip && !producidas.empty() && !g_cancelar) {
         std::wstring nombre = nombre_seguro(opt_trabajo.zip_nombre, L"webp.zip");
         if (lower(nombre).size() < 4 || lower(nombre).substr(lower(nombre).size() - 4) != L".zip")
@@ -4597,6 +4786,7 @@ static void aplicar_opciones_controles(const Options& o, bool incluir_salida) {
     if (g_check_sobrescribir) SendMessageW(g_check_sobrescribir, BM_SETCHECK, o.sobrescribir ? BST_CHECKED : BST_UNCHECKED, 0);
     if (g_check_zip) SendMessageW(g_check_zip, BM_SETCHECK, o.zip ? BST_CHECKED : BST_UNCHECKED, 0);
     if (g_check_csv) SendMessageW(g_check_csv, BM_SETCHECK, o.csv ? BST_CHECKED : BST_UNCHECKED, 0);
+    if (g_check_html) SendMessageW(g_check_html, BM_SETCHECK, o.html ? BST_CHECKED : BST_UNCHECKED, 0);
     g_ui_beep = o.beep;
     if (g_check_beep) InvalidateRect(g_check_beep, nullptr, TRUE);
     if (g_check_dry) SendMessageW(g_check_dry, BM_SETCHECK, o.dry_run ? BST_CHECKED : BST_UNCHECKED, 0);
@@ -4648,6 +4838,7 @@ static Options leer_opciones_controles() {
     if (g_check_sobrescribir) o.sobrescribir = SendMessageW(g_check_sobrescribir, BM_GETCHECK, 0, 0) == BST_CHECKED;
     if (g_check_zip) o.zip = SendMessageW(g_check_zip, BM_GETCHECK, 0, 0) == BST_CHECKED;
     if (g_check_csv) o.csv = SendMessageW(g_check_csv, BM_GETCHECK, 0, 0) == BST_CHECKED;
+    if (g_check_html) o.html = SendMessageW(g_check_html, BM_GETCHECK, 0, 0) == BST_CHECKED;
     o.beep = g_ui_beep;
     if (g_check_dry) o.dry_run = SendMessageW(g_check_dry, BM_GETCHECK, 0, 0) == BST_CHECKED;
     if (g_check_fecha) o.preservar_fecha = SendMessageW(g_check_fecha, BM_GETCHECK, 0, 0) == BST_CHECKED;
@@ -5546,6 +5737,7 @@ static void cargar_config_a_controles() {
     if (g_check_sobrescribir) SendMessageW(g_check_sobrescribir, BM_SETCHECK, g_opt.sobrescribir ? BST_CHECKED : BST_UNCHECKED, 0);
     if (g_check_zip) SendMessageW(g_check_zip, BM_SETCHECK, g_opt.zip ? BST_CHECKED : BST_UNCHECKED, 0);
     if (g_check_csv) SendMessageW(g_check_csv, BM_SETCHECK, g_opt.csv ? BST_CHECKED : BST_UNCHECKED, 0);
+    if (g_check_html) SendMessageW(g_check_html, BM_SETCHECK, g_opt.html ? BST_CHECKED : BST_UNCHECKED, 0);
     g_ui_beep = g_opt.beep;
     if (g_check_beep) InvalidateRect(g_check_beep, nullptr, TRUE);
     if (g_edit_objetivo) {
@@ -6134,9 +6326,10 @@ static void crear_tooltips() {
     add(g_combo_formato, L"Formato de salida de imágenes: WebP o AVIF. Los vídeos se convierten a WebM.");
     add(g_btn_video, L"Resolución, tasa de bits, CRF, audio, FPS, contenido y reducción de ruido para vídeos.");
     add(g_check_csv, L"Guarda un CSV con el peso original, final y el ahorro de cada archivo.");
+    add(g_check_html, L"Guarda un informe HTML con la tabla de resultados y el ahorro.");
     add(g_edit_patron, L"Patrón de nombre. Vacío conserva el original. Ej.: {nombre}_{ancho}x{alto}.");
     add(g_check_dry, L"Calcula el peso estimado sin escribir ningún archivo.");
-    add(g_check_fecha, L"Conserva la fecha de modificación original en el archivo convertido.");
+    add(g_check_fecha, L"Conserva EXIF/XMP y la fecha original en los archivos convertidos.");
     add(g_combo_preset, L"Aplica una combinación guardada de calidad y tamaño.");
     add(g_btn_save_preset, L"Guarda los ajustes actuales como preset propio.");
     add(g_btn_del_preset, L"Borra el preset propio seleccionado.");
@@ -6523,8 +6716,8 @@ static void reubicar_controles(int cw, int ch) {
     mover(g_edit_salida, 28, 338, leftR - 132, 26);
     mover(ctl(ID_BROWSE), leftR - 96, 338, 76, 26);
     mover(g_edit_zip, 240, 433, leftR - 262, 24);
-    mover(g_edit_patron, 124, 522, leftR - 172, 24);
-    mover(g_btn_pattern_help, leftR - 42, 520, 30, 24);
+    mover(g_edit_patron, 124, 548, leftR - 172, 24);
+    mover(g_btn_pattern_help, leftR - 42, 546, 30, 24);
 
     // 3. Calidad y opciones
     mover(ctl(1200), cardL + 13, 313, 300, 20);
@@ -7084,7 +7277,7 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
 
             // Cabecera
             etiqueta(L"Conversor WebP", 16, 17, 300, 30, 1400, g_font_title);
-            etiqueta(L"v2.14.0", 200, 29, 120, 18, 1401, g_font_muted);
+            etiqueta(L"v2.15.0", 200, 29, 120, 18, 1401, g_font_muted);
             etiqueta(L"JPG · PNG · BMP · TIFF · GIF · ICO  →  WebP / AVIF", 560, 23, 390, 20,
                      1402, g_font_muted, SS_RIGHT);
             boton(L"", 958, 20, 26, 26, ID_TEMA, BS_OWNERDRAW);
@@ -7140,15 +7333,17 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             SendMessageW(g_combo_formato, CB_SETCURSEL,
                          g_opt.formato == L"AVIF" ? 1 : 0, 0);
             g_btn_video = boton(L"Video: original · CRF auto", 224, 461, 260, 26, ID_VIDEO_OPTS);
-            g_check_csv = check(L"Guardar informe CSV en la carpeta de salida", 28, 497, 430, 20,
+            g_check_csv = check(L"Informe CSV", 28, 497, 110, 20,
                                 ID_CSV, g_opt.csv);
-            etiqueta(L"Nombre de salida", 28, 524, 100, 20, 1103);
-            g_edit_patron = edit(124, 522, 320, 24, ID_PATRON, g_opt.patron.c_str());
-            g_btn_pattern_help = boton(L"?", 450, 520, 30, 24, ID_PATTERN_HELP);
-            g_check_dry = check(L"Solo analizar (no escribir archivos)", 28, 587, 300, 20,
+            g_check_html = check(L"Informe HTML", 146, 497, 120, 20,
+                                 ID_HTML, g_opt.html);
+            g_check_fecha = check(L"Conservar metadatos (EXIF/XMP) y fecha original",
+                                  28, 524, 430, 20, ID_FECHA, g_opt.preservar_fecha);
+            etiqueta(L"Nombre de salida", 28, 550, 100, 20, 1103);
+            g_edit_patron = edit(124, 548, 320, 24, ID_PATRON, g_opt.patron.c_str());
+            g_btn_pattern_help = boton(L"?", 450, 546, 30, 24, ID_PATTERN_HELP);
+            g_check_dry = check(L"Solo analizar (no escribir archivos)", 28, 580, 300, 20,
                                 ID_DRY, g_opt.dry_run);
-            g_check_fecha = check(L"Conservar fecha original", 28, 564, 300, 20,
-                                  ID_FECHA, g_opt.preservar_fecha);
 
             // 3. Calidad
             etiqueta(L"3. Calidad y opciones", 513, 313, 300, 20, 1200, g_font_section);
@@ -8241,6 +8436,7 @@ static int ejecutar_cli(const std::vector<std::wstring>& args) {
             wprintf(L"  --bg #RRGGBB      color de fondo al aplanar (ffffff)\n");
             wprintf(L"  --zip NOMBRE      crear ZIP\n");
             wprintf(L"  --csv             guardar informe CSV\n");
+            wprintf(L"  --html            guardar informe HTML\n");
             wprintf(L"  --no-overwrite    omitir existentes\n");
             wprintf(L"  --no-recursive    no mantener subcarpetas\n");
             wprintf(L"  --shutdown        apagar el equipo al terminar correctamente\n");
@@ -8249,7 +8445,7 @@ static int ejecutar_cli(const std::vector<std::wstring>& args) {
             wprintf(L"  --quiet           ocultar el progreso por archivo\n");
             wprintf(L"  --jobs N          maximo de conversiones en paralelo\n");
             wprintf(L"  --preset NOMBRE   aplicar un preset incluido\n");
-            wprintf(L"  --keep-date       conservar la fecha original\n\n");
+            wprintf(L"  --keep-metadata   conservar EXIF/XMP y la fecha original\n\n");
             return 0;
         }
         if (a == L"-o" || a == L"--output") sig(opt.salida);
@@ -8309,12 +8505,13 @@ static int ejecutar_cli(const std::vector<std::wstring>& args) {
         }
         else if (a == L"--zip") { std::wstring v; sig(v); opt.zip = true; opt.zip_nombre = v; }
         else if (a == L"--csv") opt.csv = true;
+        else if (a == L"--html") opt.html = true;
         else if (a == L"--no-overwrite") opt.sobrescribir = false;
         else if (a == L"--no-recursive") opt.mantener = false;
         else if (a == L"--shutdown") opt.apagar = true;
         else if (a == L"--json") json = true;
         else if (a == L"--quiet") quiet = true;
-        else if (a == L"--keep-date") opt.preservar_fecha = true;
+        else if (a == L"--keep-date" || a == L"--keep-metadata") opt.preservar_fecha = true;
         else if (a == L"--jobs") {
             std::wstring v;
             sig(v);
@@ -8501,7 +8698,7 @@ int wmain(int argc, wchar_t** argv) {
     wc.hIconSm = icono_pequeno;
     RegisterClassExW(&wc);
 
-    g_hwnd = CreateWindowExW(0, wc.lpszClassName, L"Conversor WebP 2.14.0",
+    g_hwnd = CreateWindowExW(0, wc.lpszClassName, L"Conversor WebP 2.15.0",
                              WS_OVERLAPPEDWINDOW,
                              CW_USEDEFAULT, CW_USEDEFAULT, dpx(1016), dpx(900), nullptr, nullptr, inst, nullptr);
     if (!g_hwnd) return 1;
