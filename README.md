@@ -11,7 +11,7 @@
 </p>
 
 <p align="center">
-  <img alt="Versión" src="https://img.shields.io/badge/version-2.13.0-1a73e8">
+  <img alt="Versión" src="https://img.shields.io/badge/version-2.14.0-1a73e8">
   <img alt="Windows" src="https://img.shields.io/badge/Windows-10%20%7C%2011-0078D6">
   <img alt="Python" src="https://img.shields.io/badge/Python-3.12-3776AB">
   <img alt="Pillow" src="https://img.shields.io/badge/Pillow-13-11557C">
@@ -359,6 +359,18 @@ El botón **Vídeo: …** (junto a «Formato de salida») abre las opciones avan
 El escalado usa **Lanczos de alta calidad** y fuerza dimensiones pares para `yuv420p`. Si la resolución
 es **Original**, se sigue aplicando el «Lado máximo» de la sección de calidad cuando esté configurado.
 
+### Presets de vídeo
+
+| Preset | Resolución | CRF | Audio | FPS |
+|---|---|---|---|---|
+| **Baja** | 480p | 36 | 64 kbps | 30 |
+| **Media** | 720p | 32 | 96 kbps | 30 |
+| **Alta** | 1080p | 26 | 128 kbps | Original |
+| **Personalizada** | Lo que elijas | 15–50 | 0–192 kbps | 0–60 |
+
+El preset **Media** es la combinación solicitada: **720p + CRF 32 (dentro de 30–33) + audio 96 kbps + FPS 30**.
+Al tocar cualquier control después de elegir un preset, el selector pasa automáticamente a **Personalizada**.
+
 ---
 
 ## Tamaño y peso de las imágenes
@@ -670,6 +682,7 @@ ConversorWebP/
 
 Consulta [CHANGELOG.md](CHANGELOG.md). Resumen:
 
+- **2.14.0** — presets de vídeo Baja, Media, Alta y Personalizada.
 - **2.13.0** — opciones avanzadas de vídeo: resolución, CRF/VBR, bitrate, audio, FPS, contenido y denoise.
 - **2.12.0** — FFmpeg y ffprobe incluidos en el portable y el instalador de Python y C++.
 - **2.11.0** — conversión de vídeo a WebM (VP9 + Opus) con FFmpeg, en lotes mixtos.

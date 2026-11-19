@@ -1,4 +1,4 @@
-CONVERSOR WEBP 2.13.0
+CONVERSOR WEBP 2.14.0
 ====================
 
 Aplicacion para convertir imagenes (JPG, PNG, BMP, TIFF, GIF, ICO...) a
@@ -48,7 +48,7 @@ COMO USARLA
    En la columna izquierda:
    - Formato de salida: WebP (por defecto) o AVIF. Los videos se convierten a WebM.
 - Opciones de video: boton "Video: ..." para resolucion, CRF/VBR, bitrate,
-  audio, FPS, contenido y reduccion de ruido.
+  audio, FPS, contenido y reduccion de ruido. Presets Baja, Media y Alta.
    - Guardar informe CSV: deja un CSV con peso original, final y ahorro.
    - Nombre de salida: patron con {nombre}, {ancho}, {alto}, {hash}, {fecha},
      {formato} y {calidad}. Vacio conserva el nombre original.

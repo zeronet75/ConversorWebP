@@ -18,6 +18,24 @@ FFPROBE = cw.find_ffprobe()
 FLAGS = subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0
 
 
+class TestPresetsVideo(unittest.TestCase):
+    def test_media_solicitada(self):
+        media = cw.VIDEO_PRESETS["Media"]
+        self.assertEqual(media["height"], 720)
+        self.assertGreaterEqual(media["crf"], 30)
+        self.assertLessEqual(media["crf"], 33)
+        self.assertEqual(media["audio"], 96)
+        self.assertEqual(media["fps"], 30)
+
+    def test_presets_validos(self):
+        for nombre in ("Baja", "Media", "Alta"):
+            datos = cw.VIDEO_PRESETS[nombre]
+            self.assertIn(datos["height"], {360, 480, 720, 1080, 1440, 2160})
+            self.assertGreaterEqual(datos["crf"], 15)
+            self.assertLessEqual(datos["crf"], 50)
+            self.assertIn(datos["audio"], {0, 64, 96, 128, 192})
+
+
 @unittest.skipUnless(FFMPEG and FFPROBE, "FFmpeg/ffprobe no disponibles")
 class TestVideo(unittest.TestCase):
     def setUp(self):

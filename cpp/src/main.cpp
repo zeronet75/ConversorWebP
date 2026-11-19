@@ -80,7 +80,7 @@ using Microsoft::WRL::ComPtr;
 namespace fs = std::filesystem;
 
 static const wchar_t* APP_NAME = L"Conversor WebP";
-static const wchar_t* APP_VERSION = L"2.13.0";
+static const wchar_t* APP_VERSION = L"2.14.0";
 
 // ---------------------------------------------------------------------------
 //  Utilidades generales
@@ -1763,7 +1763,7 @@ struct Options {
     bool beep = true;
     bool csv = false;
     std::wstring salida;
-    std::wstring zip_nombre = L"imagenes_2.13.0-cpp.zip";
+    std::wstring zip_nombre = L"imagenes_2.14.0-cpp.zip";
     std::wstring patron;
     std::wstring formato = L"WEBP";
     bool dry_run = false;
@@ -1990,6 +1990,18 @@ static HWND g_combo_preset = nullptr;
 static HWND g_combo_formato = nullptr;
 static HWND g_btn_video = nullptr;
 static void actualizar_boton_video();
+
+static const int ID_VIDEO_RES = 7001;
+static const int ID_VIDEO_MODE = 7002;
+static const int ID_VIDEO_AUTO = 7003;
+static const int ID_VIDEO_CRF = 7004;
+static const int ID_VIDEO_BITRATE = 7005;
+static const int ID_VIDEO_AUDIO = 7006;
+static const int ID_VIDEO_FPS = 7007;
+static const int ID_VIDEO_TUNE = 7008;
+static const int ID_VIDEO_DENOISE = 7009;
+static const int ID_VIDEO_PRESET = 7010;
+static const int ID_VIDEO_RESET = 7011;
 static HWND g_btn_save_preset = nullptr;
 static HWND g_btn_del_preset = nullptr;
 static HWND g_btn_archive = nullptr;
@@ -4820,7 +4832,8 @@ static LRESULT CALLBACK InputWndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) 
             return (LRESULT)g_brush_input;
         case WM_DRAWITEM: {
             DRAWITEMSTRUCT* di = (DRAWITEMSTRUCT*)lp;
-            if (di && (di->CtlID == IDOK || di->CtlID == IDCANCEL)) {
+            if (di && (di->CtlID == IDOK || di->CtlID == IDCANCEL ||
+                       di->CtlID == ID_VIDEO_RESET)) {
                 dibujar_boton_tema(di);
                 return TRUE;
             }
@@ -5081,7 +5094,8 @@ static LRESULT CALLBACK ApagadoWndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp
             return (LRESULT)g_brush_bg;
         case WM_DRAWITEM: {
             DRAWITEMSTRUCT* di = (DRAWITEMSTRUCT*)lp;
-            if (di && (di->CtlID == IDOK || di->CtlID == IDCANCEL)) {
+            if (di && (di->CtlID == IDOK || di->CtlID == IDCANCEL ||
+                       di->CtlID == ID_VIDEO_RESET)) {
                 dibujar_boton_tema(di);
                 return TRUE;
             }
@@ -5676,16 +5690,6 @@ static void actualizar_tooltip() {
     }
 }
 
-static const int ID_VIDEO_RES = 7001;
-static const int ID_VIDEO_MODE = 7002;
-static const int ID_VIDEO_AUTO = 7003;
-static const int ID_VIDEO_CRF = 7004;
-static const int ID_VIDEO_BITRATE = 7005;
-static const int ID_VIDEO_AUDIO = 7006;
-static const int ID_VIDEO_FPS = 7007;
-static const int ID_VIDEO_TUNE = 7008;
-static const int ID_VIDEO_DENOISE = 7009;
-
 static HWND g_video_dlg = nullptr;
 static HWND g_video_res = nullptr;
 static HWND g_video_mode = nullptr;
@@ -5696,6 +5700,21 @@ static HWND g_video_audio = nullptr;
 static HWND g_video_fps = nullptr;
 static HWND g_video_tune = nullptr;
 static HWND g_video_denoise = nullptr;
+static HWND g_video_preset = nullptr;
+static bool g_video_aplicando_preset = false;
+
+struct PresetVideo {
+    const wchar_t* nombre;
+    int altura;
+    int crf;
+    int audio;
+    int fps;
+};
+static const PresetVideo kPresetsVideo[] = {
+    {L"Baja", 480, 36, 64, 30},
+    {L"Media", 720, 32, 96, 30},
+    {L"Alta", 1080, 26, 128, 0},
+};
 
 static void actualizar_estado_video() {
     if (!g_video_mode) return;
@@ -5704,6 +5723,69 @@ static void actualizar_estado_video() {
     EnableWindow(g_video_bitrate, vbr);
     EnableWindow(g_video_crf, !vbr && !auto_crf);
     EnableWindow(g_video_auto, !vbr);
+}
+
+static void marcar_preset_personalizado() {
+    if (g_video_aplicando_preset || !g_video_preset) return;
+    SendMessageW(g_video_preset, CB_SETCURSEL, 0, 0);
+}
+
+static void aplicar_preset_video(int indice) {
+    if (indice < 1 || indice > 3 || !g_video_res) return;
+    const PresetVideo& p = kPresetsVideo[indice - 1];
+    g_video_aplicando_preset = true;
+    static const int alturas[] = {0, 2160, 1440, 1080, 720, 480, 360};
+    static const int audios[] = {0, 64, 96, 128, 192};
+    static const int fps[] = {0, 60, 30, 24, 15};
+    int ir = 0, ia = 2, iffps = 0;
+    for (int i = 0; i < 7; i++) if (alturas[i] == p.altura) ir = i;
+    for (int i = 0; i < 5; i++) if (audios[i] == p.audio) ia = i;
+    for (int i = 0; i < 5; i++) if (fps[i] == p.fps) iffps = i;
+    SendMessageW(g_video_res, CB_SETCURSEL, ir, 0);
+    SendMessageW(g_video_mode, CB_SETCURSEL, 0, 0);
+    SendMessageW(g_video_auto, BM_SETCHECK, BST_UNCHECKED, 0);
+    wchar_t buf[16];
+    swprintf_s(buf, L"%d", p.crf);
+    SetWindowTextW(g_video_crf, buf);
+    SetWindowTextW(g_video_bitrate, L"2500");
+    SendMessageW(g_video_audio, CB_SETCURSEL, ia, 0);
+    SendMessageW(g_video_fps, CB_SETCURSEL, iffps, 0);
+    SendMessageW(g_video_tune, CB_SETCURSEL, 0, 0);
+    SendMessageW(g_video_denoise, BM_SETCHECK, BST_UNCHECKED, 0);
+    g_video_aplicando_preset = false;
+    actualizar_estado_video();
+}
+
+static void detectar_preset_video() {
+    int indice = 0;
+    for (int i = 0; i < 3; i++) {
+        const PresetVideo& p = kPresetsVideo[i];
+        if (g_opt.video_mode == L"CRF" && g_opt.video_crf == p.crf &&
+            g_opt.video_height == p.altura && g_opt.video_audio == p.audio &&
+            g_opt.video_fps == p.fps && g_opt.video_tune == L"default" &&
+            !g_opt.video_denoise) {
+            indice = i + 1;
+            break;
+        }
+    }
+    SendMessageW(g_video_preset, CB_SETCURSEL, indice, 0);
+}
+
+static void restablecer_video_dialogo() {
+    if (!g_video_res) return;
+    g_video_aplicando_preset = true;
+    SendMessageW(g_video_res, CB_SETCURSEL, 0, 0);
+    SendMessageW(g_video_mode, CB_SETCURSEL, 0, 0);
+    SendMessageW(g_video_auto, BM_SETCHECK, BST_CHECKED, 0);
+    SetWindowTextW(g_video_crf, L"30");
+    SetWindowTextW(g_video_bitrate, L"2500");
+    SendMessageW(g_video_audio, CB_SETCURSEL, 2, 0);
+    SendMessageW(g_video_fps, CB_SETCURSEL, 0, 0);
+    SendMessageW(g_video_tune, CB_SETCURSEL, 0, 0);
+    SendMessageW(g_video_denoise, BM_SETCHECK, BST_UNCHECKED, 0);
+    SendMessageW(g_video_preset, CB_SETCURSEL, 0, 0);
+    g_video_aplicando_preset = false;
+    actualizar_estado_video();
 }
 
 static void leer_video_dialogo() {
@@ -5765,36 +5847,42 @@ static LRESULT CALLBACK VideoWndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) 
                   L"El escalado usa Lanczos de alta calidad.",
                   18, 12, 520, 34);
 
-            texto(L"Resolución", 18, 52, 90, 18);
-            g_video_res = combo(ID_VIDEO_RES, 112, 50, 150);
-            texto(L"Calidad", 280, 52, 70, 18);
-            g_video_mode = combo(ID_VIDEO_MODE, 360, 50, 180);
+            texto(L"Preset de vídeo", 18, 52, 90, 18);
+            g_video_preset = combo(ID_VIDEO_PRESET, 112, 50, 180);
+            SendMessageW(g_video_preset, CB_ADDSTRING, 0, (LPARAM)L"Personalizada");
+            for (int i = 0; i < 3; i++)
+                SendMessageW(g_video_preset, CB_ADDSTRING, 0, (LPARAM)kPresetsVideo[i].nombre);
+
+            texto(L"Resolución", 18, 86, 90, 18);
+            g_video_res = combo(ID_VIDEO_RES, 112, 84, 150);
+            texto(L"Calidad", 280, 86, 70, 18);
+            g_video_mode = combo(ID_VIDEO_MODE, 360, 84, 180);
 
             g_video_auto = CreateWindowExW(0, L"BUTTON",
                                            L"CRF automático (usa la calidad global)",
                                            WS_CHILD | WS_VISIBLE | WS_TABSTOP |
                                                BS_AUTOCHECKBOX,
-                                           dpx(18), dpx(86), dpx(300), dpx(20), hwnd,
+                                           dpx(18), dpx(120), dpx(300), dpx(20), hwnd,
                                            (HMENU)(INT_PTR)ID_VIDEO_AUTO, inst, nullptr);
             SendMessageW(g_video_auto, WM_SETFONT, (WPARAM)g_font, TRUE);
 
-            texto(L"CRF", 18, 116, 46, 18);
-            g_video_crf = edit(ID_VIDEO_CRF, 64, 112, 60);
-            texto(L"Bitrate (kbps)", 200, 116, 100, 18);
-            g_video_bitrate = edit(ID_VIDEO_BITRATE, 304, 112, 80);
-            texto(L"kbps", 390, 116, 50, 18);
+            texto(L"CRF", 18, 150, 46, 18);
+            g_video_crf = edit(ID_VIDEO_CRF, 64, 146, 60);
+            texto(L"Bitrate (kbps)", 200, 150, 100, 18);
+            g_video_bitrate = edit(ID_VIDEO_BITRATE, 304, 146, 80);
+            texto(L"kbps", 390, 150, 50, 18);
 
-            texto(L"Audio", 18, 150, 60, 18);
-            g_video_audio = combo(ID_VIDEO_AUDIO, 82, 148, 110);
-            texto(L"FPS máximo", 280, 150, 80, 18);
-            g_video_fps = combo(ID_VIDEO_FPS, 364, 148, 100);
+            texto(L"Audio", 18, 184, 60, 18);
+            g_video_audio = combo(ID_VIDEO_AUDIO, 82, 182, 110);
+            texto(L"FPS máximo", 280, 184, 80, 18);
+            g_video_fps = combo(ID_VIDEO_FPS, 364, 182, 100);
 
-            texto(L"Contenido", 18, 184, 80, 18);
-            g_video_tune = combo(ID_VIDEO_TUNE, 102, 182, 120);
+            texto(L"Contenido", 18, 218, 80, 18);
+            g_video_tune = combo(ID_VIDEO_TUNE, 102, 216, 120);
             g_video_denoise = CreateWindowExW(0, L"BUTTON", L"Reducir ruido (hqdn3d)",
                                               WS_CHILD | WS_VISIBLE | WS_TABSTOP |
                                                   BS_AUTOCHECKBOX,
-                                              dpx(280), dpx(184), dpx(220), dpx(20),
+                                              dpx(280), dpx(218), dpx(220), dpx(20),
                                               hwnd, (HMENU)(INT_PTR)ID_VIDEO_DENOISE,
                                               inst, nullptr);
             SendMessageW(g_video_denoise, WM_SETFONT, (WPARAM)g_font, TRUE);
@@ -5855,18 +5943,25 @@ static LRESULT CALLBACK VideoWndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) 
             SendMessageW(g_video_denoise, BM_SETCHECK,
                          g_opt.video_denoise ? BST_CHECKED : BST_UNCHECKED, 0);
 
+            HWND restablecer = CreateWindowExW(0, L"BUTTON", L"Restablecer",
+                                               WS_CHILD | WS_VISIBLE | WS_TABSTOP |
+                                                   BS_OWNERDRAW,
+                                               dpx(230), dpx(260), dpx(90), dpx(28), hwnd,
+                                               (HMENU)(INT_PTR)ID_VIDEO_RESET, inst, nullptr);
             HWND cancelar = CreateWindowExW(0, L"BUTTON", L"Cancelar",
                                             WS_CHILD | WS_VISIBLE | WS_TABSTOP |
                                                 BS_OWNERDRAW,
-                                            dpx(330), dpx(222), dpx(90), dpx(28), hwnd,
+                                            dpx(330), dpx(260), dpx(90), dpx(28), hwnd,
                                             (HMENU)IDCANCEL, inst, nullptr);
             HWND aceptar = CreateWindowExW(0, L"BUTTON", L"Aceptar",
                                            WS_CHILD | WS_VISIBLE | WS_TABSTOP |
                                                BS_OWNERDRAW,
-                                           dpx(430), dpx(222), dpx(90), dpx(28), hwnd,
+                                           dpx(430), dpx(260), dpx(90), dpx(28), hwnd,
                                            (HMENU)IDOK, inst, nullptr);
+            SendMessageW(restablecer, WM_SETFONT, (WPARAM)g_font, TRUE);
             SendMessageW(cancelar, WM_SETFONT, (WPARAM)g_font, TRUE);
             SendMessageW(aceptar, WM_SETFONT, (WPARAM)g_font, TRUE);
+            detectar_preset_video();
             actualizar_estado_video();
             return 0;
         }
@@ -5890,7 +5985,8 @@ static LRESULT CALLBACK VideoWndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) 
             return (LRESULT)g_brush_input;
         case WM_DRAWITEM: {
             DRAWITEMSTRUCT* di = (DRAWITEMSTRUCT*)lp;
-            if (di && (di->CtlID == IDOK || di->CtlID == IDCANCEL)) {
+            if (di && (di->CtlID == IDOK || di->CtlID == IDCANCEL ||
+                       di->CtlID == ID_VIDEO_RESET)) {
                 dibujar_boton_tema(di);
                 return TRUE;
             }
@@ -5898,12 +5994,30 @@ static LRESULT CALLBACK VideoWndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) 
         }
         case WM_COMMAND: {
             int id = LOWORD(wp);
-            if (HIWORD(wp) == CBN_SELCHANGE && id == ID_VIDEO_MODE) {
-                actualizar_estado_video();
+            int codigo = HIWORD(wp);
+            if (codigo == CBN_SELCHANGE && id == ID_VIDEO_PRESET) {
+                int sel = (int)SendMessageW(g_video_preset, CB_GETCURSEL, 0, 0);
+                aplicar_preset_video(sel);
                 return 0;
             }
-            if (HIWORD(wp) == BN_CLICKED && id == ID_VIDEO_AUTO) {
+            if (codigo == CBN_SELCHANGE && id == ID_VIDEO_MODE) {
                 actualizar_estado_video();
+                marcar_preset_personalizado();
+                return 0;
+            }
+            if (codigo == CBN_SELCHANGE &&
+                (id == ID_VIDEO_RES || id == ID_VIDEO_AUDIO || id == ID_VIDEO_FPS ||
+                 id == ID_VIDEO_TUNE)) {
+                marcar_preset_personalizado();
+                return 0;
+            }
+            if (codigo == BN_CLICKED && (id == ID_VIDEO_AUTO || id == ID_VIDEO_DENOISE)) {
+                actualizar_estado_video();
+                marcar_preset_personalizado();
+                return 0;
+            }
+            if (codigo == EN_CHANGE && (id == ID_VIDEO_CRF || id == ID_VIDEO_BITRATE)) {
+                marcar_preset_personalizado();
                 return 0;
             }
             if (id == IDOK) {
@@ -5911,6 +6025,8 @@ static LRESULT CALLBACK VideoWndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) 
                 DestroyWindow(hwnd);
             } else if (id == IDCANCEL) {
                 DestroyWindow(hwnd);
+            } else if (id == ID_VIDEO_RESET) {
+                restablecer_video_dialogo();
             }
             return 0;
         }
@@ -5943,7 +6059,7 @@ static void mostrar_dialogo_video(HWND parent) {
     }
     RECT pr{};
     GetWindowRect(parent, &pr);
-    int ancho = dpx(560), alto = dpx(305);
+    int ancho = dpx(560), alto = dpx(350);
     int x = pr.left + ((pr.right - pr.left) - ancho) / 2;
     int y = pr.top + ((pr.bottom - pr.top) - alto) / 2;
     g_video_dlg = CreateWindowExW(WS_EX_DLGMODALFRAME, L"ConversorVideoWnd",
@@ -6501,7 +6617,7 @@ static std::vector<BloqueAcerca> bloques_acerca() {
     li(L"Lado máximo: reduce a 2560, 1920, 1600, 1200, 800 o 512 px sin ampliar las pequeñas.");
     li(L"Peso máximo: ajusta la calidad automáticamente para no superar los KB indicados.");
     li(L"Formato de salida de imágenes: WebP o AVIF (AVIF suele pesar menos). Los vídeos se convierten a WebM.");
-    li(L"Vídeo: resolución, CRF o bitrate, audio Opus, FPS, contenido y reducción de ruido.");
+    li(L"Vídeo: resolución, CRF o bitrate, audio Opus, FPS, contenido y reducción de ruido. Presets Baja, Media y Alta.");
     li(L"Informe CSV: deja en la carpeta de salida una tabla con peso original, final y ahorro.");
     li(L"Aviso sonoro al terminar: tono agudo si todo fue bien, grave si hubo errores.");
     li(L"Apagar al terminar: apaga el equipo tras una conversión correcta, con cuenta atrás cancelable.");
@@ -6968,7 +7084,7 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
 
             // Cabecera
             etiqueta(L"Conversor WebP", 16, 17, 300, 30, 1400, g_font_title);
-            etiqueta(L"v2.13.0", 200, 29, 120, 18, 1401, g_font_muted);
+            etiqueta(L"v2.14.0", 200, 29, 120, 18, 1401, g_font_muted);
             etiqueta(L"JPG · PNG · BMP · TIFF · GIF · ICO  →  WebP / AVIF", 560, 23, 390, 20,
                      1402, g_font_muted, SS_RIGHT);
             boton(L"", 958, 20, 26, 26, ID_TEMA, BS_OWNERDRAW);
@@ -8385,7 +8501,7 @@ int wmain(int argc, wchar_t** argv) {
     wc.hIconSm = icono_pequeno;
     RegisterClassExW(&wc);
 
-    g_hwnd = CreateWindowExW(0, wc.lpszClassName, L"Conversor WebP 2.13.0",
+    g_hwnd = CreateWindowExW(0, wc.lpszClassName, L"Conversor WebP 2.14.0",
                              WS_OVERLAPPEDWINDOW,
                              CW_USEDEFAULT, CW_USEDEFAULT, dpx(1016), dpx(900), nullptr, nullptr, inst, nullptr);
     if (!g_hwnd) return 1;

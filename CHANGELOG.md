@@ -6,6 +6,27 @@ Todos los cambios relevantes del proyecto. Formato basado en
 
 ---
 
+## [2.14.0] — 2026-11-19
+
+### Añadido
+
+- **Presets de vídeo** en el diálogo de opciones, en Python y C++:
+  - **Baja:** 480p, CRF 36, audio 64 kbps, 30 fps.
+  - **Media:** 720p, CRF 32 (dentro de 30–33), audio 96 kbps, 30 fps.
+  - **Alta:** 1080p, CRF 26, audio 128 kbps, FPS original.
+  - **Personalizada:** mantiene los parámetros manuales.
+- Al cambiar cualquier control después de elegir un preset, el selector pasa solo a **Personalizada**.
+- El preset se detecta al volver a abrir el diálogo si los valores coinciden.
+- Botón **Restablecer** también en el diálogo C++.
+- Los presets se aplican a los mismos parámetros ya existentes: resolución, CRF/VBR, bitrate, audio, FPS, contenido y denoise.
+
+### Pruebas
+
+- 32 pruebas Python superadas, incluidas las que validan los valores de los presets.
+- C++ probado seleccionando **Media** y comprobando `720p`, `CRF 32`, `96 kbps` y `30 fps` en `config.ini`.
+
+---
+
 ## [2.13.0] — 2026-11-18
 
 ### Añadido
@@ -444,6 +465,7 @@ Todos los cambios relevantes del proyecto. Formato basado en
 - Conservación de transparencia, perfil ICC y orientación EXIF.
 - Modo consola básico.
 
+[2.14.0]: #2140--2026-11-19
 [2.13.0]: #2130--2026-11-18
 [2.12.0]: #2120--2026-11-18
 [2.11.0]: #2110--2026-11-18

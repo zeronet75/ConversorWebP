@@ -78,7 +78,7 @@ except Exception:  # pragma: no cover - la app sigue funcionando sin arrastrar
 
 
 APP_NAME = "Conversor WebP"
-APP_VERSION = "2.13.0"
+APP_VERSION = "2.14.0"
 
 try:  # soporte HEIC/HEIF (iPhone) si pillow-heif esta instalado
     import pillow_heif
@@ -112,6 +112,20 @@ VIDEO_AUDIO = [("Sin audio", 0), ("64 kbps", 64), ("96 kbps", 96), ("128 kbps", 
 VIDEO_FPS = [("Original", 0), ("60 fps", 60), ("30 fps", 30), ("24 fps", 24), ("15 fps", 15)]
 VIDEO_TUNE = [("Normal", "default"), ("Pantalla", "screen"), ("Película", "film")]
 VIDEO_MODOS = [("CRF (calidad constante)", "CRF"), ("Tasa de bits (VBR)", "VBR")]
+VIDEO_PRESETS = {
+    "Baja": {
+        "height": 480, "mode": "CRF", "crf": 36, "bitrate": 0,
+        "audio": 64, "fps": 30, "tune": "default", "denoise": False,
+    },
+    "Media": {
+        "height": 720, "mode": "CRF", "crf": 32, "bitrate": 0,
+        "audio": 96, "fps": 30, "tune": "default", "denoise": False,
+    },
+    "Alta": {
+        "height": 1080, "mode": "CRF", "crf": 26, "bitrate": 0,
+        "audio": 128, "fps": 0, "tune": "default", "denoise": False,
+    },
+}
 ARCHIVE_EXTS = {".zip", ".rar", ".7z"}
 MAX_EXTRACCION_BYTES = 4 * 1024**3
 MAX_EXTRACCION_ARCHIVOS = 200_000
@@ -2057,7 +2071,7 @@ class VentanaAcerca(tk.Toplevel):
             "Lado maximo: reduce a 2560, 1920, 1600, 1200, 800 o 512 px sin ampliar las pequenas.",
             "Peso maximo: ajusta la calidad automaticamente para no superar los KB indicados.",
             "Formato de salida de imágenes: WebP o AVIF (AVIF suele pesar menos). Los vídeos se convierten siempre a WebM.",
-            "Vídeo: resolución, CRF o bitrate, audio Opus, FPS, contenido y reducción de ruido.",            "Informe CSV: deja en la carpeta de salida una tabla con peso original, final y ahorro.",
+            "Vídeo: resolución, CRF o bitrate, audio Opus, FPS, contenido y reducción de ruido. Presets Baja, Media y Alta.",            "Informe CSV: deja en la carpeta de salida una tabla con peso original, final y ahorro.",
             "Aviso sonoro al terminar: tono agudo si todo fue bien, grave si hubo errores o se cancelo.",
         ):
             t.insert("end", "•  " + linea + "\n", "li")
@@ -4472,6 +4486,21 @@ class App(BaseTk):  # type: ignore[misc,valid-type]
             return
         self.btn_video.configure(text="Vídeo: " + self._resumen_video())
 
+    def _video_preset_actual(self) -> str:
+        for nombre, p in VIDEO_PRESETS.items():
+            if (
+                self.video_height.get() == p["height"]
+                and self.video_mode.get() == p["mode"]
+                and not self.video_crf_auto.get()
+                and self.video_crf.get() == p["crf"]
+                and self.video_audio.get() == p["audio"]
+                and self.video_fps.get() == p["fps"]
+                and self.video_tune.get() == p["tune"]
+                and bool(self.video_denoise.get()) == bool(p["denoise"])
+            ):
+                return nombre
+        return "Personalizada"
+
     def _dialogo_video(self) -> None:
         ventana = tk.Toplevel(self)
         ventana.title("Opciones de vídeo (WebM)")
@@ -4513,6 +4542,8 @@ class App(BaseTk):  # type: ignore[misc,valid-type]
         crf = tk.IntVar(value=max(15, min(63, self.video_crf.get() or 30)))
         bitrate = tk.IntVar(value=max(250, int(self.video_bitrate.get() or 2500)))
         denoise = tk.BooleanVar(value=self.video_denoise.get())
+        preset = tk.StringVar(value=self._video_preset_actual())
+        aplicando_preset = {"activo": False}
 
         marco = ttk.Frame(ventana, padding=12)
         marco.pack(fill="both", expand=True)
@@ -4524,56 +4555,67 @@ class App(BaseTk):  # type: ignore[misc,valid-type]
             wraplength=460,
         ).grid(row=0, column=0, columnspan=4, sticky="w", pady=(0, 8))
 
-        ttk.Label(marco, text="Resolución").grid(row=1, column=0, sticky="w", pady=3)
+        ttk.Label(marco, text="Preset de vídeo").grid(row=1, column=0, sticky="w", pady=3)
+        cmb_preset = ttk.Combobox(
+            marco, state="readonly", width=20, textvariable=preset,
+            values=["Personalizada"] + list(VIDEO_PRESETS),
+        )
+        cmb_preset.grid(row=1, column=1, sticky="w", padx=(6, 16), pady=3)
+
+        ttk.Label(marco, text="Resolución").grid(row=2, column=0, sticky="w", pady=3)
         cmb_res = ttk.Combobox(
             marco, state="readonly", width=18, textvariable=resolucion,
             values=[x[0] for x in VIDEO_RESOLUCIONES],
         )
-        cmb_res.grid(row=1, column=1, sticky="w", padx=(6, 16), pady=3)
+        cmb_res.grid(row=2, column=1, sticky="w", padx=(6, 16), pady=3)
 
-        ttk.Label(marco, text="Calidad").grid(row=1, column=2, sticky="w", pady=3)
+        ttk.Label(marco, text="Calidad").grid(row=2, column=2, sticky="w", pady=3)
         cmb_modo = ttk.Combobox(
             marco, state="readonly", width=22, textvariable=modo,
             values=[x[0] for x in VIDEO_MODOS],
         )
-        cmb_modo.grid(row=1, column=3, sticky="w", padx=(6, 0), pady=3)
+        cmb_modo.grid(row=2, column=3, sticky="w", padx=(6, 0), pady=3)
 
         chk_auto = ttk.Checkbutton(marco, text="CRF automático (usa la calidad global)", variable=auto)
-        chk_auto.grid(row=2, column=0, columnspan=2, sticky="w", pady=3)
+        chk_auto.grid(row=3, column=0, columnspan=2, sticky="w", pady=3)
         lbl_crf = ttk.Label(marco, text="CRF")
-        lbl_crf.grid(row=3, column=0, sticky="w", pady=3)
+        lbl_crf.grid(row=4, column=0, sticky="w", pady=3)
         escala_crf = tk.Scale(
             marco, from_=15, to=50, orient="horizontal", variable=crf,
             showvalue=True, length=190, bg=CARD, troughcolor=BORDER,
             activebackground=ACCENT_DARK, highlightthickness=0,
         )
-        escala_crf.grid(row=3, column=1, sticky="w", padx=(6, 16), pady=3)
+        escala_crf.grid(row=4, column=1, sticky="w", padx=(6, 16), pady=3)
 
-        ttk.Label(marco, text="Bitrate (kbps)").grid(row=3, column=2, sticky="w", pady=3)
+        ttk.Label(marco, text="Bitrate (kbps)").grid(row=4, column=2, sticky="w", pady=3)
         spin_bitrate = ttk.Spinbox(
             marco, from_=250, to=200000, increment=250, width=10, textvariable=bitrate
         )
-        spin_bitrate.grid(row=3, column=3, sticky="w", padx=(6, 0), pady=3)
+        spin_bitrate.grid(row=4, column=3, sticky="w", padx=(6, 0), pady=3)
 
-        ttk.Label(marco, text="Audio").grid(row=4, column=0, sticky="w", pady=3)
-        ttk.Combobox(
+        ttk.Label(marco, text="Audio").grid(row=5, column=0, sticky="w", pady=3)
+        cmb_audio = ttk.Combobox(
             marco, state="readonly", width=12, textvariable=audio,
             values=[x[0] for x in VIDEO_AUDIO],
-        ).grid(row=4, column=1, sticky="w", padx=(6, 16), pady=3)
-        ttk.Label(marco, text="FPS máximo").grid(row=4, column=2, sticky="w", pady=3)
-        ttk.Combobox(
+        )
+        cmb_audio.grid(row=5, column=1, sticky="w", padx=(6, 16), pady=3)
+        ttk.Label(marco, text="FPS máximo").grid(row=5, column=2, sticky="w", pady=3)
+        cmb_fps = ttk.Combobox(
             marco, state="readonly", width=10, textvariable=fps,
             values=[x[0] for x in VIDEO_FPS],
-        ).grid(row=4, column=3, sticky="w", padx=(6, 0), pady=3)
+        )
+        cmb_fps.grid(row=5, column=3, sticky="w", padx=(6, 0), pady=3)
 
-        ttk.Label(marco, text="Contenido").grid(row=5, column=0, sticky="w", pady=3)
-        ttk.Combobox(
+        ttk.Label(marco, text="Contenido").grid(row=6, column=0, sticky="w", pady=3)
+        cmb_tune = ttk.Combobox(
             marco, state="readonly", width=12, textvariable=tune,
             values=[x[0] for x in VIDEO_TUNE],
-        ).grid(row=5, column=1, sticky="w", padx=(6, 16), pady=3)
-        ttk.Checkbutton(
+        )
+        cmb_tune.grid(row=6, column=1, sticky="w", padx=(6, 16), pady=3)
+        chk_denoise = ttk.Checkbutton(
             marco, text="Reducir ruido (hqdn3d)", variable=denoise
-        ).grid(row=5, column=2, columnspan=2, sticky="w", pady=3)
+        )
+        chk_denoise.grid(row=6, column=2, columnspan=2, sticky="w", pady=3)
 
         def actualizar_estado(*_args) -> None:
             vbr = modo.get() == VIDEO_MODOS[1][0]
@@ -4582,18 +4624,85 @@ class App(BaseTk):  # type: ignore[misc,valid-type]
             escala_crf.configure(state="disabled" if (vbr or auto_crf) else "normal")
             chk_auto.configure(state="disabled" if vbr else "normal")
 
-        cmb_modo.bind("<<ComboboxSelected>>", actualizar_estado)
-        chk_auto.configure(command=actualizar_estado)
+        def marcar_personalizado(*_args) -> None:
+            if not aplicando_preset["activo"]:
+                preset.set("Personalizada")
+
+        def aplicar_preset(*_args) -> None:
+            nombre = preset.get()
+            datos = VIDEO_PRESETS.get(nombre)
+            if datos is None:
+                return
+            aplicando_preset["activo"] = True
+            try:
+                resolucion.set(
+                    next(
+                        (texto for texto, alto in VIDEO_RESOLUCIONES if alto == datos["height"]),
+                        "Original",
+                    )
+                )
+                modo.set(VIDEO_MODOS[0][0])
+                auto.set(False)
+                crf.set(int(datos["crf"]))
+                bitrate.set(2500)
+                audio.set(
+                    next(
+                        (texto for texto, valor in VIDEO_AUDIO if valor == datos["audio"]),
+                        "96 kbps",
+                    )
+                )
+                fps.set(
+                    next(
+                        (texto for texto, valor in VIDEO_FPS if valor == datos["fps"]),
+                        "Original",
+                    )
+                )
+                tune.set("Normal")
+                denoise.set(bool(datos["denoise"]))
+            finally:
+                aplicando_preset["activo"] = False
+            actualizar_estado()
+
+        def cambiar_modo(_event=None) -> None:
+            actualizar_estado()
+            marcar_personalizado()
+
+        def cambiar_auto() -> None:
+            actualizar_estado()
+            marcar_personalizado()
+
+        cmb_preset.bind("<<ComboboxSelected>>", aplicar_preset)
+        cmb_res.bind("<<ComboboxSelected>>", marcar_personalizado)
+        cmb_modo.bind("<<ComboboxSelected>>", cambiar_modo)
+        chk_auto.configure(command=cambiar_auto)
+        escala_crf.configure(command=marcar_personalizado)
+        bitrate.trace_add("write", marcar_personalizado)
+        cmb_audio.bind("<<ComboboxSelected>>", marcar_personalizado)
+        cmb_fps.bind("<<ComboboxSelected>>", marcar_personalizado)
+        cmb_tune.bind("<<ComboboxSelected>>", marcar_personalizado)
+        chk_denoise.configure(command=marcar_personalizado)
         actualizar_estado()
 
         pie = ttk.Frame(marco)
-        pie.grid(row=6, column=0, columnspan=4, sticky="e", pady=(12, 0))
-        ttk.Button(pie, text="Restablecer", command=lambda: (
-            resolucion.set("Original"), modo.set(VIDEO_MODOS[0][0]),
-            auto.set(True), crf.set(30), bitrate.set(2500), audio.set("96 kbps"),
-            fps.set("Original"), tune.set("Normal"), denoise.set(False),
-            actualizar_estado(),
-        )).pack(side="left", padx=(0, 8))
+        pie.grid(row=7, column=0, columnspan=4, sticky="e", pady=(12, 0))
+        def restablecer() -> None:
+            aplicando_preset["activo"] = True
+            try:
+                resolucion.set("Original")
+                modo.set(VIDEO_MODOS[0][0])
+                auto.set(True)
+                crf.set(30)
+                bitrate.set(2500)
+                audio.set("96 kbps")
+                fps.set("Original")
+                tune.set("Normal")
+                denoise.set(False)
+                preset.set("Personalizada")
+            finally:
+                aplicando_preset["activo"] = False
+            actualizar_estado()
+
+        ttk.Button(pie, text="Restablecer", command=restablecer).pack(side="left", padx=(0, 8))
 
         def aceptar() -> None:
             self.video_height.set(

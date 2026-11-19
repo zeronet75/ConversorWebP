@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Manual de uso · Conversor WebP 2.13.0</title>
+<title>Manual de uso · Conversor WebP 2.14.0</title>
 <style>
   :root{
     --azul:#1a73e8; --azul-osc:#1557b0; --texto:#1f2933; --gris:#5f6b7a;
@@ -67,7 +67,7 @@
 <div class="hoja">
 
 <header>
-  <h1>Conversor WebP 2.13.0</h1>
+  <h1>Conversor WebP 2.14.0</h1>
   <p class="sub">Manual de uso · Qué hace cada opción y cómo sacarle partido</p>
 </header>
 
@@ -95,7 +95,7 @@
 </div>
 
 <div class="nota">
-  <strong>Novedades de la versión 2.13.0:</strong> opciones avanzadas de vídeo (resolución, CRF o bitrate VBR, audio, FPS, contenido y reducción de ruido) en el botón <strong>Vídeo: …</strong>; FFmpeg y ffprobe incluidos en el portable y el instalador; conversión de vídeos a <strong>WebM</strong> (VP9 + Opus) en lotes mixtos; y DPI nítido del sistema en la edición C++ (texto, controles y diálogos a la resolución real, con opciones <code>auto</code>, <code>system</code> y <code>gdi</code>). Se mantienen la cola persistente con pausa y reintento; vista previa con calidad de prueba y peso estimado; WebP animado; conservación opcional de fecha original; CLI con JSON, modo silencioso, trabajos en paralelo y presets; configuración atómica, espacio libre, tiempo restante e instancia única.
+  <strong>Novedades de la versión 2.14.0:</strong> presets de vídeo <strong>Baja</strong> (480p · CRF 36 · 64 kbps · 30 fps), <strong>Media</strong> (720p · CRF 32 · 96 kbps · 30 fps), <strong>Alta</strong> (1080p · CRF 26 · 128 kbps · FPS original) y <strong>Personalizada</strong>; opciones avanzadas de vídeo (resolución, CRF o bitrate VBR, audio, FPS, contenido y reducción de ruido); FFmpeg y ffprobe incluidos en el portable y el instalador (texto, controles y diálogos a la resolución real, con opciones <code>auto</code>, <code>system</code> y <code>gdi</code>). Se mantienen la cola persistente con pausa y reintento; vista previa con calidad de prueba y peso estimado; WebP animado; conservación opcional de fecha original; CLI con JSON, modo silencioso, trabajos en paralelo y presets; configuración atómica, espacio libre, tiempo restante e instancia única.
   <br><br>
   <strong>Novedades de la versión 2.6.2:</strong> actualización automática desde la aplicación: descarga el instalador o el portable según la instalación, verifica su SHA-256, lo aplica en el directorio actual y reinicia el programa; edición C++ nativa (Win32) con paridad funcional, icono de aplicación, selector de color visible, ventana maximizable, sin consola y correcciones de estabilidad; manual y «Acerca de» propios, apagado opcional al terminar, tooltips explicativos, HEIC, carpeta vigilada, patrones de nombre, solo analizar, tabla de resultados, vista previa, menú contextual, instalador y portable, presets de calidad, redimensionado, peso máximo por imagen,
   historial de trabajos, selección múltiple, atajos de teclado, conversión en paralelo, informe CSV,
@@ -338,6 +338,15 @@ otros formatos compatibles con FFmpeg.</p>
   <tr><td>Contenido</td><td>Normal, Pantalla, Película</td><td>Optimiza VP9 para el tipo de vídeo.</td></tr>
   <tr><td>Reducir ruido</td><td>Sí/No</td><td>Filtro suave para grabaciones con grano.</td></tr>
 </table>
+<p>Presets rápidos:</p>
+<table>
+  <tr><th>Preset</th><th>Resolución</th><th>CRF</th><th>Audio</th><th>FPS</th></tr>
+  <tr><td><strong>Baja</strong></td><td>480p</td><td>36</td><td>64 kbps</td><td>30</td></tr>
+  <tr><td><strong>Media</strong></td><td>720p</td><td>32 (30–33)</td><td>96 kbps</td><td>30</td></tr>
+  <tr><td><strong>Alta</strong></td><td>1080p</td><td>26</td><td>128 kbps</td><td>Original</td></tr>
+  <tr><td><strong>Personalizada</strong></td><td>Libre</td><td>15–50</td><td>0–192 kbps</td><td>0–60</td></tr>
+</table>
+<p>Al cambiar cualquier control después de elegir un preset, el selector pasa a <strong>Personalizada</strong>.</p>
 <p>El <strong>instalador</strong> y el <strong>portable</strong> incluyen <code>ffmpeg.exe</code> y
 <code>ffprobe.exe</code> en la misma carpeta. Si usas el ejecutable suelto o el código fuente, descarga
 una build en <a href="https://www.gyan.dev/ffmpeg/builds/">gyan.dev</a> y copia ambos junto a
@@ -627,7 +636,7 @@ muestran un aviso en la barra de estado. <em>Ayuda → Buscar actualizaciones</e
 ofrece abrir la página de descarga.</p>
 
 <p class="pie">
-  Conversor WebP 2.13.0 · Programa local para Windows · Interfaz Win32, conversión con WIC + libwebp/libavif,
+  Conversor WebP 2.14.0 · Programa local para Windows · Interfaz Win32, conversión con WIC + libwebp/libavif,
   arrastre nativo y extracción con 7-Zip/WinRAR.<br>
   Este manual se abre desde el programa en <strong>Ayuda → Manual de uso</strong> y también puede abrirse
   con doble clic en cualquier navegador.
